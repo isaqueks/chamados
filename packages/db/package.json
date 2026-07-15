@@ -1,0 +1,30 @@
+{
+  "name": "@chamados/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "migration:run": "tsx src/scripts/migrate.ts",
+    "migration:revert": "tsx src/scripts/migrate.ts --revert",
+    "smoke:rls": "tsx src/scripts/smoke-rls.ts"
+  },
+  "dependencies": {
+    "@chamados/shared": "*",
+    "pg": "^8.13.1",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "dotenv": "^16.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
