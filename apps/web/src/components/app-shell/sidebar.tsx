@@ -1,28 +1,11 @@
-'use client';
-
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, Server, Tags, Settings, Ticket } from 'lucide-react';
 import { Papel } from '@chamados/shared';
-import { cn } from '@/lib/utils';
+import { Marca } from './marca';
+import { NavLinks } from './nav-links';
 
-interface ItemNav {
-  href: string;
-  rotulo: string;
-  icone: typeof LayoutDashboard;
-  /** Papéis que enxergam o item; vazio = todos. */
-  papeis?: Papel[];
-}
-
-const ITENS: ItemNav[] = [
-  { href: '/app', rotulo: 'Painel', icone: LayoutDashboard },
-  { href: '/app/chamados', rotulo: 'Chamados', icone: Ticket },
-  { href: '/app/sistemas', rotulo: 'Sistemas-alvo', icone: Server, papeis: [Papel.admin] },
-  { href: '/app/categorias', rotulo: 'Categorias', icone: Tags, papeis: [Papel.admin] },
-  { href: '/app/usuarios', rotulo: 'Usuários', icone: Users, papeis: [Papel.admin] },
-  { href: '/app/config', rotulo: 'Configurações', icone: Settings, papeis: [Papel.admin] },
-];
-
+/**
+ * Sidebar do painel (desktop). Navegação por papel via `NavLinks`. No mobile ela
+ * some e dá lugar ao sheet acionado pela topbar (specs/08 §3 — responsivo).
+ */
 export function Sidebar({
   papel,
   tenantNome,
@@ -32,45 +15,14 @@ export function Sidebar({
   tenantNome: string;
   logoUrl?: string | null;
 }) {
-  const pathname = usePathname();
-  const itens = ITENS.filter((i) => !i.papeis || i.papeis.includes(papel));
-
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        {logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoUrl} alt={tenantNome} className="h-7 max-w-[160px] object-contain" />
-        ) : (
-          <>
-            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-              {tenantNome.charAt(0).toUpperCase()}
-            </div>
-            <span className="truncate text-sm font-semibold">{tenantNome}</span>
-          </>
-        )}
+      <div className="flex h-14 items-center border-b px-4">
+        <Marca tenantNome={tenantNome} logoUrl={logoUrl} />
       </div>
-      <nav className="flex flex-col gap-1 p-2">
-        {itens.map((item) => {
-          const ativo = item.href === '/app' ? pathname === '/app' : pathname.startsWith(item.href);
-          const Icone = item.icone;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                ativo
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-              )}
-            >
-              <Icone className="size-4" />
-              {item.rotulo}
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="flex-1 overflow-y-auto p-2">
+        <NavLinks papel={papel} />
+      </div>
     </aside>
   );
 }

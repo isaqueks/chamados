@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { In } from 'typeorm';
+import { ArrowLeft } from 'lucide-react';
 import {
   obterAppDataSource,
   runInTenantContext,
@@ -8,6 +9,9 @@ import {
   listarMensagens,
   listarEventos,
   listarAnexosDaMensagem,
+  listarOperadoresDoTenant,
+  buscarSistemaAlvo,
+  buscarCategoria,
   UsuarioSchema,
   type Anexo,
   type MensagemTimeline,
@@ -15,41 +19,27 @@ import {
 } from '@chamados/db';
 import { Papel, StatusChamado, VisibilidadeMensagem, transicoesDoPapel } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import {
-  ROTULO_STATUS_CHAMADO,
-  ROTULO_NATUREZA,
-  ROTULO_PRIORIDADE,
-  ROTULO_TIPO_EVENTO,
-  ROTULO_PAPEL,
-  VARIANTE_STATUS,
-  iniciais,
-} from '@/lib/rotulos';
+  StatusBadge,
+  PrioridadeBadge,
+  ComplexidadeBadge,
+  NaturezaBadge,
+  NotaInternaBadge,
+} from '@/components/chamado/badges';
+import { ROTULO_STATUS_CHAMADO, ROTULO_TIPO_EVENTO, ROTULO_PAPEL, iniciais } from '@/lib/rotulos';
+import { dataHora, tempoRelativo } from '@/lib/tempo';
 import { RespostaForm } from './resposta-form';
-import { acaoTransicionar } from '../actions';
+import { PainelPropriedades } from './painel-propriedades';
+import { AssistenteIA } from './assistente-ia';
 
-/** Verbo de ação por status-alvo (rótulo dos botões de transição). */
-const ACAO_STATUS: Record<StatusChamado, string> = {
-  [StatusChamado.novo]: 'Voltar a novo',
-  [StatusChamado.em_triagem]: 'Enviar à triagem',
-  [StatusChamado.aguardando_cliente]: 'Pedir informações',
-  [StatusChamado.em_atendimento]: 'Atender',
-  [StatusChamado.resolvido]: 'Resolver',
-  [StatusChamado.fechado]: 'Fechar',
-  [StatusChamado.cancelado]: 'Cancelar',
-};
+const PROSE_CLS =
+  'text-sm leading-relaxed [&_a]:text-primary [&_a]:underline [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground';
 
-function acaoRotulo(de: StatusChamado, para: StatusChamado): string {
-  if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido) return 'Reabrir';
-  return ACAO_STATUS[para];
-}
-
-/** Eventos que NÃO viram linha própria na timeline (já aparecem como mensagem). */
-const EVENTOS_OCULTOS_NA_TIMELINE = new Set<string>([
+/** Eventos que NÃO viram linha própria (já aparecem como mensagem/descrição). */
+const EVENTOS_OCULTOS = new Set<string>([
   'mensagem_publicada',
   'nota_interna_publicada',
+  'chamado_criado',
 ]);
 
 type InfoUsuario = { nome: string; papel: Papel };
@@ -65,7 +55,8 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
 
   const dados = await runInTenantContext(ds, tenant.id, async (em) => {
     const chamado = await obterChamado(em, usuario, id);
-    if (!chamado) return null;
+    if (!chamado || !('operador_id' in chamado)) return null; // equipe vê a forma interna
+
     const mensagens = await listarMensagens(em, usuario, id);
     const eventos = await listarEventos(em, usuario, id);
 
@@ -77,27 +68,54 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     const ids = Array.from(
       new Set(
         [
+          chamado.cliente_id,
+          chamado.operador_id,
           ...mensagens.map((m) => m.autor_id),
           ...eventos.map((e) => e.ator_id).filter((x): x is string => !!x),
-        ].filter(Boolean),
+        ].filter((x): x is string => !!x),
       ),
     );
     const usuarios = ids.length ? await em.find(UsuarioSchema, { where: { id: In(ids) } }) : [];
     const nomes: Record<string, InfoUsuario> = {};
     for (const u of usuarios) nomes[u.id] = { nome: u.nome, papel: u.papel };
 
-    return { chamado, mensagens, eventos, anexosPorMensagem, nomes };
+    const operadores = await listarOperadoresDoTenant(em);
+    const sistema = chamado.sistema_alvo_id
+      ? await buscarSistemaAlvo(em, chamado.sistema_alvo_id)
+      : null;
+    const categoria = chamado.categoria_id ? await buscarCategoria(em, chamado.categoria_id) : null;
+
+    return {
+      chamado,
+      mensagens,
+      eventos,
+      anexosPorMensagem,
+      nomes,
+      operadores,
+      sistemaNome: sistema?.nome ?? null,
+      categoriaNome: categoria?.nome ?? null,
+    };
   });
 
   if (!dados) notFound();
-  const { chamado, mensagens, eventos, anexosPorMensagem, nomes } = dados;
-  const ehCliente = usuario.papel === Papel.cliente;
+  const {
+    chamado,
+    mensagens,
+    eventos,
+    anexosPorMensagem,
+    nomes,
+    operadores,
+    sistemaNome,
+    categoriaNome,
+  } = dados;
+
   const podeInterna = usuario.papel === Papel.operador || usuario.papel === Papel.admin;
   const encerrado =
     chamado.status === StatusChamado.fechado || chamado.status === StatusChamado.cancelado;
   const alvos = transicoesDoPapel(usuario.papel, chamado.status);
+  const nomeAssistente = tenant.config_branding?.agente_ia_nome ?? 'Assistente IA';
 
-  // Timeline unificada (mensagens + eventos), ordenada por data.
+  // Timeline unificada (mensagens + eventos relevantes), ordenada por data.
   const itens: ItemTimeline[] = [];
   for (const m of mensagens) {
     itens.push({
@@ -108,7 +126,7 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     });
   }
   for (const e of eventos) {
-    if (EVENTOS_OCULTOS_NA_TIMELINE.has(e.tipo)) continue;
+    if (EVENTOS_OCULTOS.has(e.tipo)) continue;
     itens.push({ tipo: 'evento', at: new Date(e.created_at).getTime(), e });
   }
   itens.sort((a, b) => a.at - b.at);
@@ -117,115 +135,133 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     if (!autorId) return 'Sistema';
     return nomes[autorId]?.nome ?? 'Usuário';
   };
+  const solicitante = autorLabel(chamado.cliente_id);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <div>
-        <Link href="/app/chamados" className="text-sm text-muted-foreground hover:underline">
-          ← Voltar aos chamados
-        </Link>
-      </div>
+    <div className="mx-auto flex max-w-6xl flex-col gap-5">
+      <Link
+        href="/app/chamados"
+        className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        Voltar à fila
+      </Link>
 
       {/* Cabeçalho */}
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground">
-              #{String(chamado.numero)}
-            </span>
-            <CardTitle className="text-xl">{chamado.titulo}</CardTitle>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <Badge variant={VARIANTE_STATUS[chamado.status]}>
-              {ROTULO_STATUS_CHAMADO[chamado.status]}
-            </Badge>
-            <Badge variant="outline">{ROTULO_NATUREZA[chamado.natureza]}</Badge>
-            <Badge variant="muted">{ROTULO_PRIORIDADE[chamado.prioridade]}</Badge>
-            {'complexidade' in chamado && chamado.complexidade && (
-              <Badge variant="secondary">complexidade: {chamado.complexidade}</Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div
-            className="prose-chamado text-sm leading-relaxed [&_a]:text-primary [&_a]:underline [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground"
-            dangerouslySetInnerHTML={{ __html: chamado.descricao_html }}
-          />
-        </CardContent>
-      </Card>
-
-      {/* Ações de status */}
-      {alvos.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {alvos.map((para) => (
-            <form key={para} action={acaoTransicionar}>
-              <input type="hidden" name="id" value={chamado.id} />
-              <input type="hidden" name="novo_status" value={para} />
-              <Button type="submit" variant="outline" size="sm">
-                {acaoRotulo(chamado.status, para)}
-              </Button>
-            </form>
-          ))}
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-5">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-sm font-medium text-muted-foreground tabular-nums">
+            #{String(chamado.numero)}
+          </span>
+          <h1 className="font-heading text-xl font-semibold tracking-tight">{chamado.titulo}</h1>
         </div>
-      )}
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={chamado.status} />
+          <NaturezaBadge natureza={chamado.natureza} />
+          <PrioridadeBadge prioridade={chamado.prioridade} />
+          {chamado.complexidade && <ComplexidadeBadge complexidade={chamado.complexidade} />}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Aberto por {solicitante} · {tempoRelativo(chamado.created_at)} · atualizado{' '}
+          {tempoRelativo(chamado.updated_at)}
+          {chamado.reaberto_count > 0 && ` · ${chamado.reaberto_count} reabertura(s)`}
+        </p>
+        <div className={PROSE_CLS} dangerouslySetInnerHTML={{ __html: chamado.descricao_html }} />
+      </div>
 
-      {/* Timeline */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Timeline</CardTitle>
-          <CardDescription>Mensagens e histórico do chamado.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {itens.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhuma atividade ainda.</p>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_336px]">
+        {/* Coluna principal: timeline + compositor */}
+        <div className="order-2 flex flex-col gap-5 lg:order-1">
+          <section className="flex flex-col gap-4">
+            <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+              Timeline
+            </h2>
+            {itens.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma atividade ainda.</p>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {itens.map((item) =>
+                  item.tipo === 'mensagem' ? (
+                    <MensagemBolha
+                      key={`m-${item.m.id}`}
+                      autor={autorLabel(item.m.autor_id)}
+                      papel={nomes[item.m.autor_id]?.papel}
+                      interna={
+                        'visibilidade' in item.m &&
+                        item.m.visibilidade === VisibilidadeMensagem.interna
+                      }
+                      html={item.m.corpo_html}
+                      anexos={item.anexos}
+                      quando={item.m.created_at}
+                    />
+                  ) : (
+                    <EventoLinha
+                      key={`e-${item.e.id}`}
+                      autor={autorLabel(item.e.ator_id)}
+                      e={item.e}
+                    />
+                  ),
+                )}
+              </div>
+            )}
+          </section>
+
+          {encerrado ? (
+            <div className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+              Chamado {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} — não recebe novas
+              mensagens.
+            </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              {itens.map((item) =>
-                item.tipo === 'mensagem' ? (
-                  <MensagemBolha
-                    key={`m-${item.m.id}`}
-                    autor={autorLabel(item.m.autor_id)}
-                    papel={nomes[item.m.autor_id]?.papel}
-                    interna={
-                      'visibilidade' in item.m &&
-                      item.m.visibilidade === VisibilidadeMensagem.interna
-                    }
-                    html={item.m.corpo_html}
-                    anexos={item.anexos}
-                    quando={item.m.created_at}
-                  />
-                ) : (
-                  <EventoLinha
-                    key={`e-${item.e.id}`}
-                    autor={autorLabel(item.e.ator_id)}
-                    e={item.e}
-                  />
-                ),
-              )}
+            <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+              <h2 className="font-heading text-sm font-semibold">Responder</h2>
+              <RespostaForm chamadoId={chamado.id} podeInterna={podeInterna} />
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Responder */}
-      {!encerrado ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{podeInterna ? 'Responder / nota interna' : 'Responder'}</CardTitle>
-            {ehCliente && (
-              <CardDescription>Sua mensagem fica visível para a equipe de suporte.</CardDescription>
+        {/* Coluna lateral: propriedades + detalhes + IA */}
+        <aside className="order-1 flex flex-col gap-4 lg:order-2">
+          <div className="rounded-xl border bg-card p-4">
+            <PainelPropriedades
+              chamadoId={chamado.id}
+              status={chamado.status}
+              natureza={chamado.natureza}
+              prioridade={chamado.prioridade}
+              complexidade={chamado.complexidade ?? null}
+              alvosStatus={alvos}
+              operadores={operadores}
+              operadorAtualId={chamado.operador_id ?? null}
+              meuId={usuario.id}
+              encerrado={encerrado}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2.5 rounded-xl border bg-card p-4 text-sm">
+            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Detalhes
+            </h3>
+            <LinhaMeta rotulo="Alvo" valor={sistemaNome ?? categoriaNome ?? '—'} />
+            <LinhaMeta rotulo="Solicitante" valor={solicitante} />
+            <LinhaMeta rotulo="Aberto em" valor={dataHora(chamado.created_at)} />
+            <LinhaMeta rotulo="Atualizado" valor={dataHora(chamado.updated_at)} />
+            {chamado.resolvido_em && (
+              <LinhaMeta rotulo="Resolvido em" valor={dataHora(chamado.resolvido_em)} />
             )}
-          </CardHeader>
-          <CardContent>
-            <RespostaForm chamadoId={chamado.id} podeInterna={podeInterna} />
-          </CardContent>
-        </Card>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Chamado {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} — não recebe novas
-          mensagens.
-        </p>
-      )}
+            <LinhaMeta rotulo="Reaberturas" valor={String(chamado.reaberto_count)} />
+          </div>
+
+          <AssistenteIA nomeAssistente={nomeAssistente} />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function LinhaMeta({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{rotulo}</span>
+      <span className="text-right font-medium">{valor}</span>
     </div>
   );
 }
@@ -249,7 +285,9 @@ function MensagemBolha({
     <div
       className={
         'rounded-lg border p-3 ' +
-        (interna ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20' : 'bg-card')
+        (interna
+          ? 'border-amber-300 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20'
+          : 'bg-card')
       }
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -258,15 +296,12 @@ function MensagemBolha({
         </div>
         <span className="text-sm font-medium">{autor}</span>
         {papel && <span className="text-xs text-muted-foreground">{ROTULO_PAPEL[papel]}</span>}
-        {interna && <Badge variant="secondary">Nota interna</Badge>}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {new Date(quando).toLocaleString('pt-BR')}
+        {interna && <NotaInternaBadge />}
+        <span className="ml-auto text-xs text-muted-foreground" title={dataHora(quando)}>
+          {tempoRelativo(quando)}
         </span>
       </div>
-      <div
-        className="text-sm leading-relaxed [&_a]:text-primary [&_a]:underline [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <div className={PROSE_CLS} dangerouslySetInnerHTML={{ __html: html }} />
       {anexos.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {anexos.map((a) => (
@@ -296,13 +331,15 @@ function EventoLinha({ autor, e }: { autor: string; e: EventoView }) {
   }
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-1 text-xs text-muted-foreground">
-      <span className="size-1.5 rounded-full bg-muted-foreground/40" />
+      <span className="size-1.5 rounded-full bg-muted-foreground/40" aria-hidden />
       <span className="font-medium">{autor}</span>
       <span>
         {ROTULO_TIPO_EVENTO[e.tipo]}
         {detalhe}
       </span>
-      <span className="ml-auto">{new Date(e.created_at).toLocaleString('pt-BR')}</span>
+      <span className="ml-auto" title={dataHora(e.created_at)}>
+        {tempoRelativo(e.created_at)}
+      </span>
     </div>
   );
 }

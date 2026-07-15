@@ -6,18 +6,37 @@ import {
   runInTenantContext,
   criarChamado,
   transicionarStatus,
+  atribuirOperador,
+  desatribuirOperador,
+  alterarPrioridade,
+  alterarNatureza,
+  definirComplexidade,
   criarMensagem,
   type MotivoCriar,
   type MotivoMensagem,
+  type MotivoTransicionar,
+  type MotivoMutacao,
   type ArquivoUpload,
+  type DocRico,
 } from '@chamados/db';
-import { Natureza, Prioridade, StatusChamado, VisibilidadeMensagem, Papel } from '@chamados/shared';
+import {
+  Natureza,
+  Prioridade,
+  Complexidade,
+  StatusChamado,
+  VisibilidadeMensagem,
+  Papel,
+} from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
+import { ROTULO_STATUS_CHAMADO } from '@/lib/rotulos';
 
 export interface EstadoChamado {
   erro?: string;
   sucesso?: string;
 }
+
+/** Resultado padrão das ações do painel para feedback via toast. */
+export type ResultadoAcao = { ok: true; msg: string } | { ok: false; msg: string };
 
 const MOTIVOS_CRIAR: Record<MotivoCriar, string> = {
   sem_permissao: 'Sem permissão para abrir chamados.',
@@ -36,14 +55,48 @@ const MOTIVOS_CRIAR: Record<MotivoCriar, string> = {
   categoria_invalida: 'Categoria inválida.',
 };
 
+const MOTIVOS_TRANSICAO: Record<MotivoTransicionar, string> = {
+  inexistente: 'Chamado não encontrado.',
+  sem_permissao: 'Sem permissão para esta transição.',
+  mesmo_status: 'O chamado já está nesse status.',
+  estado_terminal: 'Chamado encerrado não muda de status.',
+  transicao_inexistente: 'Transição de status não permitida.',
+  papel_nao_autorizado: 'Seu papel não pode fazer esta transição.',
+};
+
+const MOTIVOS_MUTACAO: Record<MotivoMutacao, string> = {
+  inexistente: 'Chamado não encontrado.',
+  sem_permissao: 'Sem permissão para esta ação.',
+  estado_terminal: 'Chamado encerrado não aceita alterações.',
+  valor_invalido: 'Valor inválido.',
+  operador_invalido: 'Operador inválido.',
+};
+
 function ehNatureza(v: string): v is Natureza {
   return (Object.values(Natureza) as string[]).includes(v);
 }
 function ehPrioridade(v: string): v is Prioridade {
   return (Object.values(Prioridade) as string[]).includes(v);
 }
-function ehStatus(v: string): v is StatusChamado {
-  return (Object.values(StatusChamado) as string[]).includes(v);
+
+/** Converte o JSON do editor (string) num doc TipTap; `null` se malformado. */
+function parseDoc(bruto: string): DocRico | null {
+  try {
+    const obj = JSON.parse(bruto) as unknown;
+    if (obj && typeof obj === 'object' && (obj as { type?: string }).type === 'doc') {
+      return obj as DocRico;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Revalida as superfícies afetadas por uma mutação de chamado. */
+function revalidarChamado(id: string): void {
+  revalidatePath('/app');
+  revalidatePath('/app/chamados');
+  revalidatePath(`/app/chamados/${id}`);
 }
 
 /** Abre um chamado com o formulário mínimo (specs/04 §2). */
@@ -65,12 +118,7 @@ export async function acaoCriarChamado(
 
   const ds = await obterAppDataSource();
   const r = await runInTenantContext(ds, tenant.id, (em) =>
-    criarChamado(em, usuario, {
-      titulo,
-      descricao,
-      natureza: naturezaRaw,
-      prioridade,
-    }),
+    criarChamado(em, usuario, { titulo, descricao, natureza: naturezaRaw, prioridade }),
   );
   if (!r.ok) return { erro: MOTIVOS_CRIAR[r.motivo] };
 
@@ -79,16 +127,115 @@ export async function acaoCriarChamado(
 }
 
 /** Aplica uma transição de status (máquina de estados — specs/04 §1). */
-export async function acaoTransicionar(formData: FormData): Promise<void> {
+export async function acaoTransicionar(
+  chamadoId: string,
+  novoStatus: string,
+): Promise<ResultadoAcao> {
   const { tenant, usuario } = await exigirUsuario();
-  const id = String(formData.get('id') ?? '');
-  const novoStatus = String(formData.get('novo_status') ?? '');
-  if (!id || !ehStatus(novoStatus)) return;
-
+  if (!(Object.values(StatusChamado) as string[]).includes(novoStatus)) {
+    return { ok: false, msg: 'Status inválido.' };
+  }
   const ds = await obterAppDataSource();
-  await runInTenantContext(ds, tenant.id, (em) => transicionarStatus(em, usuario, id, novoStatus));
-  revalidatePath('/app/chamados');
-  revalidatePath(`/app/chamados/${id}`);
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    transicionarStatus(em, usuario, chamadoId, novoStatus as StatusChamado),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_TRANSICAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return {
+    ok: true,
+    msg: `Status alterado para "${ROTULO_STATUS_CHAMADO[novoStatus as StatusChamado]}".`,
+  };
+}
+
+/** Atribui o chamado ao próprio operador logado (specs/04 §7 — "assumir"). */
+export async function acaoAssumir(chamadoId: string): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    atribuirOperador(em, usuario, chamadoId, usuario.id),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Chamado atribuído a você.' };
+}
+
+/** Atribui/reatribui o chamado a um operador específico. */
+export async function acaoAtribuir(chamadoId: string, operadorId: string): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  if (!operadorId) return { ok: false, msg: 'Selecione um operador.' };
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    atribuirOperador(em, usuario, chamadoId, operadorId),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Operador atribuído.' };
+}
+
+/** Remove a atribuição do chamado (specs/04 §7). */
+export async function acaoDesatribuir(chamadoId: string): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    desatribuirOperador(em, usuario, chamadoId),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Atribuição removida.' };
+}
+
+/** Altera a prioridade (specs/04 §3.2). */
+export async function acaoAlterarPrioridade(
+  chamadoId: string,
+  prioridade: string,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  if (!ehPrioridade(prioridade)) return { ok: false, msg: 'Prioridade inválida.' };
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    alterarPrioridade(em, usuario, chamadoId, prioridade),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Prioridade atualizada.' };
+}
+
+/** Altera a natureza (specs/04 §3.1). */
+export async function acaoAlterarNatureza(
+  chamadoId: string,
+  natureza: string,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  if (!ehNatureza(natureza)) return { ok: false, msg: 'Natureza inválida.' };
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    alterarNatureza(em, usuario, chamadoId, natureza),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Natureza atualizada.' };
+}
+
+/** Define/limpa a complexidade interna (specs/04 §3.3). `''` limpa. */
+export async function acaoDefinirComplexidade(
+  chamadoId: string,
+  complexidade: string,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const valor =
+    complexidade === ''
+      ? null
+      : (Object.values(Complexidade) as string[]).includes(complexidade)
+        ? (complexidade as Complexidade)
+        : undefined;
+  if (valor === undefined) return { ok: false, msg: 'Complexidade inválida.' };
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, (em) =>
+    definirComplexidade(em, usuario, chamadoId, valor),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: valor ? 'Complexidade atualizada.' : 'Complexidade removida.' };
 }
 
 const MOTIVOS_MENSAGEM: Record<MotivoMensagem, string> = {
@@ -116,10 +263,13 @@ export async function acaoResponder(
   const { tenant, usuario } = await exigirUsuario();
 
   const chamadoId = String(formData.get('chamado_id') ?? '');
-  const corpo = String(formData.get('corpo') ?? '');
+  const corpoRaw = String(formData.get('corpo') ?? '');
   const visRaw = String(formData.get('visibilidade') ?? '');
 
   if (!chamadoId) return { erro: 'Chamado inválido.' };
+
+  const doc = parseDoc(corpoRaw);
+  if (!doc) return { erro: 'Escreva a mensagem.' };
 
   // Cliente sempre publica; operador/admin escolhem (default Interna — specs/08).
   const visibilidade =
@@ -129,15 +279,11 @@ export async function acaoResponder(
         ? VisibilidadeMensagem.publica
         : VisibilidadeMensagem.interna;
 
-  // Anexos enviados (não-inline).
   const anexos: ArquivoUpload[] = [];
   for (const item of formData.getAll('anexos')) {
     if (typeof item === 'string' || item.size === 0) continue;
     if (item.size > TAMANHO_MAX_UPLOAD) return { erro: 'Anexo excede 25 MB.' };
-    anexos.push({
-      nome_arquivo: item.name,
-      buffer: Buffer.from(await item.arrayBuffer()),
-    });
+    anexos.push({ nome_arquivo: item.name, buffer: Buffer.from(await item.arrayBuffer()) });
   }
 
   const ds = await obterAppDataSource();
@@ -145,12 +291,16 @@ export async function acaoResponder(
     criarMensagem(em, usuario, {
       chamado_id: chamadoId,
       visibilidade,
-      corpo,
+      corpo: doc,
       anexos: anexos.length > 0 ? anexos : undefined,
     }),
   );
   if (!r.ok) return { erro: MOTIVOS_MENSAGEM[r.motivo] };
 
-  revalidatePath(`/app/chamados/${chamadoId}`);
-  return { sucesso: 'Mensagem enviada.' };
+  revalidarChamado(chamadoId);
+  const rotulo =
+    visibilidade === VisibilidadeMensagem.interna
+      ? 'Nota interna registrada.'
+      : 'Resposta enviada.';
+  return { sucesso: rotulo };
 }

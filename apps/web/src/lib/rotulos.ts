@@ -4,6 +4,7 @@ import {
   StatusChamado,
   Natureza,
   Prioridade,
+  Complexidade,
   TipoEvento,
 } from '@chamados/shared';
 
@@ -50,6 +51,13 @@ export const ROTULO_PRIORIDADE: Record<Prioridade, string> = {
   [Prioridade.media]: 'Média',
   [Prioridade.alta]: 'Alta',
   [Prioridade.urgente]: 'Urgente',
+};
+
+/** Rótulos amigáveis da complexidade (interna — nunca exposta ao cliente). */
+export const ROTULO_COMPLEXIDADE: Record<Complexidade, string> = {
+  [Complexidade.facil]: 'Fácil',
+  [Complexidade.medio]: 'Médio',
+  [Complexidade.dificil]: 'Difícil',
 };
 
 /** Rótulos amigáveis do status do vínculo usuário↔tenant. */

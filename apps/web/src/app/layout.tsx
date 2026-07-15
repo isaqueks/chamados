@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { Suspense } from 'react';
 import { BrandingVars } from '@/components/branding-vars';
+import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 
 const geistSans = Geist({
@@ -31,6 +32,7 @@ export default function RootLayout({
           <BrandingVars />
         </Suspense>
         {children}
+        <Toaster />
       </body>
     </html>
   );

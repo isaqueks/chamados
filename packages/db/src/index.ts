@@ -148,3 +148,23 @@ export {
   type MotivoDownload,
 } from './chamados/anexo-service';
 export { listarEventos, type EventoView } from './chamados/evento-service';
+
+// ---- M5: consultas read-only do painel operador/admin (fila + dashboard) ----
+export {
+  listarFilaChamados,
+  contarFila,
+  listarOperadoresDoTenant,
+  type FiltrosFila,
+  type AtribuicaoFila,
+  type FilaChamadoItem,
+  type PaginaFila,
+  type ContadoresFila,
+  type OperadorResumo,
+} from './chamados/consulta-service';
+export {
+  metricasDashboard,
+  blocosPrecisaDeVoce,
+  type MetricasDashboard,
+  type ItemAcionavel,
+  type BlocosPrecisaDeVoce,
+} from './chamados/dashboard-service';

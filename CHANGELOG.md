@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M5: portal do cliente + painel operador/admin (2 agentes em paralelo + integração)
+
+- **Portal do cliente (`/portal`)**: experiência minimalista mobile-first com branding whitelabel — lista "Meus chamados" (abertos/histórico, destaque "Aguardando você"), abertura com formulário mínimo (sistema-alvo só se >1, natureza em cards, prioridade recolhida em opções avançadas), detalhe com timeline pública, responder/reabrir/cancelar conforme a máquina de estados, estados vazios e skeletons.
+- **Editor TipTap compartilhado** (`components/editor/`): alinhado 1:1 à allowlist do pipeline server-side, toolbar mínima, imagem colada vira anexo no server (comprovado: HTML final sem `data:`); usado no portal e no compositor do painel.
+- **Painel operador/admin (`/app`)**: redirect por papel no login (cliente → `/portal`), fila com tabela densa, filtros combináveis com contadores, busca rápida e ações de linha; detalhe em duas colunas (timeline com notas internas default Interna + painel de propriedades com transições/atribuição/classificação); dashboard com KPIs e bloco "Precisa de você"; seção "Assistente IA" como placeholder estruturado para M6+; badges centralizados; gestão integrada à nova sidebar; sonner/toasts.
+- **Integração**: `bodySizeLimit 32mb` nos server actions (imagens coladas grandes), compositor do painel usando o editor compartilhado, `fechar_automaticamente_em` exposto ao cliente no serializer.
+- Novos services read-only: fila com joins/facetas (`consulta-service`) e métricas (`dashboard-service`, tempo de 1ª resposta derivado de `evento_chamado`).
+- Desvios deliberados: tabs mobile do detalhe viram colunas empilhadas (tabs adiadas); "abrir em nome do cliente" adiado; cores de badge da paleta Tailwind theme-aware centralizadas.
+- **Verificado:** typecheck, lint, build (20 rotas), 73/73 testes, smokes completos, E2E nas duas áreas (redirects por papel, filtros, mutações gerando eventos na timeline, visibilidade de nota interna, dashboard com números do seed).
+
 ## 2026-07-15 — Marco M4: mensagens, rich text sanitizado, anexos e auditoria
 
 - **Mensagens** públicas/internas imutáveis: cliente só cria públicas nos próprios chamados; filtro de visibilidade no repositório + serializer como segunda barreira; resposta pública do cliente em `aguardando_cliente` transiciona automaticamente para `em_triagem` (evento pelo ator `sistema`).

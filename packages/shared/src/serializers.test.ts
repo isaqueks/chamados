@@ -84,8 +84,16 @@ describe('serializarChamadoParaCliente — exclui complexidade e atribuição', 
     const out = serializarChamadoParaCliente(completo);
     expect(out as object).not.toHaveProperty('complexidade');
     expect(out as object).not.toHaveProperty('operador_id');
-    expect(out as object).not.toHaveProperty('fechar_automaticamente_em');
     expect(out as object).not.toHaveProperty('tenant_id');
+  });
+
+  it('expõe fechar_automaticamente_em (acompanhamento do prazo de auto-fechamento)', () => {
+    const out = serializarChamadoParaCliente({
+      ...completo,
+      fechar_automaticamente_em: '2026-07-20T00:00:00Z',
+    });
+    expect(out.fechar_automaticamente_em).toBe('2026-07-20T00:00:00Z');
+    expect(serializarChamadoParaCliente(completo).fechar_automaticamente_em).toBeNull();
   });
 
   it('expõe status/natureza/prioridade e dados próprios (acompanhamento RF-04)', () => {

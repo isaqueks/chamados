@@ -72,6 +72,7 @@ export interface ChamadoCliente {
   natureza: Natureza;
   prioridade: Prioridade;
   resolvido_em?: Date | string | null;
+  fechar_automaticamente_em?: Date | string | null;
   fechado_em?: Date | string | null;
   reaberto_count: number;
   created_at: Date | string;
@@ -144,6 +145,7 @@ export function serializarChamadoParaCliente(c: ChamadoInterno): ChamadoCliente 
     natureza: c.natureza,
     prioridade: c.prioridade,
     resolvido_em: c.resolvido_em ?? null,
+    fechar_automaticamente_em: c.fechar_automaticamente_em ?? null,
     fechado_em: c.fechado_em ?? null,
     reaberto_count: c.reaberto_count,
     created_at: c.created_at,

@@ -3,6 +3,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { obterAppDataSource, autenticarComSenha } from '@chamados/db';
+import { Papel } from '@chamados/shared';
 import { obterTenantAtual } from '@/lib/tenant';
 import { definirCookieSessao } from '@/lib/cookies';
 
@@ -34,5 +35,7 @@ export async function acaoLogin(_prev: EstadoLogin, formData: FormData): Promise
   if (!r.ok) return { erro: 'E-mail ou senha inválidos.' };
 
   await definirCookieSessao(r.token);
-  redirect('/app');
+  // Redireciona por papel (specs/03 §4.1, specs/08 §1): cliente → portal;
+  // operador/admin → painel. `agente_ia` nunca chega aqui (não loga por senha).
+  redirect(r.usuario.papel === Papel.cliente ? '/portal' : '/app');
 }
