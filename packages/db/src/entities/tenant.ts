@@ -1,14 +1,31 @@
 import { EntitySchema } from 'typeorm';
 import { StatusTenant, valoresEnum } from '@chamados/shared';
 
+/**
+ * Branding whitelabel do tenant (specs/07 §3). Campos conhecidos, todos
+ * opcionais (jsonb no banco). Tipado como interface concreta (sem index
+ * signature) para não colidir com a recursão de tipos do TypeORM em inserts.
+ */
+export interface ConfigBranding {
+  cor_primaria?: string | null;
+  cor_secundaria?: string | null;
+  logo_light_url?: string | null;
+  logo_dark_url?: string | null;
+  favicon_url?: string | null;
+  agente_ia_nome?: string | null;
+  email_remetente_nome?: string | null;
+  email_remetente_endereco?: string | null;
+}
+
 /** Tenant: empresa/instância whitelabel. Raiz do isolamento multi-tenant. */
 export interface Tenant {
   id: string;
   slug: string;
+  dominio_proprio: string | null;
   nome: string;
   nome_exibicao: string;
   status: StatusTenant;
-  config_branding: Record<string, unknown>;
+  config_branding: ConfigBranding;
   dias_fechamento_automatico: number;
   ia_resolucao_automatica_habilitada: boolean;
   created_at: Date;
@@ -26,6 +43,7 @@ export const TenantSchema = new EntitySchema<Tenant>({
       default: () => 'gen_random_uuid()',
     },
     slug: { type: 'text', unique: true },
+    dominio_proprio: { type: 'text', nullable: true },
     nome: { type: 'text' },
     nome_exibicao: { type: 'text' },
     status: {

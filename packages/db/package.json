@@ -12,10 +12,13 @@
     "typecheck": "tsc --noEmit",
     "migration:run": "tsx src/scripts/migrate.ts",
     "migration:revert": "tsx src/scripts/migrate.ts --revert",
-    "smoke:rls": "tsx src/scripts/smoke-rls.ts"
+    "smoke:rls": "tsx src/scripts/smoke-rls.ts",
+    "smoke:auth": "tsx src/scripts/smoke-auth.ts",
+    "seed:dev": "tsx src/scripts/seed-dev.ts"
   },
   "dependencies": {
     "@chamados/shared": "*",
+    "@node-rs/argon2": "^2.0.2",
     "pg": "^8.13.1",
     "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.20"

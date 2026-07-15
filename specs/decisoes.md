@@ -38,7 +38,7 @@
 
 ## D-007 — better-auth para autenticação (2026-07-15)
 
-**Status:** aceita.
+**Status:** ~~aceita~~ **substituída por D-010** (better-auth descartado na implementação do M1).
 **Decisão:** better-auth em vez de Auth.js/NextAuth, pelo suporte first-class a multi-tenancy e sessões próprias sem dependência de OAuth externo (`03-autenticacao-perfis-permissoes.md`).
 
 ## D-008 — Política de documentação contínua (2026-07-15)
@@ -50,3 +50,10 @@
 
 **Status:** aceita.
 **Decisão:** a UI deve ser **limpa, bonita, intuitiva, fácil de usar e consistente**. Implementação com shadcn/ui + Tailwind, temas via CSS variables (branding por tenant com validação de contraste AA). Todo componente novo segue o design system — nada de estilos ad-hoc.
+
+## D-010 — Autenticação hand-rolled conforme spec 03; better-auth descartado (2026-07-15)
+
+**Status:** aceita — **substitui D-007**.
+**Contexto:** na implementação do M1, o better-auth mostrou-se incompatível com três requisitos canônicos: não tem adapter oficial para TypeORM (apenas Drizzle/Prisma/Kysely/Mongo); seu modelo de identidade é global por e-mail, colidindo com a identidade **por-tenant** (`UNIQUE(tenant_id, email)`, specs 02/03); e sua camada de dados não roda dentro de `runInTenantContext` (RLS).
+**Decisão:** implementar diretamente o modelo da spec 03: Argon2id (`@node-rs/argon2`), sessões server-side revogáveis com cookie opaco (apenas `token_hash` no banco), respostas anti-enumeração, invalidação de todas as sessões em troca/reset de senha.
+**Consequências:** tabela adicional `redefinicao_senha` (tokens de reset, uso único); função `chamados_resolver_tenant` (SECURITY DEFINER) para resolver o tenant por slug/domínio antes de estabelecer o contexto RLS (a app conecta sem BYPASSRLS); 2FA/SSO permanecem no roadmap da spec 03.

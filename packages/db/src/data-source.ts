@@ -3,10 +3,20 @@ import { DataSource } from 'typeorm';
 import { conexaoBase, credenciaisAdmin, credenciaisApp } from './config';
 import { TenantSchema } from './entities/tenant';
 import { UsuarioSchema } from './entities/usuario';
+import { SessaoSchema } from './entities/sessao';
+import { ConviteSchema } from './entities/convite';
+import { RedefinicaoSenhaSchema } from './entities/redefinicao-senha';
 import { Init1720000000000 } from './migrations/0000-init';
+import { Auth1720000001000 } from './migrations/0001-auth';
 
-const entidades = [TenantSchema, UsuarioSchema];
-const migrations = [Init1720000000000];
+const entidades = [
+  TenantSchema,
+  UsuarioSchema,
+  SessaoSchema,
+  ConviteSchema,
+  RedefinicaoSenhaSchema,
+];
+const migrations = [Init1720000000000, Auth1720000001000];
 
 /**
  * DataSource da APLICAÇÃO (web + worker). Conecta com o role SEM BYPASSRLS.

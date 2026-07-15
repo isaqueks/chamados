@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M1: autenticação, perfis e permissões
+
+- **Autenticação hand-rolled conforme spec 03 (D-010, substitui D-007/better-auth):** Argon2id, sessões server-side revogáveis com cookie opaco (`token_hash` no banco), anti-enumeração, reset/troca de senha invalida todas as sessões. E-mails (convite/reset) são stub logado até o M9.
+- Novas entidades/migrations com RLS: `sessao`, `convite`, `redefinicao_senha`; `usuario` ganhou `credencial_servico_ref`, CHECK "agente_ia sem senha" e unique parcial de um `agente_ia` por tenant; função `chamados_resolver_tenant` (SECURITY DEFINER) resolve tenant por slug/domínio antes do contexto RLS.
+- Resolução de tenant por subdomínio (`acme.localhost:3000`) via proxy do Next 16 (novo nome do middleware), com fallback dev.
+- Autorização: ponto único `autorizar(ator, recurso, acao, alvo?)` com a matriz completa da spec 03 §8 + serializers allowlist para o papel cliente (nunca expõe notas internas/complexidade). 23 testes unitários.
+- Convites (admin convida, aceite cria conta + auto-login) com UI; provisionamento idempotente de tenant com `agente_ia` service account (token em env, provisório até o cofre do M2); `npm run seed:dev` (tenant `acme`).
+- UI shadcn/ui (D-009): login com branding do tenant, esqueci/redefinir senha, aceite de convite, shell autenticado com guardas de rota e papel.
+- Comandos novos: `npm run smoke:auth`, `npm run seed:dev`, `npm test` (vitest).
+- **Verificado:** typecheck, lint, build, migrations do zero e incremental, smoke RLS, smoke auth, 23/23 testes, E2E HTTP (branding por subdomínio, guardas, sessão, cliente barrado em rota admin).
+
 ## 2026-07-15 — Especificação completa + Marco M0 (fundação)
 
 ### Especificação (spec-driven development)

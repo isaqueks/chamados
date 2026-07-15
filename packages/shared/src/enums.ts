@@ -85,6 +85,15 @@ export const StatusUsuario = {
 } as const;
 export type StatusUsuario = (typeof StatusUsuario)[keyof typeof StatusUsuario];
 
+/** Ciclo de vida de um convite de acesso (ver specs/03 §4.2). */
+export const StatusConvite = {
+  pendente: 'pendente',
+  aceito: 'aceito',
+  expirado: 'expirado',
+  revogado: 'revogado',
+} as const;
+export type StatusConvite = (typeof StatusConvite)[keyof typeof StatusConvite];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
