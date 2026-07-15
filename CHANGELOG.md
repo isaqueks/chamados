@@ -2,6 +2,19 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M2: SistemaAlvo, cofre de segredos, categorias, branding e domínio próprio
+
+- **SecretStore (specs 07/09):** envelope encryption AES-256-GCM (chave mestra em `SECRET_STORE_MASTER_KEY`, DEK por segredo), tabela `segredo` com RLS; refs `*_ref` só resolvem no contexto do tenant dono; credencial do `agente_ia` migrada do env para o cofre (`usuario.credencial_servico_ref`).
+- **SistemaAlvo:** entidade com shape canônico da spec 02 (repo git + credencial, logs, conexão BD read-only) + CRUD admin com segredos sempre mascarados (a leitura retorna apenas presença, nunca o valor) e aviso de usuário de BD somente-leitura no formulário.
+- **Categoria:** CRUD admin; categoria "Geral" protegida, criada no provisionamento.
+- **Branding whitelabel:** cores com validação de contraste WCAG AA no salvamento e fallback neutro no render; logo no MinIO (magic bytes PNG/JPEG/WEBP ≤1MB) servido por rota controlada; CSS variables no login e no app; tela `/app/config` com preview; config geral do tenant (dias de auto-fechamento, IA habilitada — uso real em M6+).
+- **Domínio próprio:** configuração com validação e unicidade global; resolução host exato → slug (TLS/ACME fica para o deploy).
+- **Storage:** novo pacote `@chamados/storage` (S3/MinIO, URLs pré-assinadas, bucket único com prefixo por tenant, provisionado no compose) — base para os anexos do M4.
+- Specs sincronizadas: D-010 (auth própria) propagado em 6 documentos; entidade `RedefinicaoSenha` e função `chamados_resolver_tenant` documentadas na spec 02; correção npm workspaces na spec 01.
+- Comandos novos: `npm run smoke:secrets`, `npm run smoke:sistemas`.
+- **Verificado:** typecheck, lint, build (14 rotas), migrations do zero e incremental, smokes rls/auth/secrets/sistemas, 47/47 testes, E2E HTTP (branding → CSS vars, guardas, upload de logo, fallback de cor reprovada).
+- Débitos anotados: `cor_secundaria` persistida mas sem elemento visível vinculado; config geral reutiliza o recurso `config_notificacoes` na matriz de autorização (criar recurso `config_tenant` dedicado no M10); GC de logos órfãos.
+
 ## 2026-07-15 — Marco M1: autenticação, perfis e permissões
 
 - **Autenticação hand-rolled conforme spec 03 (D-010, substitui D-007/better-auth):** Argon2id, sessões server-side revogáveis com cookie opaco (`token_hash` no banco), anti-enumeração, reset/troca de senha invalida todas as sessões. E-mails (convite/reset) são stub logado até o M9.

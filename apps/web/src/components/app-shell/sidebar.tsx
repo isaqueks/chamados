@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Users } from "lucide-react"
+import { LayoutDashboard, Users, Server, Tags, Settings } from "lucide-react"
 import { Papel } from "@chamados/shared"
 import { cn } from "@/lib/utils"
 
@@ -16,15 +16,20 @@ interface ItemNav {
 
 const ITENS: ItemNav[] = [
   { href: "/app", rotulo: "Painel", icone: LayoutDashboard },
+  { href: "/app/sistemas", rotulo: "Sistemas-alvo", icone: Server, papeis: [Papel.admin] },
+  { href: "/app/categorias", rotulo: "Categorias", icone: Tags, papeis: [Papel.admin] },
   { href: "/app/usuarios", rotulo: "Usuários", icone: Users, papeis: [Papel.admin] },
+  { href: "/app/config", rotulo: "Configurações", icone: Settings, papeis: [Papel.admin] },
 ]
 
 export function Sidebar({
   papel,
   tenantNome,
+  logoUrl,
 }: {
   papel: Papel
   tenantNome: string
+  logoUrl?: string | null
 }) {
   const pathname = usePathname()
   const itens = ITENS.filter((i) => !i.papeis || i.papeis.includes(papel))
@@ -32,10 +37,17 @@ export function Sidebar({
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
       <div className="flex h-14 items-center gap-2 border-b px-4">
-        <div className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-          {tenantNome.charAt(0).toUpperCase()}
-        </div>
-        <span className="truncate text-sm font-semibold">{tenantNome}</span>
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt={tenantNome} className="h-7 max-w-[160px] object-contain" />
+        ) : (
+          <>
+            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+              {tenantNome.charAt(0).toUpperCase()}
+            </div>
+            <span className="truncate text-sm font-semibold">{tenantNome}</span>
+          </>
+        )}
       </div>
       <nav className="flex flex-col gap-1 p-2">
         {itens.map((item) => {

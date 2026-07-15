@@ -21,11 +21,11 @@ Derivados dos princípios de produto (formulários mínimos, UX moderna, IA-firs
 
 ## 2. Stack confirmada
 
-> DECIDIDO (2026-07-15): a stack abaixo está **confirmada** (com TypeORM no lugar de Prisma e better-auth para autenticação) — ver specs/decisoes.md (D-001, D-007).
+> DECIDIDO (2026-07-15): a stack abaixo está **confirmada** (com TypeORM no lugar de Prisma e autenticação própria conforme spec 03 no lugar de better-auth) — ver specs/decisoes.md (D-001, D-010).
 
 | Camada | Escolha confirmada | Papel |
 |---|---|---|
-| Monorepo / linguagem | TypeScript, monorepo (pnpm workspaces + Turborepo) | Código compartilhado entre web e worker (tipos, validação, clients) |
+| Monorepo / linguagem | TypeScript, monorepo (npm workspaces) | Código compartilhado entre web e worker (tipos, validação, clients) |
 | Web full-stack | Next.js 16 (App Router) | UI + API (Route Handlers / Server Actions) numa base só |
 | Banco de dados | PostgreSQL 16 | Persistência transacional; `tenant_id` + RLS |
 | ORM | TypeORM | Acesso ao banco (entities/repositories), migrações |
@@ -33,7 +33,7 @@ Derivados dos princípios de produto (formulários mínimos, UX moderna, IA-firs
 | Cache / sessão | Redis | Cache, rate limiting, locks distribuídos |
 | Storage de anexos | S3-compatível (MinIO em dev; S3/R2 em prod) | `Anexo`, imagens inline do rich text |
 | Editor rich text | TipTap + sanitização server-side | Descrição/mensagens; imagens e anexos inline |
-| Autenticação | better-auth | Login, sessão, resolução de tenant por subdomínio/domínio |
+| Autenticação | Autenticação própria conforme spec 03 (D-010) | Login, sessão, resolução de tenant por subdomínio/domínio |
 | Engine de IA (fase 1) | Claude Agent SDK, modelo Opus 4.8 | Execução da triagem em worker isolado |
 
 ### 2.1 Justificativas e alternativas consideradas
@@ -54,9 +54,9 @@ Derivados dos princípios de produto (formulários mínimos, UX moderna, IA-firs
 
 **Storage S3-compatível.** Anexos e imagens inline não vão ao banco. MinIO em dev garante paridade com S3/R2 em prod. Uploads via URLs pré-assinadas; varredura e limites em `09-seguranca-lgpd.md`.
 
-**better-auth.** Escolhido (D-007) pelo suporte first-class a multi-tenancy/organizations e sessões próprias sem depender de OAuth externo, além de acomodar a service account do `agente_ia`. Cobre os fluxos necessários (credenciais e-mail/senha, sessão) e a resolução de tenant. Detalhes em `03-autenticacao-perfis-permissoes.md`.
+**Autenticação própria.** Implementada diretamente conforme spec 03 (D-010), substituindo o better-auth avaliado inicialmente: sem adapter oficial para TypeORM, com modelo de identidade global incompatível com a identidade por-tenant do sistema, e com camada de dados fora de `runInTenantContext` (RLS). Cobre os fluxos necessários (Argon2id, sessões server-side revogáveis por cookie opaco) e a resolução de tenant, além de acomodar a service account do `agente_ia`. Detalhes em `03-autenticacao-perfis-permissoes.md`.
 
-> DECIDIDO (2026-07-15): better-auth em vez de Auth.js/NextAuth — ver specs/decisoes.md (D-007).
+> DECIDIDO (2026-07-15): autenticação implementada diretamente conforme esta spec (Argon2id + sessões server-side); better-auth descartado — ver specs/decisoes.md (D-010).
 
 ---
 

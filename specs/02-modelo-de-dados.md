@@ -155,6 +155,7 @@ erDiagram
     USUARIO ||--o{ MENSAGEM : autora
     USUARIO ||--o{ PREFERENCIA_NOTIFICACAO : tem
     USUARIO ||--o{ SESSAO : "tem sessões"
+    USUARIO ||--o{ REDEFINICAO_SENHA : "solicita"
 
     SISTEMA_ALVO ||--o{ CHAMADO : "alvo de"
     CATEGORIA ||--o{ CHAMADO : classifica
@@ -191,7 +192,7 @@ Empresa/instância whitelabel. Raiz do isolamento. Detalhes de branding/domínio
 `slug` e `dominio_proprio` são globais (sem tenant_id — é a própria raiz).
 
 ### Usuario
-Pessoas e o service account de IA. **Modelo canônico: por-tenant** — cada usuário pertence a um único tenant (`tenant_id NOT NULL`), com `papel` e `status` na própria linha; o vínculo usuário↔tenant É a linha de `usuario`. Regras de comportamento de auth (login, sessões, convites, reset) em `03-autenticacao-perfis-permissoes.md`; as **estruturas de dados** de auth (esta tabela + `Sessao` + `Convite`) vivem aqui.
+Pessoas e o service account de IA. **Modelo canônico: por-tenant** — cada usuário pertence a um único tenant (`tenant_id NOT NULL`), com `papel` e `status` na própria linha; o vínculo usuário↔tenant É a linha de `usuario`. Regras de comportamento de auth (login, sessões, convites, reset) em `03-autenticacao-perfis-permissoes.md`; as **estruturas de dados** de auth (esta tabela + `Sessao` + `Convite` + `RedefinicaoSenha`) vivem aqui.
 
 > DECISÃO (resolvida — estrutural): adotado o modelo **por-tenant** de `02`/`07` (um Usuario pertence a um único tenant; sem conta global compartilhada). `03-autenticacao-perfis-permissoes.md` §1 e §5 descreviam identidade global + N vínculos (mesmo e-mail cliente no tenant A e operador no B) — essa narrativa deve ser corrigida em 03. Mesmo e-mail em tenants diferentes = linhas independentes (a unicidade é por tenant).
 
@@ -249,6 +250,23 @@ Convites de acesso emitidos por admin (ver `03-autenticacao-perfis-permissoes.md
 | created_at / updated_at | timestamptz | | |
 
 - UNIQUE parcial `(tenant_id, email)` WHERE `status='pendente'` (um convite pendente por e-mail por tenant); `token_hash` UNIQUE global.
+
+### RedefinicaoSenha
+Token de uso único para o fluxo de "esqueci a senha" (ver `03-autenticacao-perfis-permissoes.md` §4.3). Consumido no uso e invalida-se por expiração.
+
+| campo | tipo | constraints | notas |
+|---|---|---|---|
+| id | uuid | PK | |
+| tenant_id | uuid | FK, NOT NULL | |
+| usuario_id | uuid | FK, NOT NULL | conta para a qual o reset foi solicitado |
+| token_hash | text | NOT NULL, UNIQUE | hash do token enviado por e-mail (nunca o token em claro) |
+| expira_em | timestamptz | NOT NULL | TTL curto (ex. 1h, ver `03` §4.3) |
+| usado_em | timestamptz | NULL | preenchido no consumo; token de uso único |
+| criado_em | timestamptz | NOT NULL | |
+
+- Índice `(tenant_id, usuario_id)` para localizar/invalidar tokens pendentes do usuário; `token_hash` UNIQUE para lookup no request.
+- Mesmo tratamento de RLS das demais tabelas com `tenant_id` (`tenant_isolation` — ver Estratégia multi-tenant no banco, abaixo).
+- Não usa `deleted_at`: token é consumido (`usado_em`) ou expira; expurgado por retenção.
 
 ### SistemaAlvo
 Sistema de software do tenant sobre o qual os chamados são abertos. Guarda repositório git, fontes de logs e conexão somente-leitura ao BD do sistema. Credenciais NUNCA em texto puro — ver `09-seguranca-lgpd.md`. **Esta modelagem é canônica e deve espelhar `07-multitenancy-whitelabel.md` §5.1** (conexão de BD em campos separados; `descricao`, `logs_tipo`, `logs_credencial_ref` presentes nos dois docs).
@@ -462,6 +480,8 @@ COMMIT;
 - A aplicação conecta com um **role sem BYPASSRLS**. Migrações/tarefas administrativas usam um role separado com bypass, jamais o role de request.
 - `USING` filtra leituras; `WITH CHECK` impede inserir/atualizar linha de outro tenant.
 
+**Resolução de tenant antes do contexto RLS.** Como a aplicação conecta sem BYPASSRLS, ela não consegue por si só ler a linha de `tenant` (por slug/domínio) para descobrir o `tenant_id` a colocar em `SET LOCAL` — a própria policy de isolamento esconderia essa linha antes do login. A função `chamados_resolver_tenant` (SECURITY DEFINER) resolve o tenant por slug/domínio **antes** de estabelecer o contexto RLS, sem exigir que a aplicação use um role com bypass (D-010; ver `07-multitenancy-whitelabel.md`).
+
 > DECISÃO PENDENTE: modelo de deploy do banco — schema único compartilhado com RLS (recomendado, mais simples de operar) vs schema-per-tenant. A recomendação é schema único + RLS; schema-per-tenant só se surgir requisito forte de isolamento físico.
 
 > DECIDIDO (2026-07-15): com TypeORM (D-001), o `SET LOCAL app.current_tenant` é injetado pelo helper `runInTenantContext(tenantId, fn)`: ele obtém um `queryRunner`, abre uma transação, executa `SELECT set_config('app.current_tenant', $1, true)` (3º argumento `true` = local à transação) e roda `fn` — com todas as queries/repositories do request — dentro dessa transação. Todo acesso a dados passa por esse helper; é **proibido** `SET`/`set_config(..., false)` de sessão, honrando a regra normativa acima (sempre local à transação, nunca de sessão, para que a conexão do pool não vaze tenant entre requests). Ver specs/decisoes.md (D-001).
@@ -506,6 +526,8 @@ Descrições e mensagens são rich text (TipTap recomendado). Guardamos **duas r
 | sessao | `(tenant_id, usuario_id)` | listar/revogar sessões do usuário |
 | convite | UNIQUE `(token_hash)` | validação do token de convite |
 | convite | parcial UNIQUE `(tenant_id, email)` WHERE `status='pendente'` | um convite pendente por e-mail |
+| redefinicao_senha | UNIQUE `(token_hash)` | validação do token de reset |
+| redefinicao_senha | `(tenant_id, usuario_id)` | localizar/invalidar tokens pendentes do usuário |
 | chamado | UNIQUE `(tenant_id, numero)` | numeração legível |
 | chamado | `(tenant_id, status, updated_at DESC)` | listagem/filtragem do painel |
 | chamado | `(tenant_id, cliente_id, created_at DESC)` | portal do cliente |
@@ -523,7 +545,7 @@ Todos os índices de negócio começam por `tenant_id` (alinhado ao filtro de RL
 
 - **Soft delete** (`deleted_at`) aplica-se a: `tenant`, `usuario`, `sistema_alvo`, `categoria`, `chamado`, `mensagem`, `anexo`, `canal_notificacao`. Queries de aplicação filtram `deleted_at IS NULL` por padrão.
 - **Append-only (nunca soft-deletados)**: `evento_chamado` e `execucao_ia` — são trilha de auditoria e devem permanecer íntegros; expurgo só por política de retenção explícita.
-- **Sessao/Convite**: não usam `deleted_at`. `sessao` é revogada via `revogada_em` e expurgada por retenção após expirar; `convite` transita de status (`revogado`/`expirado`) e é expurgado por retenção. Ambos guardam apenas `token_hash`, nunca o token em claro.
+- **Sessao/Convite/RedefinicaoSenha**: não usam `deleted_at`. `sessao` é revogada via `revogada_em` e expurgada por retenção após expirar; `convite` transita de status (`revogado`/`expirado`) e é expurgado por retenção; `redefinicao_senha` é consumida via `usado_em` ou expira, e é expurgada por retenção. Todos guardam apenas `token_hash`, nunca o token em claro.
 - **Anexos**: soft delete marca a linha; o objeto físico no storage é removido por um job de GC após período de carência, respeitando checksum/dedupe.
 - **Cliente reabrindo chamado resolvido**: não deleta nada; incrementa `reaberto_count`, limpa `resolvido_em`/`fechar_automaticamente_em` e volta status para `em_atendimento` (regra completa em `04-chamados.md`).
 - **Retenção/LGPD**: prazos de retenção, anonimização de dados pessoais e direito ao esquecimento são definidos em `09-seguranca-lgpd.md`. Este documento apenas garante que as colunas (`deleted_at`) e a separação auditoria/negócio existem para suportá-los.

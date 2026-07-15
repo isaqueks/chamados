@@ -10,21 +10,29 @@ import type { NextRequest } from 'next/server';
  * candidato a slug; a resolução slug → tenant (via função SECURITY DEFINER) e a
  * validação de sessão acontecem no servidor (lib/tenant.ts, lib/sessao.ts).
  *
- * Estratégia (M1):
+ * Estratégia (M2):
  *  1. Subdomínio: `acme.localhost:3000` → slug `acme`.
- *  2. Fallback de DEV: querystring `?tenant=acme` ou header `x-tenant-slug`
- *     (facilita testar sem configurar subdomínios). Domínio próprio é M2.
+ *  2. Domínio próprio: o host cru é repassado em `x-tenant-host`; a resolução
+ *     host→tenant (via mapa de domínios) acontece no servidor (lib/tenant.ts),
+ *     com precedência sobre o slug (specs/07 §3.4). TLS/ACME fica fora (dev).
+ *  3. Fallback de DEV: querystring `?tenant=acme` ou header `x-tenant-slug`.
+ *
+ * O proxy roda no Edge e NÃO acessa o banco: só extrai candidatos (slug + host).
  */
 
 /** Subdomínios/rótulos reservados que NÃO são slugs de tenant. */
 const RESERVADOS = new Set(['www', 'app', 'api', 'admin', 'mail', 'localhost']);
+
+function hostCru(request: NextRequest): string {
+  return (request.headers.get('host') ?? '').split(':')[0]?.toLowerCase() ?? '';
+}
 
 function extrairSlug(request: NextRequest): string | null {
   // Fallback de dev explícito tem prioridade (querystring).
   const qs = request.nextUrl.searchParams.get('tenant');
   if (qs) return qs.trim().toLowerCase();
 
-  const host = (request.headers.get('host') ?? '').split(':')[0]?.toLowerCase() ?? '';
+  const host = hostCru(request);
   if (!host) return null;
 
   // `<slug>.localhost` (dev) ou `<slug>.<dominio>` (subdomínio da plataforma).
@@ -34,6 +42,8 @@ function extrairSlug(request: NextRequest): string | null {
     return RESERVADOS.has(slug) ? null : slug;
   }
   // Domínios com 3+ rótulos: primeiro rótulo é o slug (ex.: acme.chamados.app).
+  // Para domínios próprios (ex.: suporte.empresa.com) esse candidato só é usado
+  // se a resolução por host exato não casar (servidor decide a precedência).
   if (partes.length >= 3) {
     const slug = partes[0]!;
     return RESERVADOS.has(slug) ? null : slug;
@@ -46,10 +56,13 @@ function extrairSlug(request: NextRequest): string | null {
 
 export function proxy(request: NextRequest): NextResponse {
   const slug = extrairSlug(request);
+  const host = hostCru(request);
 
   const headers = new Headers(request.headers);
   if (slug) headers.set('x-tenant-slug', slug);
   else headers.delete('x-tenant-slug'); // evita spoofing quando não há slug real
+  if (host) headers.set('x-tenant-host', host);
+  else headers.delete('x-tenant-host');
 
   return NextResponse.next({ request: { headers } });
 }

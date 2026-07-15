@@ -122,7 +122,9 @@ Resolução de tenant por requisição:
 3. Senão, se for `slug.chamados.app` → tenant pelo slug.
 4. Senão → 404 / página institucional da plataforma.
 
-O tenant resolvido é injetado no contexto da request e usado por better-auth para escopar a sessão e pela camada de dados para setar `tenant_id` (RLS — `02-modelo-de-dados.md`).
+O tenant resolvido é injetado no contexto da request e usado pela autenticação própria conforme spec 03 (D-010) para escopar a sessão e pela camada de dados para setar `tenant_id` (RLS — `02-modelo-de-dados.md`).
+
+Esse passo de resolução (por slug/domínio) roda **antes** de estabelecer o contexto RLS da transação, via a função `chamados_resolver_tenant` (SECURITY DEFINER): como a aplicação conecta com um role sem BYPASSRLS, ela não consegue ler a linha do `tenant` para descobrir o `tenant_id` sem antes ter esse `tenant_id` — a própria policy de isolamento esconderia a linha. `chamados_resolver_tenant` resolve essa dependência circular fora do contexto RLS, sem exigir bypass da aplicação (D-010; ver `02-modelo-de-dados.md`).
 
 ```mermaid
 flowchart LR

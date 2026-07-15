@@ -14,6 +14,8 @@
     "migration:revert": "tsx src/scripts/migrate.ts --revert",
     "smoke:rls": "tsx src/scripts/smoke-rls.ts",
     "smoke:auth": "tsx src/scripts/smoke-auth.ts",
+    "smoke:secrets": "tsx src/scripts/smoke-secrets.ts",
+    "smoke:sistemas": "tsx src/scripts/smoke-sistemas.ts",
     "seed:dev": "tsx src/scripts/seed-dev.ts"
   },
   "dependencies": {

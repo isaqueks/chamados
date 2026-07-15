@@ -46,10 +46,9 @@ tenant), não como uma identidade global compartilhada.
 
 ## 2. Stack de autenticação
 
-> DECIDIDO (2026-07-15): **better-auth** (em vez de Auth.js/NextAuth), por suporte
-> first-class a multi-tenancy, organizations e API própria de sessão sem depender de
-> OAuth externo — ver specs/decisoes.md (D-007). O restante deste documento permanece
-> majoritariamente agnóstico à lib; onde a diferença importa, está marcado.
+> DECIDIDO (2026-07-15): autenticação implementada diretamente conforme esta spec
+> (Argon2id + sessões server-side); better-auth descartado — ver specs/decisoes.md
+> (D-010). O restante deste documento descreve o modelo diretamente implementado.
 
 Decisões fixas independentes da lib:
 - **Autenticação primária por e-mail + senha**, escopada ao tenant resolvido.
@@ -360,7 +359,7 @@ flowchart LR
 
 ## 10. Resumo das decisões pendentes
 
-> DECIDIDO (2026-07-15): better-auth (em vez de Auth.js/NextAuth) — ver specs/decisoes.md (D-007).
+> DECIDIDO (2026-07-15): autenticação implementada diretamente conforme esta spec (Argon2id + sessões server-side); better-auth descartado — ver specs/decisoes.md (D-010).
 > DECISÃO PENDENTE: admin como papel exclusivo vs flag sobre operador (assumido exclusivo).
 > DECISÃO PENDENTE: existência e escopo de super-admin de plataforma cross-tenant.
 > DECISÃO PENDENTE: 2FA (TOTP) — obrigatório para admin? opcional para operador?

@@ -182,7 +182,7 @@ Cada fase só é considerada entregue quando **todos** os critérios abaixo são
 | R-07 | **Latência da triagem** (git pull + análise) degrada UX | Médio | Fila assíncrona; feedback imediato ao cliente ("em triagem"); git pull incremental/cache; timeouts e retry |
 | R-08 | **Lock-in de provider de IA** ao acoplar ao Claude Agent SDK | Médio | Camada de abstração obrigatória desde o MVP (E-23), mesmo com uma só impl. — RF-17 |
 | R-09 | **Lock-in de gateway** (esp. WhatsApp na fase 2) | Médio | Adapter pattern; comparar Meta vs. Evolution vs. Twilio antes de commitar; ver `06-notificacoes.md` |
-| R-10 | **Stack fechada** (resolvido) — confirmada em D-001/D-007 (TypeORM, better-auth, etc.) | Baixo | M0 destravado; ver `01-arquitetura.md` e specs/decisoes.md (D-001, D-007) |
+| R-10 | **Stack fechada** (resolvido) — confirmada em D-001/D-010 (TypeORM, autenticação própria, etc.) | Baixo | M0 destravado; ver `01-arquitetura.md` e specs/decisoes.md (D-001, D-010) |
 | R-11 | **Migração/adoção** — operação presa a hábitos do osTicket | Médio | UX moderna (RNF-02); transição com osTicket em leitura; importador descartado por ora (N-12, D-005) |
 | R-12 | **Sanitização de rich text** insuficiente → XSS | Alto | Sanitização server-side (E-10); allowlist de tags; testes; ver `09-seguranca-lgpd.md` |
 

@@ -41,7 +41,8 @@ async function main(): Promise<void> {
       status: StatusTenant.em_provisionamento,
     });
     console.log(
-      `[seed-dev] tenant ${SLUG} ${prov.criado ? 'criado' : 'já existia'} (id=${prov.tenant_id}); agente_ia=${prov.agente_ia_id}`,
+      `[seed-dev] tenant ${SLUG} ${prov.criado ? 'criado' : 'já existia'} (id=${prov.tenant_id}); ` +
+        `agente_ia=${prov.agente_ia_id}; categoria_geral=${prov.categoria_geral_id}`,
     );
 
     // 2) Cria os usuários humanos (idempotente por e-mail).
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
       console.log(`[seed-dev]   ${h.papel.padEnd(9)} ${h.email}  /  ${SENHA_DEV}`);
     }
     console.log(
-      '[seed-dev]   agente_ia  (service account — sem login por senha; token M2M via env AGENTE_IA_TOKEN)',
+      '[seed-dev]   agente_ia  (service account — sem login por senha; credencial no cofre se AGENTE_IA_TOKEN estiver setado)',
     );
   } finally {
     await ds.destroy();

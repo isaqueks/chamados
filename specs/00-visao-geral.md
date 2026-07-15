@@ -244,4 +244,4 @@ flowchart TD
 - **Notificações:** gateways plugáveis (adapter pattern). Fase 1 e-mail (SMTP); fase 2 WhatsApp e outros. — RF-18 (detalhes em `06-notificacoes.md`).
 - **Guardrail de resolução automática:** a IA nunca faz merge/deploy; sempre PR com aprovação humana. Relaxável por configuração do tenant no futuro. — `05-agente-ia.md`.
 
-> DECIDIDO (2026-07-15): stack técnica confirmada — monorepo TypeScript, Next.js (App Router), PostgreSQL 16 com tenant_id + RLS, TypeORM, Redis + BullMQ, storage S3-compatível (MinIO/S3/R2), TipTap com sanitização server-side, better-auth. Ver `01-arquitetura.md` e specs/decisoes.md (D-001, D-007).
+> DECIDIDO (2026-07-15): stack técnica confirmada — monorepo TypeScript, Next.js (App Router), PostgreSQL 16 com tenant_id + RLS, TypeORM, Redis + BullMQ, storage S3-compatível (MinIO/S3/R2), TipTap com sanitização server-side, autenticação própria conforme spec 03 (D-010). Ver `01-arquitetura.md` e specs/decisoes.md (D-001, D-010).

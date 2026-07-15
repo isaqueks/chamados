@@ -60,6 +60,24 @@ services:
       retries: 12
       start_period: 10s
 
+  # Provisiona o bucket único (prefixo por tenant — specs/07 §6.2). Roda uma vez
+  # e sai; a aplicação também garante o bucket sob demanda (garantirBucket).
+  minio-init:
+    image: minio/mc:latest
+    container_name: chamados-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        mc alias set local http://minio:9000
+        "$${MINIO_ROOT_USER:-minioadmin}" "$${MINIO_ROOT_PASSWORD:-minioadmin}" &&
+        mc mb --ignore-existing "local/$${STORAGE_BUCKET:-chamados}" &&
+        echo "bucket $${STORAGE_BUCKET:-chamados} pronto"
+    restart: 'no'
+
 volumes:
   postgres-data:
     name: chamados-postgres-data

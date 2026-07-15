@@ -24,6 +24,8 @@
     "migration:revert": "npm run migration:revert -w @chamados/db",
     "smoke:rls": "npm run smoke:rls -w @chamados/db",
     "smoke:auth": "npm run smoke:auth -w @chamados/db",
+    "smoke:secrets": "npm run smoke:secrets -w @chamados/db",
+    "smoke:sistemas": "npm run smoke:sistemas -w @chamados/db",
     "seed:dev": "npm run seed:dev -w @chamados/db",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -6,8 +6,12 @@ import { UsuarioSchema } from './entities/usuario';
 import { SessaoSchema } from './entities/sessao';
 import { ConviteSchema } from './entities/convite';
 import { RedefinicaoSenhaSchema } from './entities/redefinicao-senha';
+import { SegredoSchema } from './entities/segredo';
+import { SistemaAlvoSchema } from './entities/sistema-alvo';
+import { CategoriaSchema } from './entities/categoria';
 import { Init1720000000000 } from './migrations/0000-init';
 import { Auth1720000001000 } from './migrations/0001-auth';
+import { M21720000002000 } from './migrations/0002-m2';
 
 const entidades = [
   TenantSchema,
@@ -15,8 +19,11 @@ const entidades = [
   SessaoSchema,
   ConviteSchema,
   RedefinicaoSenhaSchema,
+  SegredoSchema,
+  SistemaAlvoSchema,
+  CategoriaSchema,
 ];
-const migrations = [Init1720000000000, Auth1720000001000];
+const migrations = [Init1720000000000, Auth1720000001000, M21720000002000];
 
 /**
  * DataSource da APLICAÇÃO (web + worker). Conecta com o role SEM BYPASSRLS.

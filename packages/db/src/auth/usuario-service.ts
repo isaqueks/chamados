@@ -72,7 +72,7 @@ export async function criarUsuarioAtivoComSenha(
 export async function garantirAgenteIA(
   em: EntityManager,
   tenant_id: string,
-  credencialServicoRef: string,
+  credencialServicoRef: string | null,
 ): Promise<string> {
   const existente = await em.findOne(UsuarioSchema, {
     where: { papel: Papel.agente_ia },
