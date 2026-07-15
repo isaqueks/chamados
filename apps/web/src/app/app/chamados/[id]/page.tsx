@@ -32,6 +32,7 @@ import { dataHora, tempoRelativo } from '@/lib/tempo';
 import { RespostaForm } from './resposta-form';
 import { PainelPropriedades } from './painel-propriedades';
 import { AssistenteIA } from './assistente-ia';
+import { ChamadoDetalheTabs } from './detalhe-tabs';
 
 const PROSE_CLS =
   'text-sm leading-relaxed [&_a]:text-primary [&_a]:underline [&_img]:my-2 [&_img]:max-w-full [&_img]:rounded [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground';
@@ -173,95 +174,97 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
         <div className={PROSE_CLS} dangerouslySetInnerHTML={{ __html: chamado.descricao_html }} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_336px]">
-        {/* Coluna principal: timeline + compositor */}
-        <div className="order-2 flex flex-col gap-5 lg:order-1">
-          <section className="flex flex-col gap-4">
-            <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-              Timeline
-            </h2>
-            {itens.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma atividade ainda.</p>
+      <ChamadoDetalheTabs
+        timeline={
+          <div className="flex flex-col gap-5">
+            <section className="flex flex-col gap-4">
+              <h2 className="font-heading text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+                Timeline
+              </h2>
+              {itens.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhuma atividade ainda.</p>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {itens.map((item) =>
+                    item.tipo === 'mensagem' ? (
+                      <MensagemBolha
+                        key={`m-${item.m.id}`}
+                        autor={autorLabel(item.m.autor_id)}
+                        papel={nomes[item.m.autor_id]?.papel}
+                        interna={
+                          'visibilidade' in item.m &&
+                          item.m.visibilidade === VisibilidadeMensagem.interna
+                        }
+                        html={item.m.corpo_html}
+                        anexos={item.anexos}
+                        quando={item.m.created_at}
+                      />
+                    ) : (
+                      <EventoLinha
+                        key={`e-${item.e.id}`}
+                        autor={autorLabel(item.e.ator_id)}
+                        e={item.e}
+                      />
+                    ),
+                  )}
+                </div>
+              )}
+            </section>
+
+            {encerrado ? (
+              <div className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+                Chamado {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} — não recebe novas
+                mensagens.
+              </div>
             ) : (
-              <div className="flex flex-col gap-4">
-                {itens.map((item) =>
-                  item.tipo === 'mensagem' ? (
-                    <MensagemBolha
-                      key={`m-${item.m.id}`}
-                      autor={autorLabel(item.m.autor_id)}
-                      papel={nomes[item.m.autor_id]?.papel}
-                      interna={
-                        'visibilidade' in item.m &&
-                        item.m.visibilidade === VisibilidadeMensagem.interna
-                      }
-                      html={item.m.corpo_html}
-                      anexos={item.anexos}
-                      quando={item.m.created_at}
-                    />
-                  ) : (
-                    <EventoLinha
-                      key={`e-${item.e.id}`}
-                      autor={autorLabel(item.e.ator_id)}
-                      e={item.e}
-                    />
-                  ),
-                )}
+              <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+                <h2 className="font-heading text-sm font-semibold">Responder</h2>
+                <RespostaForm chamadoId={chamado.id} podeInterna={podeInterna} />
               </div>
             )}
-          </section>
-
-          {encerrado ? (
-            <div className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
-              Chamado {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} — não recebe novas
-              mensagens.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
-              <h2 className="font-heading text-sm font-semibold">Responder</h2>
-              <RespostaForm chamadoId={chamado.id} podeInterna={podeInterna} />
-            </div>
-          )}
-        </div>
-
-        {/* Coluna lateral: propriedades + detalhes + IA */}
-        <aside className="order-1 flex flex-col gap-4 lg:order-2">
-          <div className="rounded-xl border bg-card p-4">
-            <PainelPropriedades
-              chamadoId={chamado.id}
-              status={chamado.status}
-              natureza={chamado.natureza}
-              prioridade={chamado.prioridade}
-              complexidade={chamado.complexidade ?? null}
-              alvosStatus={alvos}
-              operadores={operadores}
-              operadorAtualId={chamado.operador_id ?? null}
-              meuId={usuario.id}
-              encerrado={encerrado}
-            />
           </div>
+        }
+        contexto={
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl border bg-card p-4">
+              <PainelPropriedades
+                chamadoId={chamado.id}
+                status={chamado.status}
+                natureza={chamado.natureza}
+                prioridade={chamado.prioridade}
+                complexidade={chamado.complexidade ?? null}
+                alvosStatus={alvos}
+                operadores={operadores}
+                operadorAtualId={chamado.operador_id ?? null}
+                meuId={usuario.id}
+                encerrado={encerrado}
+              />
+            </div>
 
-          <div className="flex flex-col gap-2.5 rounded-xl border bg-card p-4 text-sm">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Detalhes
-            </h3>
-            <LinhaMeta rotulo="Alvo" valor={sistemaNome ?? categoriaNome ?? '—'} />
-            <LinhaMeta rotulo="Solicitante" valor={solicitante} />
-            <LinhaMeta rotulo="Aberto em" valor={dataHora(chamado.created_at)} />
-            <LinhaMeta rotulo="Atualizado" valor={dataHora(chamado.updated_at)} />
-            {chamado.resolvido_em && (
-              <LinhaMeta rotulo="Resolvido em" valor={dataHora(chamado.resolvido_em)} />
-            )}
-            <LinhaMeta rotulo="Reaberturas" valor={String(chamado.reaberto_count)} />
+            <div className="flex flex-col gap-2.5 rounded-xl border bg-card p-4 text-sm">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Detalhes
+              </h3>
+              <LinhaMeta rotulo="Alvo" valor={sistemaNome ?? categoriaNome ?? '—'} />
+              <LinhaMeta rotulo="Solicitante" valor={solicitante} />
+              <LinhaMeta rotulo="Aberto em" valor={dataHora(chamado.created_at)} />
+              <LinhaMeta rotulo="Atualizado" valor={dataHora(chamado.updated_at)} />
+              {chamado.resolvido_em && (
+                <LinhaMeta rotulo="Resolvido em" valor={dataHora(chamado.resolvido_em)} />
+              )}
+              <LinhaMeta rotulo="Reaberturas" valor={String(chamado.reaberto_count)} />
+            </div>
           </div>
-
+        }
+        ia={
           <AssistenteIA
             nomeAssistente={nomeAssistente}
             chamadoId={chamado.id}
             execucoes={execucoesIa}
             podeReexecutar={podeInterna}
           />
-        </aside>
-      </div>
+        }
+      />
     </div>
   );
 }

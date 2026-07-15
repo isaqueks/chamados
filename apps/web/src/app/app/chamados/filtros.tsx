@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { StatusChamado, Natureza, Prioridade, Complexidade } from '@chamados/shared';
 import type { ContadoresFila } from '@chamados/db';
 import {
@@ -50,6 +51,7 @@ const ORDEM_STATUS: StatusChamado[] = [
 export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [busca, setBusca] = useState(atual.busca);
 
   function navegar(mudancas: Record<string, string | null>) {
     const p = new URLSearchParams(searchParams.toString());
@@ -74,6 +76,27 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Busca full-text (título + descrição, com ranking) — specs/04 §10.4 */}
+      <form
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          navegar({ q: busca.trim() || null });
+        }}
+        className="relative w-full max-w-md"
+      >
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          name="q"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar por número, título ou descrição…"
+          aria-label="Buscar chamados"
+          className="h-9 w-full rounded-md border border-input bg-transparent pl-8 pr-3 text-sm shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+      </form>
+
       {/* Atribuição + status como chips com contadores */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Chip
@@ -214,7 +237,10 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
             <button
               type="button"
               aria-label="Limpar busca"
-              onClick={() => navegar({ q: null })}
+              onClick={() => {
+                setBusca('');
+                navegar({ q: null });
+              }}
               className="text-muted-foreground hover:text-foreground"
             >
               <X className="size-3" />
@@ -225,7 +251,10 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
         {temFiltro && (
           <button
             type="button"
-            onClick={() => router.push('/app/chamados')}
+            onClick={() => {
+              setBusca('');
+              router.push('/app/chamados');
+            }}
             className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
             Limpar filtros

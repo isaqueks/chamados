@@ -68,7 +68,7 @@ sequenceDiagram
     W->>W: abre ExecucaoIA (executando)
     W->>SA: git pull do repo
     W->>W: monta contexto (sanitiza texto do cliente)
-    W->>P: prompt de análise + ferramentas (ro)
+    W->>P: prompt de análise + ferramentas (ro; + escrita se gate pre-call aberto)
     P->>SA: lê código / logs / BD (read-only)
     P-->>W: resultado estruturado (JSON)
     alt Não entendeu
@@ -76,9 +76,9 @@ sequenceDiagram
         W->>CH: status = aguardando_cliente
     else Entendeu
         W->>CH: nota interna (diagnostico) + complexidade/natureza/prioridade
-        opt problema + facil + resolvivel
-            W->>SA: cria branch, implementa, abre PR
-            W->>CH: nota interna com link do PR
+        opt gate pos-call aberto (problema + facil + resolvivel)
+            W->>SA: cria branch, commit, push (+ PR via API se github)
+            W->>CH: nota interna com link do PR (ou instrucao de PR manual)
         end
         opt alteracao
             W->>CH: nota interna com SPEC completa
@@ -124,19 +124,20 @@ Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efême
 - **Anexos**: texto/imagens relevantes (imagens via visão do modelo quando suportado; ver limites em §7).
 - **Conhecimento do sistema-alvo**: acesso sob demanda via ferramentas (não despejar o repo inteiro no prompt).
 
-### 4.2 Ferramentas (todas read-only sobre o SistemaAlvo)
+### 4.2 Ferramentas (read-only sobre o SistemaAlvo, exceto a dupla de escrita gated)
 
-| Ferramenta                  | Descrição                                        | Restrições                                   |
-| --------------------------- | ------------------------------------------------ | -------------------------------------------- |
-| `repo_buscar`               | grep/semantic search no código sincronizado      | apenas working copy do tenant                |
-| `repo_ler_arquivo`          | lê arquivo por caminho                           | dentro do repo; sem symlink para fora        |
-| `logs_consultar`            | consulta fontes/caminhos de log configurados     | janela temporal limitada; read-only          |
-| `bd_consultar`              | executa SELECT na conexão read-only              | somente `SELECT`; timeout curto; sem DDL/DML |
-| `chamado_publicar_mensagem` | publica mensagem `publica` ou `interna`          | visibilidade obrigatória                     |
-| `chamado_classificar`       | grava complexidade/natureza/prioridade sugeridas | valores dos enums canônicos                  |
-| `codigo_propor_pr`          | cria branch, aplica patch, abre PR               | só se autorizado pelo fluxo §6; nunca merge  |
+| Ferramenta                  | Descrição                                                        | Restrições                                                                                   |
+| --------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `repo_buscar`               | grep/semantic search no código sincronizado                      | apenas working copy do tenant                                                                |
+| `repo_ler_arquivo`          | lê arquivo por caminho                                           | dentro do repo; sem symlink para fora                                                        |
+| `logs_consultar`            | consulta fontes/caminhos de log configurados                     | janela temporal limitada; read-only                                                          |
+| `bd_consultar`              | executa SELECT na conexão read-only                              | somente `SELECT`; timeout curto; sem DDL/DML                                                 |
+| `chamado_publicar_mensagem` | publica mensagem `publica` ou `interna`                          | visibilidade obrigatória                                                                     |
+| `chamado_classificar`       | grava complexidade/natureza/prioridade sugeridas                 | valores dos enums canônicos                                                                  |
+| `repo_escrever_arquivo`     | sobrescreve (ou cria) um arquivo na working copy **descartável** | só injetada com o gate de resolução aberto (§6); nunca toca o cache persistente nem produção |
+| `repo_criar_arquivo`        | cria um arquivo novo na working copy descartável                 | idem acima; falha se o caminho já existir                                                    |
 
-A conexão `bd_consultar` usa a credencial SOMENTE LEITURA do `SistemaAlvo` (ver `07-multitenancy-whitelabel.md`). Nenhuma ferramenta permite escrita em produção; a única escrita possível é criar branch/PR em repositório git, jamais deploy.
+A conexão `bd_consultar` usa a credencial SOMENTE LEITURA do `SistemaAlvo` (ver `07-multitenancy-whitelabel.md`). Nenhuma ferramenta do provider permite escrita em produção nem acesso a git/rede: `repo_escrever_arquivo`/`repo_criar_arquivo` só escrevem numa working copy **descartável** (clone efêmero do cache, destruído ao fim do job — §6); não existe ferramenta de branch/commit/push/PR no provider. Essa etapa é do **worker**: depois que o provider devolve a tentativa, é o worker — o único que detém a credencial do repositório — quem valida, cria a branch, comita, faz push e (GitHub) abre o PR (menor privilégio; ver §6 e `09-seguranca-lgpd.md` §4).
 
 ---
 
@@ -188,36 +189,48 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 
 ## 6. Resolução automática (problema + fácil)
 
-Condições cumulativas para a IA **tentar** resolver:
+A tentativa de resolução é controlada por um **gate duplo no pipeline** — nunca no provider (menor privilégio, `09-seguranca-lgpd.md` §4):
 
-- `natureza = problema`;
-- `complexidade = facil`;
-- `compreendido = true` acima do limiar;
-- tenant tem resolução automática habilitada (default: habilitada só para geração de PR, nunca merge);
-- causa isolável com o acesso atual (evidência em código).
+- **Gate PRÉ-call**: decide se as ferramentas de **escrita** (`repo_escrever_arquivo`/`repo_criar_arquivo`, §4.2) são sequer injetadas nesta triagem. Condições cumulativas: tenant com resolução automática habilitada (default: habilitada só para geração de PR, nunca merge) + `naturezaDeclarada = problema` + `SistemaAlvo` com repositório configurado. Se o gate está fechado, o provider não recebe as ferramentas de escrita e não há como tentar resolver.
+- **Gate PÓS-call**: decide se o **worker** de fato cria branch/push/PR, com base no resultado real devolvido pelo provider. Condições cumulativas: gate pré-call também satisfeito + `naturezaAjustada = problema` + `complexidade = facil` + `compreendido = true` + `confianca >= LIMIAR` (§5.1) + `tentativaResolucao` presente (o provider efetivamente escreveu arquivos).
+
+Quando o gate pré-call está aberto, o provider — se decidir tentar — escreve a correção numa **working copy descartável** (clone efêmero do cache, §3.2) usando `repo_escrever_arquivo`/`repo_criar_arquivo`, e devolve `tentativaResolucao = { resumo, arquivosAlterados }` (contrato canônico em `01-arquitetura.md` §4.1). O provider não tem acesso a git nem à rede — só escreve arquivos.
 
 Fluxo:
 
 ```mermaid
 flowchart TD
-    A[problema + facil + compreendido] --> B{tenant permite resolucao auto?}
-    B -- nao --> Z[nota interna com diagnostico + acao sugerida]
-    B -- sim --> C[cria branch a partir do default]
-    C --> D[implementa correcao + teste minimo]
-    D --> E[abre Pull Request]
-    E --> F[nota interna: link PR, resumo, riscos]
-    F --> G[status em_atendimento -> aguarda aprovacao humana]
-    G --> H{operador aprova?}
-    H -- sim --> I[merge/deploy MANUAL pelo humano]
-    H -- nao --> J[operador comenta / fecha PR]
+    A[natureza declarada = problema] --> B{gate PRE-call: tenant habilitado + repo configurado?}
+    B -- nao --> C[provider roda SEM ferramentas de escrita]
+    B -- sim --> D[injeta repo_escrever_arquivo / repo_criar_arquivo na working copy descartavel]
+    C --> E[provider devolve AIProviderResult]
+    D --> E
+    E --> F{gate POS-call: facil + compreendido + confianca >= limiar + tentativa presente?}
+    F -- nao --> Z[nota interna com diagnostico + acao sugerida; sem branch/PR]
+    F -- sim --> G[worker valida alteracoes reais via git status]
+    G --> H[worker cria branch ia/chamado-N-slug + commit padronizado]
+    H --> I[worker faz push - credencial do cofre so na URL, nunca logada]
+    I -- falha no commit/push --> Y[nota de falha + evento ia_falhou; diagnostico permanece intacto]
+    I -- sucesso --> J{host e github.com?}
+    J -- sim --> K[worker abre PR via REST API do GitHub]
+    J -- nao --> L[push publicado; instrucao de PR manual na nota]
+    K --> M[nota interna: link PR, resumo, arquivos, riscos + evento ia_abriu_pr]
+    L --> M
+    M --> N[status em_atendimento -> aguarda aprovacao humana]
+    N --> O{operador aprova?}
+    O -- sim --> P[merge/deploy MANUAL pelo humano]
+    O -- nao --> Q[operador comenta / fecha PR]
 ```
 
 Regras:
 
-- Branch nomeada de forma rastreável, ex.: `ia/chamado-<id>-<slug>`.
-- O PR referencia o `Chamado` e o `ExecucaoIA`; a nota interna traz link do PR, resumo da mudança, arquivos tocados, testes adicionados e riscos.
+- Branch nomeada de forma rastreável: `ia/chamado-<numero>-<slug>`, criada pelo **worker** a partir do branch default.
+- Commit com mensagem padronizada referenciando `Chamado` e `ExecucaoIA`; autor do commit é a identidade de serviço da IA (sem PII de humano).
+- **Push com a credencial do cofre só na URL** (nunca logada, nunca gravada em `.git/config`); qualquer erro de push descarta a mensagem crua do git para não vazar a URL autenticada.
+- **PR automático só quando o repositório é `github.com`** e há um token com escopo de PR no cofre: o worker abre o PR via REST API. Para outros hosts (GitLab, Bitbucket, self-hosted etc.), o worker publica a branch (push) e a nota interna traz a instrução para abrir o PR manualmente.
+- O PR referencia o `Chamado` e o `ExecucaoIA`; a nota interna traz link do PR (quando houver), resumo da mudança, arquivos tocados e riscos.
 - **A IA nunca faz merge nem deploy.** Merge/deploy é ação manual do humano. Este guardrail é relaxável por configuração do tenant no futuro, mas o default é sempre exigir aprovação.
-- Se a implementação falhar (build/teste quebra, patch não aplica), a IA **não** insiste: publica nota interna com o que tentou e escalona para operador.
+- Se a implementação falhar (provider não altera nada, commit falha, push falha), o worker **não** insiste: publica nota interna de falha (evento `ia_falhou`) sem derrubar o diagnóstico já aplicado, e escalona para operador.
 
 ---
 

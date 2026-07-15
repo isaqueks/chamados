@@ -1,6 +1,7 @@
 'use server';
 
-import { obterAppDataSource, solicitarRedefinicao } from '@chamados/db';
+import { headers } from 'next/headers';
+import { obterAppDataSource, solicitarRedefinicao, consumirRateLimit } from '@chamados/db';
 import { obterTenantAtual } from '@/lib/tenant';
 import { urlAbsoluta } from '@/lib/url';
 import { enviarEmailTransacional } from '@/lib/email';
@@ -24,6 +25,13 @@ export async function acaoSolicitarReset(
 
   const tenant = await obterTenantAtual();
   if (!tenant) return { erro: 'Endereço de tenant desconhecido.' };
+
+  // Rate limiting (specs/09 §2): limita pedidos de reset por tenant+IP e
+  // tenant+e-mail (anti spam/e-mail bombing). Ao estourar, mantemos a MESMA
+  // resposta genérica (anti-enumeração) mas NÃO geramos token nem e-mail.
+  const ip = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined;
+  const rl = await consumirRateLimit('esqueci_senha', { tenantId: tenant.id, ip, email });
+  if (!rl.ok) return { enviado: true };
 
   const ds = await obterAppDataSource();
   const r = await solicitarRedefinicao(ds, tenant.id, email);

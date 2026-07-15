@@ -27,20 +27,35 @@ Nomes de entidades, papéis (`admin`, `operador`, `cliente`, `agente_ia`) e enum
 
 Metodologia STRIDE aplicada aos ativos críticos. Ativos: dados de chamados de um tenant, credenciais de `SistemaAlvo` (git, logs, BD read-only), segredos da plataforma, código-fonte dos clientes acessível pelo worker.
 
-| Ameaça                              | Vetor concreto                                                                      | Mitigação principal                                                            | Doc/seção      |
-| ----------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------- |
-| Vazamento cross-tenant              | Bug de escopo em query; JWT/sessão sem `tenant_id`; job da fila com tenant errado   | RLS + escopo na aplicação + testes de isolamento (§3)                          | §3, `02`, `07` |
-| Prompt injection                    | Texto do chamado/anexo instrui a IA a exfiltrar dados ou executar ações indevidas   | Contexto não confiável marcado, menor privilégio, aprovação humana (§4)        | §4             |
-| Exfiltração via IA                  | IA convencida a ler segredos/BD de outro tenant ou vazar em nota pública            | Worker recebe só credenciais do tenant do job; saída revisada; guardrails (§4) | §4             |
-| Upload malicioso                    | Arquivo executável, SVG com script, polyglot, path traversal, zip bomb              | Validação de tipo real, limites, storage fora do webroot, URLs assinadas (§5)  | §5             |
-| XSS armazenado                      | Rich text com `<script>`/handlers em descrição/mensagem renderizado a outro usuário | Sanitização server-side, CSP, allowlist de tags (§6)                           | §6             |
-| Roubo de credenciais de SistemaAlvo | Dump de BD, log de segredo, acesso indevido                                         | Criptografia at rest (envelope), segregação de KMS, sem log de segredo (§7)    | §7             |
-| Elevação de privilégio              | `cliente` acessando rota de `operador`/`admin`; IA agindo além do papel             | Autorização por papel (`03`); `agente_ia` como service account restrita        | `03`, §4       |
-| Escape do sandbox do worker         | Código do repositório do cliente ou payload da IA executando no host                | Worker isolado, efêmero, sem credenciais de plataforma, egress restrito (§4.4) | §4.4           |
-| Violação LGPD                       | Retenção indevida, ausência de base legal, não atendimento a titular                | Bases legais, retenção, exclusão/anonimização, DSR (§8)                        | §8             |
-| Perda de dados                      | Falha de storage/BD, ransomware, exclusão acidental                                 | Backups criptografados, testes de restore, RPO/RTO (§9)                        | §9             |
+| Ameaça                              | Vetor concreto                                                                                            | Mitigação principal                                                                                                                                    | Doc/seção      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| Vazamento cross-tenant              | Bug de escopo em query; JWT/sessão sem `tenant_id`; job da fila com tenant errado                         | RLS + escopo na aplicação + testes de isolamento (§3)                                                                                                  | §3, `02`, `07` |
+| Prompt injection                    | Texto do chamado/anexo instrui a IA a exfiltrar dados ou executar ações indevidas                         | Contexto não confiável marcado, menor privilégio, aprovação humana (§4)                                                                                | §4             |
+| Exfiltração via IA                  | IA convencida a ler segredos/BD de outro tenant ou vazar em nota pública                                  | Worker recebe só credenciais do tenant do job; saída revisada; guardrails (§4)                                                                         | §4             |
+| Upload malicioso                    | Arquivo executável, SVG com script, polyglot, path traversal, zip bomb                                    | Validação de tipo real, limites, storage fora do webroot, URLs assinadas (§5)                                                                          | §5             |
+| XSS armazenado                      | Rich text com `<script>`/handlers em descrição/mensagem renderizado a outro usuário                       | Sanitização server-side, CSP, allowlist de tags (§6)                                                                                                   | §6             |
+| Roubo de credenciais de SistemaAlvo | Dump de BD, log de segredo, acesso indevido                                                               | Criptografia at rest (envelope), segregação de KMS, sem log de segredo (§7)                                                                            | §7             |
+| Elevação de privilégio              | `cliente` acessando rota de `operador`/`admin`; IA agindo além do papel                                   | Autorização por papel (`03`); `agente_ia` como service account restrita                                                                                | `03`, §4       |
+| Escape do sandbox do worker         | Código do repositório do cliente ou payload da IA executando no host                                      | Worker isolado, efêmero, sem credenciais de plataforma, egress restrito (§4.4)                                                                         | §4.4           |
+| Força bruta / enumeração de contas  | Tentativas repetidas de login, redefinição de senha ou aceite de convite                                  | Rate limiting no Redis (janela fixa, chaves `tenant+IP`/`tenant+email`), fail-open com timeout-guard — ver `03-autenticacao-perfis-permissoes.md` §4.1 | `03` §4.1      |
+| SSRF via webhook                    | URL de webhook cadastrada pelo tenant aponta para rede interna, loopback ou endpoint de metadata de nuvem | Allowlist de esquema, bloqueio de IP privado/loopback/link-local/metadata, sem redirects, validação no salvamento e no envio (§2.1)                    | §2.1           |
+| Violação LGPD                       | Retenção indevida, ausência de base legal, não atendimento a titular                                      | Bases legais, retenção, exclusão/anonimização, DSR (§8)                                                                                                | §8             |
+| Perda de dados                      | Falha de storage/BD, ransomware, exclusão acidental                                                       | Backups criptografados, testes de restore, RPO/RTO (§9)                                                                                                | §9             |
 
 > DECISÃO PENDENTE: adotar um threat model documentado formalmente (ex.: planilha STRIDE por sprint) e revisá-lo a cada nova integração externa, ou manter apenas esta seção resumida como referência viva.
+
+### 2.1 Anti-SSRF no webhook
+
+O `WebhookAdapter` (E-33, ver `06-notificacoes.md`) envia POST para uma URL cadastrada pelo próprio tenant — superfície clássica de SSRF, já que é o servidor da aplicação que faz a requisição para onde o tenant mandar. Controles (implementado no M10):
+
+- Apenas esquemas `http`/`https`; qualquer outro esquema é rejeitado.
+- Sem credenciais embutidas na URL (`http://usuario:senha@host` é rejeitado).
+- Bloqueio de destinos internos: loopback (`127.0.0.0/8`, `::1`), redes privadas (RFC 1918), link-local (`169.254.0.0/16`, incluindo o endpoint de metadata de nuvem `169.254.169.254`) e formas ofuscadas do mesmo alvo (IP em notação decimal/octal/hex, IPv4-mapped em IPv6 etc.).
+- Sem seguir redirects: a resposta do primeiro hop não é automaticamente seguida para outro destino.
+- Flag `NOTIFICACOES_WEBHOOK_PERMITIR_PRIVADO` permite desligar o bloqueio de rede privada **apenas em desenvolvimento** (ex.: testar contra um serviço local); nunca habilitada em produção.
+- Validação em **dois pontos**, ambos fail-closed: no **salvamento** da URL do webhook (rejeita configuração inválida antes de persistir) e novamente no **envio** de cada notificação.
+
+> DECISÃO PENDENTE (backlog): mitigar DNS-rebinding resolvendo o hostname para IP e **pinando** essa conexão no envio (validar o IP efetivamente conectado, não só o hostname), reduzindo a janela entre a validação e a conexão real. Ainda não implementado; a mitigação atual é a validação em dois pontos descrita acima.
 
 ---
 
@@ -137,11 +152,11 @@ Qualquer ação fora dessa lista é indisponível ao agente, independentemente d
 `Anexo` cobre imagens inline do rich text e arquivos anexados. Fluxo e storage (S3-compatível: MinIO em dev, S3/R2 em prod) descritos em `01`/`04`; aqui ficam os controles de segurança.
 
 - **Validação de tipo real**: o tipo é determinado pelo conteúdo (magic bytes / sniffing), não apenas pela extensão ou pelo `Content-Type` informado. Rejeita divergência extensão × conteúdo e polyglots.
-- **Allowlist de tipos**: apenas tipos previstos (imagens comuns, PDF, documentos, texto, logs). Executáveis e scripts são bloqueados. **SVG** só é aceito após sanitização (remoção de `<script>`, handlers, `foreignObject`) ou servido como download com `Content-Type` seguro — nunca renderizado inline sem sanitização.
+- **Allowlist de tipos (default-deny)**: apenas tipos previstos (imagens comuns, PDF, documentos, texto, logs) são aceitos; qualquer tipo fora da allowlist é rejeitado por padrão. Executáveis e scripts são bloqueados. **SVG é bloqueado no MVP** (fora da allowlist, não é aceito no upload) — aceitar SVG sanitizado (remoção de `<script>`, handlers, `foreignObject`) fica para fase futura, se houver demanda (implementado no M10).
 - **Limites**: tamanho máximo por arquivo e por chamado; validação de dimensões de imagem; proteção contra zip bomb / arquivos com descompressão desproporcional.
 - **Storage fora do webroot**: objetos ficam em bucket S3-compatível privado, nunca em diretório servido diretamente pela aplicação. Nomes de objeto gerados pelo servidor (não o nome do arquivo do usuário) e **escopados por `tenant_id`** no path/prefixo.
-- **URLs assinadas**: download/exibição via URL pré-assinada de curta expiração, emitida somente após checagem de autorização (papel + pertencimento ao tenant + acesso ao chamado). Anexo com `visibilidade=interna` não é servível a `cliente`.
-- **Servir com segurança**: respostas de download usam `Content-Disposition: attachment` quando aplicável e cabeçalhos que impedem execução/renderização perigosa (`X-Content-Type-Options: nosniff`).
+- **URLs assinadas**: download/exibição via URL pré-assinada com **TTL de 120s**, emitida somente após checagem de autorização (papel + pertencimento ao tenant + acesso ao chamado). O `Content-Type` da resposta é **pinado** ao tipo validado no upload (nunca ao que o request de download informar). Anexo com `visibilidade=interna` não é servível a `cliente` (implementado no M10).
+- **Servir com segurança**: `Content-Disposition` seguro — `attachment` para todo tipo que não seja imagem (imagens podem ser exibidas inline), com nome de arquivo codificado conforme **RFC 5987** (`filename*=UTF-8''...`) para suportar caracteres não-ASCII sem quebrar o header; cabeçalhos que impedem execução/renderização perigosa (`X-Content-Type-Options: nosniff`) (implementado no M10).
 - **Antivírus/scan**: recomendável varredura de malware (ex.: ClamAV) assíncrona antes de disponibilizar o anexo; até a varredura concluir, o anexo pode ficar em quarentena.
 
 > DECISÃO PENDENTE: exigir scan antivírus síncrono no MVP ou tratar como fase 2 (quarentena + scan assíncrono). Depende de custo/latência aceitáveis.
@@ -155,7 +170,10 @@ Descrições e mensagens usam rich text (TipTap no cliente, ver `04`/`08`). O cl
 - **Sanitização no servidor**: todo HTML rich text é sanitizado no backend antes de persistir e/ou antes de renderizar, com allowlist rígida de tags e atributos (formatação básica, links, imagens inline permitidas). Remove `<script>`, `<style>`, `<iframe>`, event handlers (`on*`), `javascript:`/`data:` perigosos em URLs, e atributos não previstos.
 - **Links**: `href` restrito a esquemas seguros (`http`, `https`, `mailto`); links externos com `rel="noopener noreferrer"`.
 - **Imagens inline**: apontam para `Anexo` do próprio tenant via URL assinada; não se aceita `data:`/URL externa arbitrária embutida. A remoção de `data:` **pressupõe** o pré-processamento server-side descrito em `04-chamados.md` §5, que extrai as imagens coladas (`data:`) e as converte em `Anexo` (`inline=true`) reescrevendo o `src` **antes** desta sanitização — do contrário, imagens legitimamente coladas no editor seriam descartadas.
-- **CSP**: Content-Security-Policy restritiva (sem `unsafe-inline` para scripts; fontes de script/estilo/imagem/conexão explicitamente listadas) como segunda barreira contra XSS.
+- **CSP** (implementado no M10 — pragmática para o estágio atual do Next.js): `frame-ancestors 'none'`; `object-src 'none'`; `base-uri 'self'`; `form-action 'self'`; `script-src`/`style-src` incluem `'unsafe-inline'` por exigência atual do Next.js (estilos/scripts injetados em runtime — sem isso a aplicação quebra); `unsafe-eval` e `connect-src` com `ws:`/`wss:` habilitados **somente em dev** (HMR do Next). Mesmo pragmática, funciona como segunda barreira (bloqueia embedding em iframe, plugins e navegação de formulário para origens externas).
+
+> DECISÃO PENDENTE (backlog): endurecer a CSP com **nonce por request** + `strict-dynamic`, eliminando `unsafe-inline` de `script-src`. Depende de o pipeline de build/runtime do Next propagar um nonce novo a cada response.
+
 - **Cookies/sessão**: `HttpOnly`, `Secure`, `SameSite` (detalhes em `03`) reduzem impacto de eventual XSS.
 - **Saída da IA**: notas e mensagens geradas pelo `agente_ia` passam pela mesma sanitização — a IA não é fonte confiável de HTML.
 
@@ -168,7 +186,7 @@ Descrições e mensagens usam rich text (TipTap no cliente, ver `04`/`08`). O cl
 - **Criptografia at rest (envelope encryption)**: segredos são cifrados com uma data key; a data key é protegida por uma chave mestra em KMS/serviço de segredos. O banco nunca armazena segredo em texto claro. Alternativa aceitável: cofre dedicado (ex.: Vault) referenciado por handle.
 - **Segregação da chave mestra**: a chave mestra vive no KMS/cofre, fora do banco. Comprometer um dump de BD não revela segredos sem também comprometer o KMS.
 - **Descriptografia sob demanda e efêmera**: segredos são decifrados apenas no momento do uso (ex.: worker montando o `git pull` ou a conexão read-only), mantidos em memória, nunca gravados em disco persistente nem em logs.
-- **Nunca logar segredos**: filtros de log removem tokens, senhas e strings de conexão. Mensagens de erro não ecoam credenciais.
+- **Nunca logar segredos**: filtros de log removem tokens, senhas e strings de conexão. Mensagens de erro não ecoam credenciais. Isso inclui os tokens de fluxo de autenticação (redefinição de senha e convite — ver `03-autenticacao-perfis-permissoes.md` §4.2/§4.3): nunca aparecem em log em produção, mesmo em nível debug (implementado no M10).
 - **Escopo por tenant**: um worker só decifra segredos do tenant do job corrente (reforça §4.2).
 - **Rotação**: suportar rotação/revogação de credenciais de `SistemaAlvo` sem downtime; credencial de BD do cliente deve ser um usuário read-only dedicado, revogável.
 - **Segredos da plataforma** (JWT, SMTP, KMS, credenciais de storage) ficam fora do repositório, em variáveis de ambiente/secret manager (ver `01`), sem acesso pelo sandbox do `agente_ia`.

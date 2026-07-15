@@ -14,6 +14,7 @@ import { redisConnection, iaConfig, triagemConfig } from './config';
 import { resolverProvider } from './ia/resolver-provider';
 import { registrarTriagemIA } from './filas/triagem-ia';
 import { registrarNotificacoes } from './filas/notificacoes';
+import { registrarManutencao, manutencaoConfigEnv } from './filas/manutencao';
 import { registryPadrao } from './notificacoes/registry';
 import { notificacoesConfig } from './notificacoes/config';
 
@@ -68,6 +69,21 @@ async function main(): Promise<void> {
       log,
     }),
   ];
+
+  // M10 — fila de manutenção: auto-fechamento de `resolvido` vencidos (repetível,
+  // varredura por tenant com lock global). `registrarManutencao` é async porque
+  // agenda o job scheduler antes de subir o worker.
+  const cfgManutencao = manutencaoConfigEnv();
+  workers.push(
+    await registrarManutencao({
+      ds,
+      redis,
+      connection: redisConnection,
+      intervaloMs: cfgManutencao.intervaloMs,
+      lockTtlMs: cfgManutencao.lockTtlMs,
+      log,
+    }),
+  );
 
   // ---- Encerramento limpo ------------------------------------------------
   let encerrando = false;

@@ -1,4 +1,4 @@
-import { assinarWebhook } from '@chamados/db';
+import { assinarWebhook, validarUrlWebhook } from '@chamados/db';
 import type {
   CanalConfig,
   EnvioResultado,
@@ -24,11 +24,21 @@ export class WebhookAdapter implements NotificationGateway {
     const segredo = config.segredos.segredo ?? '';
     const corpo = JSON.stringify(payload.corpoJson ?? {});
 
+    // Anti-SSRF em profundidade (specs/09): revalida a URL no ENVIO, não só no
+    // salvamento. Uma URL que virou privada/inválida (config antiga, alteração
+    // direta no banco) é descartada como falha PERMANENTE — nunca faz o request.
+    const v = validarUrlWebhook(url);
+    if (!v.ok) {
+      return { status: 'falha_permanente', erro: `url_bloqueada:${v.motivo}` };
+    }
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
     try {
       const resp = await fetch(url, {
         method: 'POST',
+        // Sem seguir redirects: um 3xx para um host interno reabriria o SSRF.
+        redirect: 'error',
         headers: {
           'content-type': 'application/json',
           'x-chamados-signature': assinarWebhook(segredo, corpo),

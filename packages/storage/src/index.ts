@@ -124,13 +124,37 @@ export async function removerObjeto(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: cfg().bucket, Key: key }));
 }
 
+/** Cabeçalhos de resposta forçados na URL assinada (specs/09 §5). */
+export interface OpcoesUrlAssinada {
+  /** `Content-Disposition` que o storage devolve (ex.: `attachment; filename="..."`). */
+  contentDisposition?: string;
+  /** `Content-Type` que o storage devolve (evita sniffing — pino o tipo real). */
+  contentType?: string;
+}
+
 /**
  * URL pré-assinada de GET, com TTL curto (default 5 min). Base para servir
- * anexos no M4 (specs/09 §5). Emitida apenas após checagem de autorização.
+ * anexos (specs/09 §5). Emitida apenas após checagem de autorização.
+ *
+ * O download real acontece por REDIRECT (302) direto ao storage, então os
+ * cabeçalhos de segurança da nossa rota NÃO chegam ao objeto. Para forçar
+ * `Content-Disposition` e `Content-Type` seguros usamos os parâmetros
+ * `response-content-*` da URL assinada (S3/MinIO os devolvem na resposta do GET).
  */
-export async function urlAssinadaGet(key: string, ttlSegundos = 300): Promise<string> {
+export async function urlAssinadaGet(
+  key: string,
+  ttlSegundos = 300,
+  opcoes: OpcoesUrlAssinada = {},
+): Promise<string> {
   const s3 = obterS3();
-  return getSignedUrl(s3, new GetObjectCommand({ Bucket: cfg().bucket, Key: key }), {
-    expiresIn: ttlSegundos,
-  });
+  return getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: cfg().bucket,
+      Key: key,
+      ResponseContentDisposition: opcoes.contentDisposition,
+      ResponseContentType: opcoes.contentType,
+    }),
+    { expiresIn: ttlSegundos },
+  );
 }

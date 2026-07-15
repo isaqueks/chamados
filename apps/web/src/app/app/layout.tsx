@@ -1,9 +1,21 @@
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { Papel } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
+import { obterTenantAtual } from '@/lib/tenant';
 import { urlLogo } from '@/lib/branding';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Topbar } from '@/components/app-shell/topbar';
+
+/** Título da aba + favicon com a marca do tenant (whitelabel — specs/08 §7). */
+export async function generateMetadata(): Promise<Metadata> {
+  const tenant = await obterTenantAtual();
+  const logo = urlLogo(tenant?.config_branding, 'light');
+  return {
+    title: tenant ? `${tenant.nome_exibicao} — Painel` : 'Painel',
+    ...(logo ? { icons: { icon: logo } } : {}),
+  };
+}
 
 /**
  * Shell da área do painel (operador/admin). Guardas de rota (specs/03 §3, specs/08

@@ -27,7 +27,7 @@ export function AssistenteIA({
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
       <div className="flex items-center gap-2">
-        <span className="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <span className="flex size-7 items-center justify-center rounded-md bg-marca-acento/10 text-marca-acento">
           <Sparkles className="size-4" />
         </span>
         <h3 className="font-heading text-sm font-semibold">{nomeAssistente}</h3>

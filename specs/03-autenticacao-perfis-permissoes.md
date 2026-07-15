@@ -129,8 +129,19 @@ sequenceDiagram
     end
 ```
 
-- **Rate limiting** por IP + por conta (ex.: 5 tentativas / 15 min); backoff
-  progressivo. Detalhes de hardening em `09-seguranca-lgpd.md`.
+> DECIDIDO (2026-07-15): **rate limiting implementado** nos fluxos de login,
+> "esqueci minha senha"/redefinição e aceite de convite — janela fixa no Redis,
+> com chaves por `tenant+IP` e `tenant+email` (ex.: 5 tentativas / 15 min).
+> **Fail-open com timeout-guard**: se o Redis cair ou responder lento, o limite
+> não bloqueia o login legítimo (a checagem de rate limit nunca vira ponto único
+> de indisponibilidade de auth). Detalhes de hardening em `09-seguranca-lgpd.md`
+> (implementado no M10).
+
+> DECIDIDO (2026-07-15): a sessão é **rotacionada no login** (novo
+> `token_hash`/cookie emitido a cada login bem-sucedido; qualquer sessão/cookie
+> anterior daquele fluxo é descartado) como proteção **anti-fixation**
+> (implementado no M10).
+
 - Após login, redireciona conforme papel: `cliente` → portal do cliente;
   `operador`/`admin` → painel; ver mapa de telas em `08-ui-ux.md`.
 
@@ -311,18 +322,19 @@ Convenções: ✅ permitido · ⚠️ condicional (nota) · ❌ negado. `admin` 
 
 ### 8.2 Administração do tenant
 
-| Recurso · Ação                                  | admin | operador                        | cliente | agente_ia |
-| ----------------------------------------------- | ----- | ------------------------------- | ------- | --------- |
-| Usuário · convidar                              | ✅    | ⚠️ só `cliente` (se habilitado) | ❌      | ❌        |
-| Usuário · listar/editar papel/desativar         | ✅    | ❌                              | ❌      | ❌        |
-| `SistemaAlvo` · CRUD (repo, logs, DB read-only) | ✅    | ⚠️ leitura                      | ❌      | ❌        |
-| `Categoria` · CRUD                              | ✅    | ⚠️ leitura                      | ❌      | ❌        |
-| Branding / domínio / whitelabel                 | ✅    | ❌                              | ❌      | ❌        |
-| Config. de notificações do tenant               | ✅    | ⚠️ leitura                      | ❌      | ❌        |
-| `PreferenciaNotificacao` própria                | ✅    | ✅                              | ✅      | ❌        |
-| Configuração de guardrails da IA                | ✅    | ❌                              | ❌      | ❌        |
-| Aprovar merge/deploy de PR da IA                | ✅    | ✅                              | ❌      | ❌        |
-| Sessões · encerrar de terceiros (no tenant)     | ✅    | ❌                              | ❌      | ❌        |
+| Recurso · Ação                                                                                                | admin | operador                        | cliente | agente_ia |
+| ------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------- | ------- | --------- |
+| Usuário · convidar                                                                                            | ✅    | ⚠️ só `cliente` (se habilitado) | ❌      | ❌        |
+| Usuário · listar/editar papel/desativar                                                                       | ✅    | ❌                              | ❌      | ❌        |
+| `SistemaAlvo` · CRUD (repo, logs, DB read-only)                                                               | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| `Categoria` · CRUD                                                                                            | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| Branding / domínio / whitelabel                                                                               | ✅    | ❌                              | ❌      | ❌        |
+| `config_tenant` (config. gerais do tenant — ex.: `dias_fechamento_automatico`, guardrails de IA) · editar/ler | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| Config. de notificações do tenant                                                                             | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| `PreferenciaNotificacao` própria                                                                              | ✅    | ✅                              | ✅      | ❌        |
+| Configuração de guardrails da IA                                                                              | ✅    | ❌                              | ❌      | ❌        |
+| Aprovar merge/deploy de PR da IA                                                                              | ✅    | ✅                              | ❌      | ❌        |
+| Sessões · encerrar de terceiros (no tenant)                                                                   | ✅    | ❌                              | ❌      | ❌        |
 
 Notas condicionais:
 
@@ -369,6 +381,7 @@ flowchart LR
 ## 10. Resumo das decisões pendentes
 
 > DECIDIDO (2026-07-15): autenticação implementada diretamente conforme esta spec (Argon2id + sessões server-side); better-auth descartado — ver specs/decisoes.md (D-010).
+> DECIDIDO (2026-07-15): rate limiting implementado nos fluxos de login, redefinição de senha e aceite de convite (janela fixa no Redis, chaves `tenant+IP`/`tenant+email`, fail-open com timeout-guard); rotação de sessão no login (anti-fixation) também implementada — ver §4.1 (implementado no M10). 2FA e SSO/OIDC seguem como decisões pendentes abaixo.
 > DECISÃO PENDENTE: admin como papel exclusivo vs flag sobre operador (assumido exclusivo).
 > DECISÃO PENDENTE: existência e escopo de super-admin de plataforma cross-tenant.
 > DECISÃO PENDENTE: 2FA (TOTP) — obrigatório para admin? opcional para operador?

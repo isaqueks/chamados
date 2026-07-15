@@ -18,6 +18,7 @@
     "smoke:sistemas": "tsx src/scripts/smoke-sistemas.ts",
     "smoke:chamados": "tsx src/scripts/smoke-chamados.ts",
     "smoke:mensagens": "tsx src/scripts/smoke-mensagens.ts",
+    "smoke:seguranca": "tsx src/scripts/smoke-seguranca.ts",
     "seed:dev": "tsx src/scripts/seed-dev.ts"
   },
   "dependencies": {

@@ -39,6 +39,8 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-marca-acento: var(--marca-acento);
+  --color-marca-acento-foreground: var(--marca-acento-foreground);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -57,6 +59,11 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
+  /* Acento de marca (cor_secundaria). Fallback neutro = cor primária; o branding
+     do tenant sobrescreve via BrandingVars quando passa no contraste AA. Como o
+     valor referencia --primary, acompanha automaticamente o tema claro/escuro. */
+  --marca-acento: var(--primary);
+  --marca-acento-foreground: var(--primary-foreground);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -126,5 +133,16 @@
   }
   html {
     @apply font-sans;
+  }
+  /* Acessibilidade (specs/08 §6): respeita quem pediu menos animação. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

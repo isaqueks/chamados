@@ -82,7 +82,7 @@ Regras invariantes:
 - Reenfileiramento da triagem (`aguardando_cliente` → `em_triagem`) só ocorre para chamados ainda não resolvidos; ver `05-agente-ia.md` para as condições exatas do pipeline.
 - **Guardrail humano-no-circuito**: apenas `operador`/`admin` transicionam para `resolvido`. O `agente_ia` **nunca** marca um chamado como `resolvido` por conta própria — mesmo quando abre um PR de correção, ele permanece em `em_atendimento` e aguarda merge/deploy aprovado por humano. Ver `05-agente-ia.md` (pipeline) e `09-seguranca-lgpd.md` §5 (guardrails de IA).
 
-> DECISÃO PENDENTE: valor padrão de N (dias para auto-fechamento de `resolvido`). Sugestão inicial: 3 dias, configurável por tenant.
+> DECIDIDO (2026-07-15): valor padrão de N = 3 dias para auto-fechamento de `resolvido`, configurável por tenant — ver §8.1 (implementado no M10).
 
 > DECISÃO PENDENTE: permitir que `resolvido` seja reaberto indefinidamente ou apenas dentro da janela de N dias (após o auto-fechamento, uma reabertura exigiria abrir novo chamado vinculado). Sugestão: reabertura livre enquanto `resolvido`; após `fechado`, criar chamado novo com referência ao anterior.
 
@@ -226,9 +226,11 @@ Limites:
 
 ### 8.1 Auto-fechamento de `resolvido`
 
-- Ao entrar em `resolvido`, registra-se o timestamp da resolução.
-- Um job agendado (BullMQ delayed/repeatable) verifica chamados `resolvido` há mais de **N dias** (configurável por tenant) e os transiciona para `fechado`, gerando `EventoChamado` e notificação.
-- Qualquer nova mensagem pública do cliente ou reabertura antes do prazo cancela/reagenda o auto-fechamento.
+- Ao entrar em `resolvido`, registra-se o timestamp da resolução (`resolvido_em`) e calcula-se o prazo (`fechar_automaticamente_em`).
+
+> DECIDIDO (2026-07-15): `dias_fechamento_automatico` tem default **3 dias**, configurável por tenant (`Tenant.dias_fechamento_automatico`, ver `02-modelo-de-dados.md`). Um job **repetível** de manutenção (BullMQ repeatable, a cada **5 minutos** por padrão, intervalo configurável) enumera os tenants ativos (`chamados_tenants_ativos()`, ver `02-modelo-de-dados.md`) e, para cada um, varre os chamados `resolvido` com `fechar_automaticamente_em` vencido, transicionando-os para `fechado` — gera `EventoChamado` do tipo `chamado_fechado_auto` e a notificação correspondente (implementado no M10).
+
+- Qualquer nova mensagem pública do cliente ou reabertura antes do prazo cancela/reagenda o auto-fechamento; a reabertura (§8.2) limpa `resolvido_em`/`fechar_automaticamente_em`.
 
 ### 8.2 Reabertura
 
@@ -290,11 +292,9 @@ Por última atualização (default, desc), data de criação, prioridade, status
 
 ### 10.4 Busca
 
-- Busca textual sobre título e corpo das mensagens **visíveis ao papel** (cliente não busca dentro de notas internas).
-- Implementação: full-text search do PostgreSQL (`tsvector`) no MVP, com índice por tenant.
-- A busca respeita RLS e visibilidade de mensagem no nível da query.
+> DECIDIDO (2026-07-15): busca full-text com `websearch_to_tsquery('portuguese')` sobre a coluna gerada `busca_tsv` (título peso A + descrição peso B — ver `02-modelo-de-dados.md`), com **ranking** por relevância (`ts_rank`/`ts_rank_cd`, título pesando mais que o corpo da descrição) e **fallback** para `ILIKE` quando o termo é curto demais para `websearch_to_tsquery` produzir um `tsquery` útil (ex.: 1-2 caracteres, siglas). No modo busca (termo preenchido), a ordenação é por relevância, substituindo a ordenação padrão de §10.3. MVP indexa **título + descrição** do chamado; mensagens (públicas e notas internas) ficam fora do índice de busca (implementado no M10).
 
-> DECISÃO PENDENTE: busca full-text nativa do PostgreSQL no MVP vs. mecanismo dedicado (ex.: Meilisearch/OpenSearch) para busca semântica/tolerante a erros. Sugestão: `tsvector` no MVP; reavaliar com volume.
+- A busca respeita RLS e o isolamento por tenant no nível da query; o resultado só retorna chamados visíveis ao papel do solicitante (cliente vê só os próprios — ver §10.1).
 
 > DECISÃO PENDENTE: estratégia de paginação (offset vs. cursor/keyset). Sugestão: keyset por (última atualização, id) para listagens grandes.
 

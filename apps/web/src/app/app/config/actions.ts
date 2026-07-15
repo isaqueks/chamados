@@ -14,6 +14,7 @@ import {
   salvarWebhook,
   lerSegredoWebhook,
   assinarWebhook,
+  validarUrlWebhook,
   criarSecretStore,
   CanalNotificacaoTipo,
   type ConfigBranding,
@@ -186,7 +187,9 @@ export async function acaoSalvarGeral(
   formData: FormData,
 ): Promise<EstadoConfig> {
   const ctx = await exigirUsuario();
-  if (!autorizar(ctx.usuario, 'config_notificacoes', 'editar')) {
+  // Recurso dedicado de config do tenant (M10): editar é admin-only. Antes usava
+  // `config_notificacoes` (débito do M2) — corrigido para o recurso correto.
+  if (!autorizar(ctx.usuario, 'config_tenant', 'editar')) {
     return { erro: 'Sem permissão.' };
   }
 
@@ -255,10 +258,6 @@ async function exigirAdminNotificacoes() {
   return ctx;
 }
 
-function urlWebhookValida(url: string): boolean {
-  return /^https?:\/\/.+/.test(url);
-}
-
 /** Salva/atualiza o webhook do tenant (URL + segredo HMAC + ativo — specs/06 §3.2). */
 export async function acaoSalvarWebhook(
   _prev: EstadoConfig,
@@ -270,8 +269,12 @@ export async function acaoSalvarWebhook(
   const segredo = String(formData.get('segredo') ?? '');
   const ativo = formData.get('ativo') === 'on';
 
-  if (url !== '' && !urlWebhookValida(url)) {
-    return { erro: 'Informe uma URL válida começando com http:// ou https://.' };
+  if (url !== '') {
+    // Valida ANTES de persistir com a MESMA checagem anti-SSRF que `salvarWebhook`
+    // faz fail-closed — mas aqui devolvemos a mensagem amigável (pt-BR) ao
+    // formulário em vez de deixar escapar um erro genérico (specs/09 §2/§5).
+    const v = validarUrlWebhook(url);
+    if (!v.ok) return { erro: v.mensagem };
   }
   if (ativo && url === '') {
     return { erro: 'Informe a URL do webhook para ativá-lo.' };
@@ -322,6 +325,11 @@ export async function acaoTestarWebhook(): Promise<ResultadoTeste> {
     return { url: canal.config.url, segredo: segredo ?? '' };
   });
   if (!prep) return { ok: false, msg: 'Configure a URL e o segredo do webhook antes de testar.' };
+
+  // Revalida a URL persistida ANTES de disparar o POST de teste (defesa em
+  // profundidade contra SSRF, com mensagem amigável em vez de erro de rede).
+  const v = validarUrlWebhook(prep.url);
+  if (!v.ok) return { ok: false, msg: v.mensagem };
 
   const corpo = JSON.stringify({
     evento: { tipo: 'teste', id: randomUUID(), timestamp: new Date().toISOString() },

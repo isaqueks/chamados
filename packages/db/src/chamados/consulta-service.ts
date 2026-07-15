@@ -11,6 +11,7 @@ import {
 } from '@chamados/shared';
 import { ChamadoSchema, type Chamado } from '../entities/chamado';
 import { UsuarioSchema } from '../entities/usuario';
+import { interpretarBusca, exprMatchFts, exprRankFts } from './busca';
 
 /**
  * Consultas READ-ONLY para o painel operador/admin (fila de chamados e apoio ao
@@ -26,7 +27,12 @@ export type AtribuicaoFila = 'meus' | 'nao_atribuidos' | 'todos';
 
 /** Filtros combináveis da fila (specs/04 §10.2). Todos opcionais. */
 export interface FiltrosFila {
-  /** Busca ILIKE por número OU título (full-text fica para M10 — specs/04 §10.4). */
+  /**
+   * Busca textual (specs/04 §10.4): número de chamado → prefixo em `numero`;
+   * texto → full-text `websearch_to_tsquery('portuguese')` sobre `busca_tsv`
+   * (título peso A > corpo peso B) com ranking; termos curtos → ILIKE no título.
+   * Ver `busca.ts`.
+   */
   busca?: string;
   status?: StatusChamado;
   natureza?: Natureza;
@@ -89,6 +95,28 @@ function decodeCursor(cursor: string): { updated_at: string; id: string } | null
   }
 }
 
+/**
+ * Cursor da busca full-text: keyset por `(rank, updated_at, id)`, pois a
+ * ordenação passa a ser por relevância. `rank` é `real` (float4), que faz
+ * round-trip exato via texto no PostgreSQL 16.
+ */
+function encodeCursorBusca(rank: string | number, updated_at: Date | string, id: string): string {
+  const iso = new Date(updated_at).toISOString();
+  return Buffer.from(`${rank}|${iso}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeCursorBusca(
+  cursor: string,
+): { rank: string; updated_at: string; id: string } | null {
+  try {
+    const [rank, updated_at, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+    if (!rank || !updated_at || !id) return null;
+    return { rank, updated_at, id };
+  } catch {
+    return null;
+  }
+}
+
 /** A equipe (operador/admin) pode ver a fila do tenant? */
 function equipePodeVerFila(ator: Ator): boolean {
   return (
@@ -107,9 +135,13 @@ function aplicarFiltros(
   filtros: FiltrosFila,
   exceto?: { status?: boolean; atribuicao?: boolean },
 ): void {
-  if (filtros.busca && filtros.busca.trim() !== '') {
-    const termo = `%${filtros.busca.trim()}%`;
-    qb.andWhere('(c.titulo ILIKE :termo OR CAST(c.numero AS TEXT) ILIKE :termo)', { termo });
+  const b = interpretarBusca(filtros.busca);
+  if (b.modo === 'numero') {
+    qb.andWhere('CAST(c.numero AS TEXT) LIKE :bnum', { bnum: `${b.numero}%` });
+  } else if (b.modo === 'ilike') {
+    qb.andWhere('c.titulo ILIKE :btermo', { btermo: `%${b.termo}%` });
+  } else if (b.modo === 'fts') {
+    qb.andWhere(exprMatchFts('c', 'btsq'), { btsq: b.tsq });
   }
   if (filtros.natureza) qb.andWhere('c.natureza = :natureza', { natureza: filtros.natureza });
   if (filtros.prioridade)
@@ -171,19 +203,39 @@ export async function listarFilaChamados(
 
   aplicarFiltros(qb, ator, filtros);
 
-  if (filtros.cursor) {
-    const cur = decodeCursor(filtros.cursor);
-    if (cur) {
-      qb.andWhere('(c.updated_at, c.id) < (:cu::timestamptz, :ci::uuid)', {
-        cu: cur.updated_at,
-        ci: cur.id,
-      });
+  // Busca full-text ativa a ordenação por RELEVÂNCIA (ranking): a keyset passa a
+  // ser por `(rank, updated_at, id)`. Sem busca (ou número/ILIKE), mantém o
+  // default por última atualização — sem regressão na paginação da fila.
+  const emBusca = interpretarBusca(filtros.busca).modo === 'fts';
+
+  if (emBusca) {
+    const rank = exprRankFts('c', 'btsq');
+    qb.addSelect(rank, 'rank');
+    if (filtros.cursor) {
+      const cur = decodeCursorBusca(filtros.cursor);
+      if (cur) {
+        qb.andWhere(`(${rank}, c.updated_at, c.id) < (:cr::real, :cu::timestamptz, :ci::uuid)`, {
+          cr: cur.rank,
+          cu: cur.updated_at,
+          ci: cur.id,
+        });
+      }
     }
+    qb.orderBy(rank, 'DESC').addOrderBy('c.updated_at', 'DESC').addOrderBy('c.id', 'DESC');
+  } else {
+    if (filtros.cursor) {
+      const cur = decodeCursor(filtros.cursor);
+      if (cur) {
+        qb.andWhere('(c.updated_at, c.id) < (:cu::timestamptz, :ci::uuid)', {
+          cu: cur.updated_at,
+          ci: cur.id,
+        });
+      }
+    }
+    qb.orderBy('c.updated_at', 'DESC').addOrderBy('c.id', 'DESC');
   }
 
-  qb.orderBy('c.updated_at', 'DESC')
-    .addOrderBy('c.id', 'DESC')
-    .limit(limite + 1);
+  qb.limit(limite + 1);
 
   const linhas = await qb.getRawMany<{
     id: string;
@@ -201,12 +253,18 @@ export async function listarFilaChamados(
     operador_nome: string | null;
     sistema_nome: string | null;
     categoria_nome: string | null;
+    rank?: string;
   }>();
 
   const temMais = linhas.length > limite;
   const pagina = temMais ? linhas.slice(0, limite) : linhas;
   const ultimo = pagina[pagina.length - 1];
-  const proximoCursor = temMais && ultimo ? encodeCursor(ultimo.updated_at, ultimo.id) : null;
+  const proximoCursor =
+    temMais && ultimo
+      ? emBusca
+        ? encodeCursorBusca(ultimo.rank ?? '0', ultimo.updated_at, ultimo.id)
+        : encodeCursor(ultimo.updated_at, ultimo.id)
+      : null;
 
   return {
     itens: pagina.map((r) => ({

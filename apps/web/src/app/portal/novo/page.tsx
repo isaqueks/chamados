@@ -10,11 +10,21 @@ import { ChamadoNovoForm } from './chamado-form';
  * só aparece quando o tenant tem mais de um ativo; caso contrário é resolvido no
  * servidor (único sistema ou categoria geral).
  */
-export default async function NovoChamadoPage() {
+export default async function NovoChamadoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ref?: string }>;
+}) {
   const { tenant } = await exigirUsuario();
   const ds = await obterAppDataSource();
   const sistemas = await runInTenantContext(ds, tenant.id, (em) => listarSistemasAlvo(em));
   const opcoes = sistemas.map((s) => ({ id: s.id, nome: s.nome }));
+
+  // CTA "Abrir novo chamado" a partir de um chamado encerrado envia `?ref=<numero>`;
+  // pré-preenchemos o título com a referência (o cliente completa a partir daí).
+  const { ref } = await searchParams;
+  const numeroRef = ref && /^\d{1,9}$/.test(ref) ? Number(ref) : null;
+  const tituloInicial = numeroRef ? `Sobre o chamado #${numeroRef}: ` : '';
 
   return (
     <div className="flex flex-col gap-6">
@@ -35,7 +45,7 @@ export default async function NovoChamadoPage() {
 
       <Card>
         <CardContent>
-          <ChamadoNovoForm sistemas={opcoes} />
+          <ChamadoNovoForm sistemas={opcoes} tituloInicial={tituloInicial} />
         </CardContent>
       </Card>
     </div>

@@ -25,6 +25,7 @@ export type Recurso =
   | 'sistema_alvo'
   | 'categoria'
   | 'branding'
+  | 'config_tenant'
   | 'config_notificacoes'
   | 'preferencia_notificacao'
   | 'guardrail_ia'
@@ -176,6 +177,12 @@ const MATRIZ: Matriz = {
   },
   branding: {
     gerenciar: { [admin]: true, [operador]: false, [cliente]: false, [agente_ia]: false },
+  },
+  // Config geral do tenant (auto-fechamento, guardrail de IA — specs/07 §4.1).
+  // Recurso DEDICADO (débito do M2): editar é admin-only; operador só lê.
+  config_tenant: {
+    ler: { [admin]: true, [operador]: true, [cliente]: false, [agente_ia]: false },
+    editar: { [admin]: true, [operador]: false, [cliente]: false, [agente_ia]: false },
   },
   config_notificacoes: {
     ler: { [operador]: true, [cliente]: false, [agente_ia]: false },

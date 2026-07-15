@@ -2,6 +2,27 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M10 (final): busca, auto-fechamento, hardening e polimento — MVP M0–M10 concluído
+
+### Frente A — busca e manutenção
+
+- **Busca full-text** (migration 0007): coluna gerada `busca_tsv` (português, título peso A + descrição peso B, notas internas fora do índice) + GIN; fila com `websearch_to_tsquery` e ordenação por relevância (cursor keyset rank-aware), fallback ILIKE para termos curtos; busca também no portal.
+- **Auto-fechamento**: job repetível de manutenção (5 min, lock Redis global) varre `resolvido` vencidos por tenant (função SECURITY DEFINER `chamados_tenants_ativos()`) e fecha com evento `chamado_fechado_auto` + notificações; reabertura confirmada completa (limpa prazo, incrementa contador, notifica operador). Recurso `config_tenant` dedicado na matriz. `npm run smoke:manutencao`.
+
+### Frente B — hardening de segurança
+
+- **Rate limiting** (Redis, fail-open com timeout-guard) em login/esqueci/redefinir/aceite; **headers de segurança + CSP pragmática** (frame-ancestors none, nosniff, DENY; caminho para nonce documentado); **anti-SSRF no webhook** (bloqueio de loopback/privadas/metadata/ofuscados, sem redirects, flag de dev) no salvamento e no envio; downloads de anexo com `Content-Type` pinado e `Content-Disposition` seguro via URL assinada (TTL 120s); **token de reset/convite não é mais logado em produção** (achado corrigido); rotação de sessão no login confirmada. `npm run smoke:seguranca`.
+
+### Frente C — polimento de UI (D-009)
+
+- Tabs Contexto/Timeline/Assistente no detalhe mobile (duas colunas no desktop); cor de acento (`cor_secundaria`) vinculada a elementos reais com fallback seguro; 404/erro brandados nas duas áreas; título/favicon por tenant; tooltips no editor; `prefers-reduced-motion`; varredura SSR com log limpo e zero vazamento interno ao cliente.
+
+### Fechamento
+
+- **Correção de guard admin-only**: `loading.tsx` do segmento `/app` criava Suspense boundary que degradava o `redirect()` do `exigirPapel(admin)` para soft-redirect HTTP 200 (streaming do Next 16); dashboard movido para route group `(inicio)` → 307 duro restaurado (operador redirecionado nas 4 páginas admin). `/app/config` mantido admin-only.
+- CTA "Abrir novo chamado" nos estados terminais do portal (com `?ref=` pré-preenchendo o título); actions de webhook com validação amigável antes de persistir/testar; `notFound()` sob streaming documentado como comportamento do framework (200 + noindex; backlog).
+- **Verificação de aceitação do zero:** 4 serviços healthy, 8 migrations, seed, format/typecheck/lint/build (19 rotas), 125 testes, **12 smokes**, E2E dourado completo (triagem fake → diagnóstico interno + e-mails; não-entendeu → pergunta pública; `[[resolver]]` → branch + nota de PR + dashboard; guards 307/200; busca por stemming; headers presentes). Specs sincronizadas (02, 03, 04, 09, 10 — M0–M10 marcados concluídos).
+
 ## 2026-07-15 — Marco M8: resolução automática via PR (RF-15)
 
 - **Gate duplo no pipeline** (nunca no provider): pré-call (tenant habilitado + natureza problema + repo configurado → injeta ferramentas de escrita) e pós-call (complexidade fácil + compreendido + confiança ≥ `IA_RESOLUCAO_CONFIANCA_MIN` → worker cria branch/PR). O toggle do tenant é honrado de verdade.

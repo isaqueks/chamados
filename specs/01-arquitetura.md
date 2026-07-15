@@ -190,6 +190,12 @@ interface AIProviderInput {
     repo_ler_arquivo(caminho: string): Promise<string>;
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
     bd_consultar(sql: string): Promise<Linha[]>; // SELECT-only, com timeout imposto pelo worker
+
+    // Opcionais: só injetadas quando o gate de resolução automática está aberto
+    // (05-agente-ia.md §6). Escrevem numa working copy DESCARTÁVEL, nunca no
+    // cache persistente nem em produção; ausentes (undefined) fora do gate.
+    repo_escrever_arquivo?(caminho: string, conteudo: string): Promise<void>;
+    repo_criar_arquivo?(caminho: string, conteudo: string): Promise<void>;
   };
 
   limites: {
@@ -208,7 +214,13 @@ interface AIProviderResult {
   prioridadeSugerida: 'baixa' | 'media' | 'alta' | 'urgente' | null;
   diagnostico: string | null;
   spec: string | null; // preenchido quando naturezaAjustada = 'alteracao'
-  tentativaResolucao: { branch: string; prUrl: string; resumo: string } | null;
+  tentativaResolucao: {
+    resumo: string; // resumo neutro e sanitizado da mudança proposta
+    arquivosAlterados: string[]; // caminhos alterados na working copy descartável
+    branch?: string; // preenchido pelo WORKER após criar a branch
+    prUrl?: string | null; // preenchido pelo WORKER; null fora do GitHub (PR manual)
+    situacao?: 'pr_aberto' | 'push_sem_pr' | 'falhou'; // preenchido pelo WORKER
+  } | null;
   telemetria: {
     // obrigatória em toda resposta
     custoUsd: number;
@@ -219,11 +231,13 @@ interface AIProviderResult {
 }
 ```
 
-O worker preenche `AIProviderInput` a partir do chamado e das ferramentas read-only já escopadas; `05-agente-ia.md` §10 descreve como cada campo de `AIProviderResult` (`perguntasAoCliente`, `complexidade`/`naturezaAjustada`/`prioridadeSugerida`, `diagnostico`, `spec`, `tentativaResolucao`) é traduzido em ações de domínio. Nenhuma redefinição do contrato vive em `05` — apenas o consumo.
+O worker preenche `AIProviderInput` a partir do chamado e das ferramentas já escopadas (read-only sempre; as de escrita só quando o gate de resolução automática está aberto — `05-agente-ia.md` §6); `05-agente-ia.md` §10 descreve como cada campo de `AIProviderResult` (`perguntasAoCliente`, `complexidade`/`naturezaAjustada`/`prioridadeSugerida`, `diagnostico`, `spec`, `tentativaResolucao`) é traduzido em ações de domínio. Nenhuma redefinição do contrato vive em `05` — apenas o consumo.
+
+`tentativaResolucao` divide responsabilidades pelo princípio de menor privilégio (`09-seguranca-lgpd.md` §4): o **provider** só escreve arquivos na working copy descartável via `repo_escrever_arquivo`/`repo_criar_arquivo` e devolve `resumo`/`arquivosAlterados` — ele não tem acesso a git nem à rede. O **worker**, que é quem detém a credencial do repositório, valida a tentativa, cria a branch, comita, faz push e abre o PR; só ele preenche `branch`/`prUrl`/`situacao`, depois do retorno do provider.
 
 Notas de contrato (perspectiva arquitetural):
 
-- **Nunca credenciais cruas no provider.** O worker injeta **handles de ferramentas já escopadas** (`repo_buscar`, `repo_ler_arquivo`, `logs_consultar`, `bd_consultar` SELECT-only com timeout) — jamais o caminho do repositório, a DSN read-only ou qualquer credencial do sistema-alvo no input. A conexão real ao banco e o acesso ao filesystem vivem **apenas no worker**; assim um provider trocável, bugado ou comprometido não tem conectividade direta ao BD nem ao repositório, e a mediação do `bd_consultar` (SELECT-only + timeout) e das ferramentas read-only nunca é contornada (menor privilégio — `05-agente-ia.md` §4.2/§10 e `09-seguranca-lgpd.md` §4.2).
+- **Nunca credenciais cruas no provider.** O worker injeta **handles de ferramentas já escopadas** (`repo_buscar`, `repo_ler_arquivo`, `logs_consultar`, `bd_consultar` SELECT-only com timeout; opcionalmente `repo_escrever_arquivo`/`repo_criar_arquivo` só com o gate de resolução aberto) — jamais o caminho do repositório, a DSN read-only, credencial de git ou qualquer credencial do sistema-alvo no input. A conexão real ao banco, o acesso ao filesystem e o acesso a git/rede vivem **apenas no worker**; assim um provider trocável, bugado ou comprometido não tem conectividade direta ao BD, ao repositório nem à rede, e a mediação do `bd_consultar` (SELECT-only + timeout) e das ferramentas read-only/escrita nunca é contornada (menor privilégio — `05-agente-ia.md` §4.2/§6/§10 e `09-seguranca-lgpd.md` §4.2).
 - **O provider decide, o pipeline age.** O provider retorna uma decisão estruturada; a máquina de estados (mudar status para `aguardando_cliente`, publicar `Mensagem`, criar branch/PR, gravar `ExecucaoIA`) é responsabilidade do pipeline. Isso mantém o provider substituível.
 - **Telemetria obrigatória** em toda resposta, via `AIProviderResult.telemetria` (`custoUsd`/`duracaoMs`/`tokensEntrada`/`tokensSaida`), alimentando `ExecucaoIA`.
 - **Guardrails fora do provider.** O guardrail de "nunca fazer merge/deploy sem aprovação humana" vive no pipeline, não no engine — trocar de engine não pode afetá-lo (`05-agente-ia.md`, `09-seguranca-lgpd.md`).

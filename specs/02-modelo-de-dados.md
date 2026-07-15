@@ -517,6 +517,8 @@ COMMIT;
 
 **Resolução de tenant antes do contexto RLS.** Como a aplicação conecta sem BYPASSRLS, ela não consegue por si só ler a linha de `tenant` (por slug/domínio) para descobrir o `tenant_id` a colocar em `SET LOCAL` — a própria policy de isolamento esconderia essa linha antes do login. A função `chamados_resolver_tenant` (SECURITY DEFINER) resolve o tenant por slug/domínio **antes** de estabelecer o contexto RLS, sem exigir que a aplicação use um role com bypass (D-010; ver `07-multitenancy-whitelabel.md`).
 
+Pelo mesmo motivo, o job de manutenção (fechamento automático de `resolvido` — ver `04-chamados.md` §8.1) precisa enumerar os tenants a varrer antes de ter um `tenant_id` para abrir contexto RLS. A função `chamados_tenants_ativos()` (SECURITY DEFINER) lista os tenants com `status='ativo'` para esse job varrer um a um, também sem exigir que a aplicação use um role com bypass (implementado no M10).
+
 > DECISÃO PENDENTE: modelo de deploy do banco — schema único compartilhado com RLS (recomendado, mais simples de operar) vs schema-per-tenant. A recomendação é schema único + RLS; schema-per-tenant só se surgir requisito forte de isolamento físico.
 
 > DECIDIDO (2026-07-15): com TypeORM (D-001), o `SET LOCAL app.current_tenant` é injetado pelo helper `runInTenantContext(tenantId, fn)`: ele obtém um `queryRunner`, abre uma transação, executa `SELECT set_config('app.current_tenant', $1, true)` (3º argumento `true` = local à transação) e roda `fn` — com todas as queries/repositories do request — dentro dessa transação. Todo acesso a dados passa por esse helper; é **proibido** `SET`/`set_config(..., false)` de sessão, honrando a regra normativa acima (sempre local à transação, nunca de sessão, para que a conexão do pool não vaze tenant entre requests). Ver specs/decisoes.md (D-001).
@@ -549,7 +551,7 @@ Descrições e mensagens são rich text (TipTap recomendado). Guardamos **duas r
 - Imagens/anexos inline referenciam linhas de `Anexo` (`inline = true`); o JSON guarda o `anexo_id`/`storage_key`, não o binário. URLs de exibição são geradas sob demanda (assinadas), não persistidas no corpo.
 - Busca full-text opera sobre uma projeção textual (`tsvector`) derivada do HTML/JSON — ver `04-chamados.md` para a estratégia de busca.
 
-> DECISÃO PENDENTE: extrair texto puro para uma coluna `tsvector` gerada (índice GIN) vs busca externa. Recomendação inicial: `tsvector` no PostgreSQL (`portuguese`), suficiente para o MVP.
+> DECIDIDO (2026-07-15): coluna **GERADA** `busca_tsv` (`tsvector`, `GENERATED ALWAYS AS (...) STORED`), configuração `portuguese`, combinando `titulo` (peso A) e o texto extraído de `descricao_html` já sanitizado (peso B), com índice GIN. MVP indexa apenas **título + descrição** do chamado; mensagens (incluindo notas internas) ficam fora do índice de busca (implementado no M10).
 
 ## Índices principais
 
@@ -572,7 +574,7 @@ Descrições e mensagens são rich text (TipTap recomendado). Guardamos **duas r
 | evento_chamado    | `(tenant_id, chamado_id, created_at)`                               | histórico                                       |
 | execucao_ia       | `(tenant_id, chamado_id, created_at)`                               | trilha de IA                                    |
 | anexo             | `(tenant_id, chamado_id)` / `(tenant_id, mensagem_id)`              | listar anexos                                   |
-| chamado           | GIN sobre `tsvector` do conteúdo                                    | busca full-text                                 |
+| chamado           | GIN sobre `busca_tsv` (coluna gerada: título + descrição)           | busca full-text                                 |
 
 Todos os índices de negócio começam por `tenant_id` (alinhado ao filtro de RLS e à seletividade por tenant).
 

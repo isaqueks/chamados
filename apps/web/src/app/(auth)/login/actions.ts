@@ -2,7 +2,12 @@
 
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { obterAppDataSource, autenticarComSenha } from '@chamados/db';
+import {
+  obterAppDataSource,
+  autenticarComSenha,
+  consumirRateLimit,
+  mensagemRateLimit,
+} from '@chamados/db';
 import { Papel } from '@chamados/shared';
 import { obterTenantAtual } from '@/lib/tenant';
 import { definirCookieSessao } from '@/lib/cookies';
@@ -24,12 +29,20 @@ export async function acaoLogin(_prev: EstadoLogin, formData: FormData): Promise
   if (!tenant) return { erro: 'Endereço de tenant desconhecido.' };
 
   const h = await headers();
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined;
+
+  // Rate limiting anti-brute-force (specs/03 §4.1, specs/09 §2): por tenant+IP e
+  // tenant+e-mail, limites folgados. Bloqueio → mensagem genérica (não revela se a
+  // conta existe nem por que falhou). Fail-open embutido (Redis fora → libera).
+  const rl = await consumirRateLimit('login', { tenantId: tenant.id, ip, email });
+  if (!rl.ok) return { erro: mensagemRateLimit(rl.retryAposS) };
+
   const ds = await obterAppDataSource();
   const r = await autenticarComSenha(ds, tenant, {
     email,
     senha,
     userAgent: h.get('user-agent') ?? undefined,
-    ip: h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined,
+    ip,
   });
 
   if (!r.ok) return { erro: 'E-mail ou senha inválidos.' };

@@ -45,6 +45,14 @@ export {
 } from './preferencia-service';
 export { resolverJobs, despacharNotificacoes, type EventoAuditavel } from './dispatcher';
 export {
+  validarUrlWebhook,
+  hostWebhookPrivado,
+  permitirWebhookPrivado,
+  WebhookUrlInvalidaError,
+  type MotivoUrlWebhook,
+  type ResultadoUrlWebhook,
+} from './validar-url-webhook';
+export {
   NOME_FILA_NOTIFICACOES,
   NOME_JOB_NOTIFICACAO,
   filaNotificacoes,

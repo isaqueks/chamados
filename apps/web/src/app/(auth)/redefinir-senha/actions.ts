@@ -1,6 +1,12 @@
 'use server';
 
-import { obterAppDataSource, redefinirComToken } from '@chamados/db';
+import { headers } from 'next/headers';
+import {
+  obterAppDataSource,
+  redefinirComToken,
+  consumirRateLimit,
+  mensagemRateLimit,
+} from '@chamados/db';
 import { obterTenantAtual } from '@/lib/tenant';
 
 export interface EstadoRedefinir {
@@ -26,6 +32,12 @@ export async function acaoRedefinir(
 
   const tenant = await obterTenantAtual();
   if (!tenant) return { erro: 'Endereço de tenant desconhecido.' };
+
+  // Rate limiting anti brute-force de token (specs/09 §2): por tenant+IP (o
+  // e-mail só é conhecido após resolver o token).
+  const ip = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined;
+  const rl = await consumirRateLimit('redefinir_senha', { tenantId: tenant.id, ip });
+  if (!rl.ok) return { erro: mensagemRateLimit(rl.retryAposS) };
 
   const ds = await obterAppDataSource();
   const r = await redefinirComToken(ds, tenant.id, token, senha);

@@ -101,6 +101,12 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(op, 'config_notificacoes', 'editar')).toBe(false);
       expect(autorizar(op, 'config_notificacoes', 'ler')).toBe(true); // ⚠️ leitura ok
     });
+
+    it('operador NÃO edita config do tenant, mas PODE ler (recurso dedicado M10)', () => {
+      const op = ator(Papel.operador);
+      expect(autorizar(op, 'config_tenant', 'editar')).toBe(false);
+      expect(autorizar(op, 'config_tenant', 'ler')).toBe(true); // ⚠️ leitura ok
+    });
   });
 
   describe('admin ⊇ operador e capacidades exclusivas', () => {
@@ -126,6 +132,19 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(a, 'branding', 'gerenciar')).toBe(true);
       expect(autorizar(a, 'guardrail_ia', 'gerenciar')).toBe(true);
       expect(autorizar(a, 'sessao', 'encerrar_terceiros')).toBe(true);
+    });
+
+    it('admin edita a config do tenant (recurso dedicado M10)', () => {
+      const a = ator(Papel.admin);
+      expect(autorizar(a, 'config_tenant', 'editar')).toBe(true);
+      expect(autorizar(a, 'config_tenant', 'ler')).toBe(true);
+    });
+
+    it('cliente e agente_ia não acessam config do tenant', () => {
+      expect(autorizar(ator(Papel.cliente), 'config_tenant', 'editar')).toBe(false);
+      expect(autorizar(ator(Papel.cliente), 'config_tenant', 'ler')).toBe(false);
+      expect(autorizar(ator(Papel.agente_ia), 'config_tenant', 'editar')).toBe(false);
+      expect(autorizar(ator(Papel.agente_ia), 'config_tenant', 'ler')).toBe(false);
     });
 
     it('admin convida qualquer papel', () => {

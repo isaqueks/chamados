@@ -2,7 +2,13 @@
 
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { obterAppDataSource, aceitarConviteFluxo, abrirSessao } from '@chamados/db';
+import {
+  obterAppDataSource,
+  aceitarConviteFluxo,
+  abrirSessao,
+  consumirRateLimit,
+  mensagemRateLimit,
+} from '@chamados/db';
 import { obterTenantAtual } from '@/lib/tenant';
 import { definirCookieSessao } from '@/lib/cookies';
 
@@ -31,6 +37,12 @@ export async function acaoAceitarConvite(
   const tenant = await obterTenantAtual();
   if (!tenant) return { erro: 'Endereço de tenant desconhecido.' };
 
+  // Rate limiting anti brute-force de token de convite (specs/09 §2): tenant+IP.
+  const h0 = await headers();
+  const ip = h0.get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined;
+  const rl = await consumirRateLimit('aceite_convite', { tenantId: tenant.id, ip });
+  if (!rl.ok) return { erro: mensagemRateLimit(rl.retryAposS) };
+
   const ds = await obterAppDataSource();
   const r = await aceitarConviteFluxo(ds, tenant.id, token, { nome, senha });
   if (!r.ok) {
@@ -43,10 +55,9 @@ export async function acaoAceitarConvite(
     return { erro: msg };
   }
 
-  const h = await headers();
   const token_sessao = await abrirSessao(ds, tenant.id, r.usuario_id, {
-    user_agent: h.get('user-agent') ?? undefined,
-    ip: h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? undefined,
+    user_agent: h0.get('user-agent') ?? undefined,
+    ip,
   });
   await definirCookieSessao(token_sessao);
   redirect('/app');

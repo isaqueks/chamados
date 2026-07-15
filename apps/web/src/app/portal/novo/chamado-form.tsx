@@ -31,9 +31,15 @@ const NATUREZAS: { valor: Natureza; titulo: string; descricao: string }[] = [
   },
 ];
 
-export function ChamadoNovoForm({ sistemas }: { sistemas: { id: string; nome: string }[] }) {
+export function ChamadoNovoForm({
+  sistemas,
+  tituloInicial = '',
+}: {
+  sistemas: { id: string; nome: string }[];
+  tituloInicial?: string;
+}) {
   const [estado, acao, pendente] = useActionState(acaoCriarChamado, INICIAL);
-  const [titulo, setTitulo] = useState('');
+  const [titulo, setTitulo] = useState(tituloInicial);
   const [temDescricao, setTemDescricao] = useState(false);
 
   const mostrarSistema = sistemas.length > 1;

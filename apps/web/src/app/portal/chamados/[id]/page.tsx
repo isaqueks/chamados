@@ -1,7 +1,15 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { In } from 'typeorm';
-import { ArrowLeft, Bot, CircleUser, MessageSquare, RotateCcw, TriangleAlert } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bot,
+  CircleUser,
+  MessageSquare,
+  Plus,
+  RotateCcw,
+  TriangleAlert,
+} from 'lucide-react';
 import {
   obterAppDataSource,
   runInTenantContext,
@@ -19,7 +27,7 @@ import { exigirUsuario } from '@/lib/sessao';
 import { ROTULO_STATUS_CHAMADO, ROTULO_TIPO_EVENTO, iniciais } from '@/lib/rotulos';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { classesConteudoRico } from '@/components/editor';
 import { StatusBadge, NaturezaBadge, PrioridadeBadge } from '@/components/portal/chamado-badges';
 import { tempoRelativo, dataHoraAbsoluta } from '@/components/portal/tempo';
@@ -256,10 +264,19 @@ export default async function ChamadoDetalhePage({
           </CardContent>
         </Card>
       ) : (
-        <p className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-          Este chamado está {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} e não recebe novas
-          mensagens.
-        </p>
+        <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            Este chamado está {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} e não recebe
+            novas mensagens. Precisa de mais alguma coisa?
+          </p>
+          <Link
+            href={`/portal/novo?ref=${chamado.numero}`}
+            className={cn(buttonVariants({ size: 'sm' }), 'shrink-0')}
+          >
+            <Plus className="size-4" />
+            Abrir novo chamado
+          </Link>
+        </div>
       )}
 
       {/* Ação de cancelar (confirmação) */}
@@ -277,7 +294,7 @@ function AvatarAutor({ tipo, autor }: { tipo: TipoAutor; autor: string }) {
     'flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold';
   if (tipo === 'ia') {
     return (
-      <span className={cn(base, 'bg-primary/10 text-primary')} aria-hidden>
+      <span className={cn(base, 'bg-marca-acento/10 text-marca-acento')} aria-hidden>
         <Bot className="size-4" />
       </span>
     );

@@ -136,7 +136,7 @@ Retorna `200` quando Postgres e Redis estão acessíveis; `503` e
 
 O worker processa duas filas: `triagem-ia` (triagem automática de chamados pelo
 `agente_ia` — `specs/05-agente-ia.md`) e `notificacoes` (entrega de e-mail/webhook
-— ver §3.9). Um único processo (`npm run dev:worker`) registra as duas.
+— ver §3.10). Um único processo (`npm run dev:worker`) registra as duas.
 
 **Fluxo integrado (M7 + M9).** Ao abrir um chamado pela interface (portal ou
 painel), a própria server action transiciona `novo → em_triagem` e enfileira o job
@@ -179,7 +179,42 @@ npm run smoke:triagem
 Requer Postgres e Redis de pé (`docker compose up -d`) e as migrations
 aplicadas; usa `IA_PROVIDER=fake` internamente, sem custo nem rede.
 
-### 3.9 Notificações (e-mail + webhook)
+### 3.9 Resolução automática via PR (M8)
+
+Quando o chamado é `problema` + `complexidade=facil` + compreendido acima do
+limiar de confiança, a IA tenta resolver: escreve a correção numa working copy
+descartável e o worker cria a branch, comita, faz push e (GitHub) abre o PR —
+detalhes do fluxo e do gate duplo (pré-call/pós-call) em `specs/05-agente-ia.md`
+§6. **A IA nunca faz merge**: o PR fica sempre aguardando aprovação humana.
+
+Variáveis de ambiente da resolução (ver `.env.example` para os defaults reais):
+
+| Variável                         | Default   | Descrição                                                                 |
+| -------------------------------- | --------- | ------------------------------------------------------------------------- |
+| `IA_RESOLUCAO_CONFIANCA_MIN`     | `0.7`     | confiança mínima do gate pós-call para o worker tentar branch/PR          |
+| `IA_RESOLUCAO_MAX_ARQUIVOS`      | `10`      | teto de arquivos que a tentativa pode criar/alterar                       |
+| `IA_RESOLUCAO_MAX_ARQUIVO_BYTES` | `262144`  | teto de tamanho de cada arquivo escrito                                   |
+| `IA_RESOLUCAO_MAX_BYTES_TOTAL`   | `1048576` | teto de bytes totais escritos na tentativa                                |
+| `IA_RESOLUCAO_PR_TIMEOUT_MS`     | `10000`   | timeout do POST de abertura de PR no GitHub                               |
+| `APP_BASE_URL`                   | vazio     | base do painel para o link do chamado no corpo do PR; vazio → só o número |
+
+PR automático só acontece quando o `git_repo_url` do `SistemaAlvo` é
+`github.com` **e** há um token com escopo de PR no cofre de segredos; para
+outros hosts (GitLab, Bitbucket, self-hosted…) o worker só publica a branch
+(push) e a nota interna traz a instrução para abrir o PR manualmente.
+
+Para validar a resolução automática de ponta a ponta (gate, fluxo completo
+contra um repo bare local, falha de push, cache íntegro sem credencial,
+invisibilidade ao cliente):
+
+```bash
+npm run smoke:resolucao
+```
+
+Requer Postgres e Redis de pé; roda 100% local (repo bare local como origin,
+sem GitHub real), `IA_PROVIDER=fake`, tenants descartáveis.
+
+### 3.10 Notificações (e-mail + webhook)
 
 A fila `notificacoes` (M9 — `specs/06-notificacoes.md`) entrega e-mails
 transacionais e de chamado (confirmação de abertura, nova mensagem pública,
@@ -244,24 +279,25 @@ Todas as portas são configuráveis via `.env`.
 
 ## 5. Comandos úteis
 
-| Comando (na raiz)                        | O que faz                                    |
-| ---------------------------------------- | -------------------------------------------- |
-| `npm install`                            | instala todos os workspaces                  |
-| `docker compose up -d`                   | sobe Postgres, Redis, MinIO                  |
-| `docker compose ps`                      | status/health dos containers                 |
-| `docker compose down`                    | derruba os containers (mantém volumes)       |
-| `docker compose down -v`                 | derruba e **apaga os volumes** (reset total) |
-| `npm run migration:run`                  | aplica as migrations                         |
-| `npm run migration:revert`               | reverte a última migration                   |
-| `npm run smoke:rls`                      | testa o isolamento por RLS                   |
-| `npm run smoke:triagem`                  | testa a infra de triagem (fila/dedupe/lock)  |
-| `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)    |
-| `npm run dev`                            | sobe web + worker juntos                     |
-| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                  |
-| `npm run build`                          | build de produção do web                     |
-| `npm run typecheck`                      | typecheck de todos os workspaces             |
-| `npm run lint`                           | ESLint (flat config)                         |
-| `npm run format`                         | Prettier (escreve)                           |
+| Comando (na raiz)                        | O que faz                                              |
+| ---------------------------------------- | ------------------------------------------------------ |
+| `npm install`                            | instala todos os workspaces                            |
+| `docker compose up -d`                   | sobe Postgres, Redis, MinIO                            |
+| `docker compose ps`                      | status/health dos containers                           |
+| `docker compose down`                    | derruba os containers (mantém volumes)                 |
+| `docker compose down -v`                 | derruba e **apaga os volumes** (reset total)           |
+| `npm run migration:run`                  | aplica as migrations                                   |
+| `npm run migration:revert`               | reverte a última migration                             |
+| `npm run smoke:rls`                      | testa o isolamento por RLS                             |
+| `npm run smoke:triagem`                  | testa a infra de triagem (fila/dedupe/lock)            |
+| `npm run smoke:resolucao`                | testa a resolução automática via PR (gate/branch/push) |
+| `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)              |
+| `npm run dev`                            | sobe web + worker juntos                               |
+| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                            |
+| `npm run build`                          | build de produção do web                               |
+| `npm run typecheck`                      | typecheck de todos os workspaces                       |
+| `npm run lint`                           | ESLint (flat config)                                   |
+| `npm run format`                         | Prettier (escreve)                                     |
 
 ---
 

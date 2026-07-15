@@ -2,6 +2,17 @@ export { conexaoBase, credenciaisAdmin, credenciaisApp } from './config';
 export { criarAppDataSource, criarAdminDataSource, obterAppDataSource } from './data-source';
 export { runInTenantContext } from './rls';
 export { verificarPostgres } from './health';
+// ---- M10 (hardening): rate limiting reutilizável (Redis) -------------------
+export {
+  consumirRateLimit,
+  aplicarLimite,
+  mensagemRateLimit,
+  rateLimitHabilitado,
+  fecharRateLimit,
+  type AcaoRateLimit,
+  type ResultadoRateLimit,
+  type ResultadoLimite,
+} from './rate-limit';
 export { TenantSchema, type Tenant, type ConfigBranding } from './entities/tenant';
 export { UsuarioSchema, type Usuario } from './entities/usuario';
 export { SessaoSchema, type Sessao } from './entities/sessao';
@@ -232,6 +243,12 @@ export {
   lerSegredoWebhook,
   registrarFalhaWebhook,
   zerarFalhasWebhook,
+  validarUrlWebhook,
+  hostWebhookPrivado,
+  permitirWebhookPrivado,
+  WebhookUrlInvalidaError,
+  type MotivoUrlWebhook,
+  type ResultadoUrlWebhook,
   preferenciaHabilitada,
   listarPreferenciasUsuario,
   definirPreferencia,
@@ -260,3 +277,17 @@ export {
   type ResultadoPreferencia,
   type EventoAuditavel,
 } from './notificacoes';
+
+// ---- M10: busca full-text + auto-fechamento (E-31, specs/04 §8.1/§10.4) -----
+export {
+  interpretarBusca,
+  exprMatchFts,
+  exprRankFts,
+  FTS_MIN_CHARS,
+  type ModoBusca,
+} from './chamados/busca';
+export {
+  listarTenantsAtivos,
+  fecharChamadosResolvidosVencidos,
+  type ResultadoAutoFechamento,
+} from './chamados/manutencao-service';

@@ -43,13 +43,17 @@ export async function enviarEmailTransacional(dados: {
     );
   }
 
-  // Log dev-friendly: a URL de ação continua visível no log do servidor.
+  // Log de auditoria. A URL de ação CARREGA UM TOKEN DE USO ÚNICO (reset/convite):
+  // logá-la em produção equivaleria a gravar credencial em log (specs/09 §7 e §8.6
+  // — "logs não contêm segredos"). Fora de produção, mantemos a URL visível no
+  // terminal para inspeção do fluxo (dev-friendly); em produção, é omitida.
+  const ehProd = process.env.NODE_ENV === 'production';
   console.info(
     JSON.stringify({
       evt: 'email_transacional',
       tipo: dados.tipo,
       destinatario: dados.destinatario,
-      url: dados.url,
+      ...(ehProd ? {} : { url: dados.url }),
       ts: new Date().toISOString(),
     }),
   );

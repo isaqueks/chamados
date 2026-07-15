@@ -25,6 +25,11 @@ import { carregarEnvRaiz } from './carregar-env';
 
 carregarEnvRaiz();
 
+// Este smoke usa um receptor de webhook LOCAL (127.0.0.1) — o cenário de DEV que
+// a flag anti-SSRF libera. Sem ela, o WebhookAdapter bloquearia hosts privados
+// (specs/09 §5). Em produção a flag fica desligada e a URL nunca é privada.
+process.env.NOTIFICACOES_WEBHOOK_PERMITIR_PRIVADO = 'true';
+
 const {
   criarAppDataSource,
   criarAdminDataSource,

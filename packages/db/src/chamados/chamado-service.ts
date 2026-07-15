@@ -33,6 +33,7 @@ import {
   type MotivoRichText,
 } from './rich-text';
 import { auditorDe, type HooksChamado } from './auditoria';
+import { interpretarBusca, exprMatchFts } from './busca';
 
 /**
  * Serviços de Chamado (specs/04). Rodam SEMPRE dentro de `runInTenantContext`
@@ -376,6 +377,14 @@ export interface FiltrosChamado {
   categoria_id?: string;
   /** Equipe pode filtrar por autor; para cliente é ignorado (escopo é sempre o próprio). */
   cliente_id?: string;
+  /**
+   * Busca textual simples (specs/04 §10.4). Reutiliza a mesma interpretação da
+   * fila (`busca.ts`): número → prefixo; texto → full-text sobre `busca_tsv`
+   * (título + descrição, ambos públicos — nunca vaza nota interna). Como
+   * `busca_tsv` cobre só campos públicos, é seguro no portal do cliente. Aqui é
+   * FILTRO (mantém a ordenação por última atualização e o cursor keyset).
+   */
+  busca?: string;
   limite?: number;
   cursor?: string;
 }
@@ -423,6 +432,15 @@ export async function listarChamados(
     qb.andWhere('c.cliente_id = :autor', { autor: ator.id });
   } else if (filtros.cliente_id) {
     qb.andWhere('c.cliente_id = :autor', { autor: filtros.cliente_id });
+  }
+
+  const b = interpretarBusca(filtros.busca);
+  if (b.modo === 'numero') {
+    qb.andWhere('CAST(c.numero AS TEXT) LIKE :bnum', { bnum: `${b.numero}%` });
+  } else if (b.modo === 'ilike') {
+    qb.andWhere('c.titulo ILIKE :btermo', { btermo: `%${b.termo}%` });
+  } else if (b.modo === 'fts') {
+    qb.andWhere(exprMatchFts('c', 'btsq'), { btsq: b.tsq });
   }
 
   if (filtros.status) {

@@ -7,6 +7,7 @@ import {
 } from '../entities/canal-notificacao';
 import type { SecretStore } from '../secrets/secret-store';
 import { CanalNotificacaoTipo } from './tipos';
+import { validarUrlWebhook, WebhookUrlInvalidaError } from './validar-url-webhook';
 
 /**
  * Serviço de `CanalNotificacao` (specs/06 §2-3). Roda sob `runInTenantContext`
@@ -78,6 +79,15 @@ export async function salvarWebhook(
   entrada: EntradaWebhook,
   store: SecretStore,
 ): Promise<void> {
+  // Anti-SSRF (specs/09): valida a URL ANTES de persistir. Fail-closed — uma URL
+  // privada/interna/inválida nunca chega ao banco (e, por consequência, nunca é
+  // enviada nem "testada", pois o teste lê a URL persistida). URL vazia = limpar.
+  const urlLimpa = entrada.url.trim();
+  if (urlLimpa !== '') {
+    const v = validarUrlWebhook(urlLimpa);
+    if (!v.ok) throw new WebhookUrlInvalidaError(v.motivo, v.mensagem);
+  }
+
   const existente = await buscarCanal(em, CanalNotificacaoTipo.webhook);
 
   // Resolve a referência do segredo: novo → guarda/substitui; vazio → mantém.
@@ -91,7 +101,7 @@ export async function salvarWebhook(
     }
   }
 
-  const config: ConfigCanal = { url: entrada.url.trim(), segredo_ref: segredoRef };
+  const config: ConfigCanal = { url: urlLimpa, segredo_ref: segredoRef };
 
   if (existente) {
     await em.update(
