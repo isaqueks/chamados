@@ -1,4 +1,4 @@
-import { Papel, StatusUsuario, StatusChamado, Natureza, Prioridade } from "@chamados/shared"
+import { Papel, StatusUsuario, StatusChamado, Natureza, Prioridade, TipoEvento } from "@chamados/shared"
 
 /** Rótulos amigáveis (pt-BR) dos papéis, para exibição na UI. */
 export const ROTULO_PAPEL: Record<Papel, string> = {
@@ -53,6 +53,31 @@ export const ROTULO_STATUS_USUARIO: Record<StatusUsuario, string> = {
   [StatusUsuario.ativo]: "Ativo",
   [StatusUsuario.suspenso]: "Suspenso",
   [StatusUsuario.removido]: "Removido",
+}
+
+/** Rótulos amigáveis dos eventos de auditoria (timeline — specs/04 §9). */
+export const ROTULO_TIPO_EVENTO: Record<TipoEvento, string> = {
+  [TipoEvento.chamado_criado]: "abriu o chamado",
+  [TipoEvento.status_alterado]: "mudou o status",
+  [TipoEvento.prioridade_alterada]: "alterou a prioridade",
+  [TipoEvento.natureza_alterada]: "alterou a natureza",
+  [TipoEvento.complexidade_alterada]: "alterou a complexidade",
+  [TipoEvento.operador_atribuido]: "atribuiu um operador",
+  [TipoEvento.operador_desatribuido]: "removeu a atribuição",
+  [TipoEvento.mensagem_publicada]: "publicou uma mensagem",
+  [TipoEvento.nota_interna_publicada]: "publicou uma nota interna",
+  [TipoEvento.anexo_adicionado]: "adicionou um anexo",
+  [TipoEvento.chamado_reaberto]: "reabriu o chamado",
+  [TipoEvento.chamado_resolvido]: "marcou como resolvido",
+  [TipoEvento.chamado_fechado]: "fechou o chamado",
+  [TipoEvento.chamado_fechado_auto]: "fechou automaticamente",
+  [TipoEvento.chamado_cancelado]: "cancelou o chamado",
+  [TipoEvento.ia_iniciou]: "IA iniciou a triagem",
+  [TipoEvento.ia_pediu_info]: "IA pediu informações",
+  [TipoEvento.ia_diagnosticou]: "IA publicou diagnóstico",
+  [TipoEvento.ia_abriu_pr]: "IA abriu um PR",
+  [TipoEvento.ia_gerou_spec]: "IA gerou uma SPEC",
+  [TipoEvento.ia_falhou]: "execução da IA falhou",
 }
 
 /** Iniciais para o avatar a partir do nome. */

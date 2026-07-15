@@ -288,11 +288,12 @@ Convenções: ✅ permitido · ⚠️ condicional (nota) · ❌ negado. `admin` 
 | Chamado · criar | ✅ | ✅ | ✅ (próprio) | ❌ |
 | Chamado · ler | ✅ (tenant) | ✅ (tenant) | ⚠️ só os próprios | ✅ (tenant) |
 | Chamado · mudar status | ✅ | ✅ | ⚠️ só reabrir `resolvido`→`em_atendimento` | ⚠️ transições de triagem |
-| Chamado · mudar prioridade | ✅ | ✅ | ⚠️ definir na abertura (opcional) | ⚠️ sugerir |
-| Chamado · mudar natureza | ✅ | ✅ | ⚠️ definir na abertura | ⚠️ validar/ajustar |
+| Chamado · mudar prioridade | ✅ | ✅ | ❌ (define apenas na abertura — ver `04-chamados.md` §3.2) | ⚠️ sugerir |
+| Chamado · mudar natureza | ✅ | ✅ | ❌ (define apenas na abertura — ver `04-chamados.md` §3.1) | ⚠️ validar/ajustar |
 | Chamado · atribuir operador | ✅ | ✅ | ❌ | ❌ |
 | Chamado · classificar `complexidade` | ✅ | ✅ | ❌ | ✅ |
-| Chamado · fechar / cancelar | ✅ | ✅ | ❌ | ❌ |
+| Chamado · fechar | ✅ | ✅ | ❌ | ❌ |
+| Chamado · cancelar | ✅ | ✅ | ⚠️ apenas os próprios chamados, e apenas em `novo`/`aguardando_cliente` (regras finas de transição em `04-chamados.md` §1.3) | ❌ |
 | Mensagem `publica` · escrever | ✅ | ✅ | ✅ (nos próprios) | ✅ |
 | Mensagem `publica` · ler | ✅ | ✅ | ✅ (nos próprios) | ✅ |
 | Mensagem `interna` · escrever | ✅ | ✅ | ❌ | ✅ |

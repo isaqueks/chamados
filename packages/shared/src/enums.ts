@@ -54,6 +54,40 @@ export const VisibilidadeMensagem = {
 export type VisibilidadeMensagem =
   (typeof VisibilidadeMensagem)[keyof typeof VisibilidadeMensagem];
 
+/**
+ * Tipos de evento de auditoria (`EventoChamado`). Taxonomia canônica ÚNICA —
+ * fonte da verdade: specs/02 §"tipo_evento". As transições notáveis do ciclo de
+ * vida têm evento próprio (`chamado_reaberto`, `chamado_resolvido`,
+ * `chamado_fechado`, `chamado_fechado_auto`, `chamado_cancelado`) e NÃO emitem
+ * também `status_alterado` (sem duplicidade). Atribuição usa o par
+ * `operador_atribuido`/`operador_desatribuido`. Os tipos `ia_*` são gravados a
+ * partir de M6+ (pipeline do agente_ia), mas o enum já os inclui.
+ */
+export const TipoEvento = {
+  chamado_criado: 'chamado_criado',
+  status_alterado: 'status_alterado',
+  prioridade_alterada: 'prioridade_alterada',
+  natureza_alterada: 'natureza_alterada',
+  complexidade_alterada: 'complexidade_alterada',
+  operador_atribuido: 'operador_atribuido',
+  operador_desatribuido: 'operador_desatribuido',
+  mensagem_publicada: 'mensagem_publicada',
+  nota_interna_publicada: 'nota_interna_publicada',
+  anexo_adicionado: 'anexo_adicionado',
+  chamado_reaberto: 'chamado_reaberto',
+  chamado_resolvido: 'chamado_resolvido',
+  chamado_fechado: 'chamado_fechado',
+  chamado_fechado_auto: 'chamado_fechado_auto',
+  chamado_cancelado: 'chamado_cancelado',
+  ia_iniciou: 'ia_iniciou',
+  ia_pediu_info: 'ia_pediu_info',
+  ia_diagnosticou: 'ia_diagnosticou',
+  ia_abriu_pr: 'ia_abriu_pr',
+  ia_gerou_spec: 'ia_gerou_spec',
+  ia_falhou: 'ia_falhou',
+} as const;
+export type TipoEvento = (typeof TipoEvento)[keyof typeof TipoEvento];
+
 // ---------------------------------------------------------------------------
 // Usuário / Tenant
 // ---------------------------------------------------------------------------

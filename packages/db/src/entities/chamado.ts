@@ -8,25 +8,20 @@ import {
 } from '@chamados/shared';
 
 /**
- * Documento rich text (ProseMirror/TipTap) armazenado em `*_json`. Modelado com
- * nós de tipos CONCRETOS (folhas `string`) e sem recursão, para não colidir com
- * `QueryDeepPartialEntity` do TypeORM em inserts/updates de jsonb — mesmo motivo
- * de `ConfigBranding`/`LogsConfig`. Em M3 é gerado por um utilitário PROVISÓRIO
- * (texto simples → doc mínimo); M4 substitui pelo pipeline TipTap + sanitização
- * real (specs/04 §5, specs/09 §6), que pode ampliar estes tipos.
+ * Documento rich text (ProseMirror/TipTap) armazenado em `*_json`. Tipado como
+ * container JSON OPACO (índice `string → unknown`) para não colidir com o
+ * `QueryDeepPartialEntity` recursivo do TypeORM em inserts/updates de jsonb —
+ * mesmo motivo de `ConfigBranding`/`LogsConfig`. Os tipos ricos e recursivos do
+ * documento (nós/marcas) e o pipeline de validação/sanitização vivem em
+ * `chamados/rich-text.ts` (specs/04 §5, specs/09 §6); esta forma opaca é só o
+ * contrato de armazenamento.
  */
-export interface NoInlineDoc {
+export interface NoDocArmazenado {
   type: string;
   text?: string;
+  content?: NoDocArmazenado[];
 }
-export interface BlocoDoc {
-  type: string;
-  content?: NoInlineDoc[];
-}
-export interface DocRichText {
-  type: string;
-  content?: BlocoDoc[];
-}
+export type DocRichText = { type: string; content?: NoDocArmazenado[] };
 
 /**
  * Chamado (specs/02): entidade central. `numero` é sequencial por tenant

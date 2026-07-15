@@ -116,14 +116,14 @@ Quem pode criar: `cliente` (para si), `operador`/`admin` (em nome de um cliente,
 
 ### 3.1 Natureza — enum `problema` | `alteracao`
 
-- Definida pelo cliente na criação.
+- Definida pelo cliente **apenas na criação** do chamado; após criado, o cliente não pode mais alterá-la (ver matriz de permissões em `03-autenticacao-perfis-permissoes.md` §8.1).
 - A IA **valida/ajusta** a natureza durante a triagem (ex.: cliente marcou `problema`, mas o pedido é uma mudança de comportamento → `alteracao`). O ajuste gera `EventoChamado` e nota interna.
 - Operador pode alterar manualmente.
 - Efeito no pipeline: `alteracao` nunca dispara resolução automática de código; a IA produz uma SPEC (nota interna). `problema` pode disparar tentativa de correção sob os guardrails de `05-agente-ia.md`.
 
 ### 3.2 Prioridade — enum `baixa` | `media` | `alta` | `urgente`
 
-- Opcional na criação (default `media`).
+- Opcional na criação (default `media`); é o **único momento** em que o cliente define a prioridade. Após a criação, o cliente não pode mais alterá-la — só operador/admin (decisão) e agente_ia (sugestão) atuam sobre ela (ver matriz de permissões em `03-autenticacao-perfis-permissoes.md` §8.1).
 - A IA **sugere** prioridade na triagem; operador **decide**. A sugestão da IA não sobrescreve automaticamente uma prioridade escolhida pelo cliente sem registro.
 - Visível para todos os papéis (inclusive cliente).
 - Toda alteração de prioridade gera `EventoChamado`.
@@ -179,7 +179,7 @@ Limites:
 
 | Item | Limite (sugerido) |
 | --- | --- |
-| Título | 3–200 caracteres (alinhado ao `CHECK length 3..200` de `02-modelo-de-dados.md`) |
+| Título | 3–160 caracteres (alinhado ao `CHECK length 3..160` de `02-modelo-de-dados.md`) |
 | Corpo (descrição/mensagem) | até 50.000 caracteres de texto renderizado |
 | Imagens inline por mensagem | até 20 |
 

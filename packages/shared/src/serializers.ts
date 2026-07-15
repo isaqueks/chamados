@@ -10,7 +10,7 @@
  * Chamado/Mensagem completas chegam em marcos posteriores (M3+); aqui já deixamos
  * o serializer pronto e testado para quando os dados existirem.
  */
-import { VisibilidadeMensagem } from './enums';
+import { VisibilidadeMensagem, TipoEvento } from './enums';
 import type { StatusChamado, Natureza, Prioridade, Complexidade } from './enums';
 
 /** Forma "completa" (interna) de uma mensagem, como vive no banco (specs/02). */
@@ -103,6 +103,31 @@ export function serializarTimelineParaCliente(
   return mensagens
     .map(serializarMensagemParaCliente)
     .filter((m): m is MensagemCliente => m !== null);
+}
+
+/**
+ * Tipos de `EventoChamado` que NUNCA aparecem no histórico do cliente (specs/04
+ * §9). Herdam a visibilidade interna: notas internas, complexidade, atribuição de
+ * operador (specs/04 §10.1 — cliente não vê operador atribuído), anexos (podem
+ * pertencer a nota interna) e todas as ações da IA (`ia_*`).
+ */
+export const EVENTOS_INTERNOS: ReadonlySet<TipoEvento> = new Set<TipoEvento>([
+  TipoEvento.nota_interna_publicada,
+  TipoEvento.complexidade_alterada,
+  TipoEvento.operador_atribuido,
+  TipoEvento.operador_desatribuido,
+  TipoEvento.anexo_adicionado,
+  TipoEvento.ia_iniciou,
+  TipoEvento.ia_pediu_info,
+  TipoEvento.ia_diagnosticou,
+  TipoEvento.ia_abriu_pr,
+  TipoEvento.ia_gerou_spec,
+  TipoEvento.ia_falhou,
+]);
+
+/** Um evento é visível ao papel `cliente`? (default fechado para os `ia_*`.) */
+export function eventoVisivelAoCliente(tipo: TipoEvento): boolean {
+  return !EVENTOS_INTERNOS.has(tipo);
 }
 
 /**

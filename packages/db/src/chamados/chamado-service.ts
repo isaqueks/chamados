@@ -14,6 +14,7 @@ import {
   type Ator,
   type PapelTransicao,
   type MotivoNegacao,
+  type TipoEvento,
   type ChamadoInterno,
   type ChamadoCliente,
 } from '@chamados/shared';
@@ -22,7 +23,14 @@ import { TenantSchema } from '../entities/tenant';
 import { UsuarioSchema } from '../entities/usuario';
 import { SistemaAlvoSchema } from '../entities/sistema-alvo';
 import { garantirCategoriaGeral, buscarCategoria } from '../categorias/categoria-service';
-import { textoParaDescricao, comprimentoTextoDescricao } from './rich-text-provisorio';
+import {
+  validarDocRico,
+  materializarDoc,
+  normalizarEntradaRich,
+  LIMITE_CORPO_MAX,
+  type DocRico,
+  type MotivoRichText,
+} from './rich-text';
 import { auditorDe, type HooksChamado } from './auditoria';
 
 /**
@@ -32,10 +40,11 @@ import { auditorDe, type HooksChamado } from './auditoria';
  * mutação chama o seam de auditoria (M4 grava o EventoChamado — ver auditoria.ts).
  */
 
-/** Limites de título e corpo (specs/02 CHECK 3..160; specs/04 §5 corpo ≤ 50k). */
+/** Limites de título (specs/02 CHECK 3..160). O limite de corpo (≤ 50k) vive no
+ * pipeline de rich text (specs/04 §5) e é reexportado aqui por conveniência. */
 export const LIMITE_TITULO_MIN = 3;
 export const LIMITE_TITULO_MAX = 160;
-export const LIMITE_CORPO_MAX = 50_000;
+export { LIMITE_CORPO_MAX };
 
 // ---------------------------------------------------------------------------
 // Atores
@@ -112,8 +121,12 @@ function serializarPorPapel(papel: Papel, c: Chamado): ChamadoView {
 
 export interface EntradaCriarChamado {
   titulo: string;
-  /** Texto simples em M3 (o pipeline TipTap/sanitização é M4). */
-  descricao: string;
+  /**
+   * Descrição em rich text: TEXTO SIMPLES (convertido para doc mínimo) OU um
+   * documento ProseMirror/TipTap. Em ambos os casos passa pelo pipeline real
+   * (validação estrutural + extração de imagens + sanitização — specs/04 §5).
+   */
+  descricao: string | DocRico;
   natureza: Natureza;
   prioridade?: Prioridade;
   sistema_alvo_id?: string | null;
@@ -127,13 +140,32 @@ export type MotivoCriar =
   | 'solicitante_obrigatorio'
   | 'solicitante_invalido'
   | 'titulo_invalido'
+  | 'descricao_invalida'
   | 'descricao_obrigatoria'
   | 'descricao_muito_longa'
+  | 'imagem_invalida'
+  | 'imagens_demais'
   | 'natureza_invalida'
   | 'prioridade_invalida'
   | 'sistema_alvo_obrigatorio'
   | 'sistema_alvo_invalido'
   | 'categoria_invalida';
+
+/** Mapeia o motivo do pipeline de rich text para o motivo de criação/mensagem. */
+export function motivoRichParaCriar(m: MotivoRichText): MotivoCriar {
+  switch (m) {
+    case 'doc_invalido':
+      return 'descricao_invalida';
+    case 'corpo_vazio':
+      return 'descricao_obrigatoria';
+    case 'corpo_muito_longo':
+      return 'descricao_muito_longa';
+    case 'imagem_invalida':
+      return 'imagem_invalida';
+    case 'imagens_demais':
+      return 'imagens_demais';
+  }
+}
 
 export type ResultadoCriar =
   | { ok: true; id: string; numero: string }
@@ -206,13 +238,10 @@ export async function criarChamado(
     return { ok: false, motivo: 'titulo_invalido' };
   }
 
-  const descricao = entrada.descricao ?? '';
-  if (comprimentoTextoDescricao(descricao) === 0) {
-    return { ok: false, motivo: 'descricao_obrigatoria' };
-  }
-  if (comprimentoTextoDescricao(descricao) > LIMITE_CORPO_MAX) {
-    return { ok: false, motivo: 'descricao_muito_longa' };
-  }
+  // Pipeline de rich text — fase 1 (validação estrutural + extração de imagens),
+  // sem efeitos colaterais: falha fecha antes de qualquer INSERT (specs/04 §5).
+  const val = validarDocRico(normalizarEntradaRich(entrada.descricao));
+  if (!val.ok) return { ok: false, motivo: motivoRichParaCriar(val.motivo) };
 
   if (!ehValorEnum(Natureza, entrada.natureza)) return { ok: false, motivo: 'natureza_invalida' };
   const prioridade = entrada.prioridade ?? Prioridade.media;
@@ -224,8 +253,8 @@ export async function criarChamado(
   // Numeração sequencial por tenant, transacional e sem buracos (specs/02).
   const numero = await proximoNumero(em, ator.tenant_id);
 
-  const { json, html } = textoParaDescricao(descricao);
-
+  // Insere com descrição placeholder; a fase 2 (upload das imagens inline +
+  // sanitização) precisa do chamado_id para vincular os anexos.
   const res = await em.insert(ChamadoSchema, {
     tenant_id: ator.tenant_id,
     numero,
@@ -234,14 +263,27 @@ export async function criarChamado(
     cliente_id,
     operador_id: null,
     titulo,
-    descricao_json: json,
-    descricao_html: html,
+    descricao_json: { type: 'doc' },
+    descricao_html: '',
     status: StatusChamado.novo,
     natureza: entrada.natureza,
     prioridade,
     reaberto_count: 0,
   });
   const id = res.identifiers[0]!.id as string;
+
+  // Fase 2: materializa imagens coladas como Anexo (inline) e renderiza o HTML
+  // sanitizado; grava a dupla representação final (JSON fonte + HTML seguro).
+  const mat = await materializarDoc({
+    em,
+    tenantId: ator.tenant_id,
+    chamadoId: id,
+    mensagemId: null,
+    atorId: ator.id,
+    validado: val.validado,
+    hooks,
+  });
+  await em.update(ChamadoSchema, { id }, { descricao_json: mat.json, descricao_html: mat.html });
 
   await auditorDe(hooks)(em, {
     tipo: 'chamado_criado',
@@ -397,12 +439,15 @@ export type ResultadoTransicionar =
   | { ok: true; chamado: ChamadoInterno }
   | { ok: false; motivo: MotivoTransicionar };
 
-/** Tipo de evento (M4) associado a uma transição — só para o seam de auditoria. */
+/**
+ * Tipo de evento canônico (specs/02) associado a uma transição. As transições
+ * notáveis têm evento próprio; as demais caem em `status_alterado`.
+ */
 function tipoEventoTransicao(
   de: StatusChamado,
   para: StatusChamado,
   atorSistema: boolean,
-): string {
+): TipoEvento {
   if (para === StatusChamado.resolvido) return 'chamado_resolvido';
   if (para === StatusChamado.cancelado) return 'chamado_cancelado';
   if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido)

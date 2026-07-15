@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M4: mensagens, rich text sanitizado, anexos e auditoria
+
+- **Mensagens** públicas/internas imutáveis: cliente só cria públicas nos próprios chamados; filtro de visibilidade no repositório + serializer como segunda barreira; resposta pública do cliente em `aguardando_cliente` transiciona automaticamente para `em_triagem` (evento pelo ator `sistema`).
+- **Pipeline real de rich text** (substitui o provisório do M3): validação estrutural fail-closed do doc TipTap → imagens `data:` viram `Anexo inline` (magic bytes) com `src` reescrito → HTML construído do JSON validado (nunca parse de HTML do cliente), sem `data:`/scripts/handlers, links só http(s)/mailto com rel seguro. Dupla representação (JSON fonte + HTML sanitizado) na descrição e nas mensagens.
+- **Anexos**: magic bytes default-deny (SVG bloqueado no MVP), 25 MB/arquivo, chave prefixada por tenant; download apenas por URL pré-assinada curta após `autorizar()` + visibilidade da mensagem dona (anexo de nota interna nunca chega ao cliente).
+- **EventoChamado**: tabela append-only (grant só SELECT/INSERT no banco); todas as mutações de M3/M4 geram eventos com o enum canônico; eventos internos (nota interna, complexidade, atribuição, anexo) ocultos ao cliente.
+- Detalhe provisório `/app/chamados/[id]` com timeline intercalada, toggle Pública/Interna (default Interna para operador) e anexos; seed com mensagens de exemplo; `npm run smoke:mensagens` (34 asserts).
+- Matriz `autorizar()`: cliente ❌ em `mudar_prioridade`/`mudar_natureza` pós-criação (specs 03/04 reconciliadas: título 3–160, cancelamento pelo cliente em estados iniciais explícito na matriz).
+- **Verificado:** typecheck, lint, build, migrations zero/incremental/revert, 6 smokes, 72/72 testes, E2E (operador vê nota interna; cliente não vê nota/badge/complexidade).
+- Notas: scan antivírus/quarentena de anexos fica para fase posterior (spec 09); `format:check` divergia no repo inteiro (pré-existente) — baseline do prettier aplicado em commit separado na sequência.
+
 ## 2026-07-15 — Marco M3: Chamado — modelo, numeração e máquina de estados
 
 - **Máquina de estados pura** em `packages/shared` (spec 04 §1.3): tabela canônica de transições × papéis com motivos de negação, invariantes (fechado/cancelado terminais, `agente_ia` nunca resolve, reabertura só de `resolvido`, admin ⊇ operador) — 38 testes.

@@ -118,8 +118,10 @@ const MATRIZ: Matriz = {
       [agente_ia]: mesmoTenant,
     },
     mudar_status: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
-    mudar_prioridade: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
-    mudar_natureza: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
+    // Cliente define prioridade/natureza APENAS na abertura (specs/04 §3.1/§3.2):
+    // pós-criação o ajuste é da IA/operador. Cliente ❌ aqui.
+    mudar_prioridade: { [operador]: true, [cliente]: false, [agente_ia]: true },
+    mudar_natureza: { [operador]: true, [cliente]: false, [agente_ia]: true },
     atribuir: { [operador]: true, [cliente]: false, [agente_ia]: false },
     classificar_complexidade: {
       [operador]: true,

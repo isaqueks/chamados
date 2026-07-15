@@ -10,10 +10,14 @@ import { SegredoSchema } from './entities/segredo';
 import { SistemaAlvoSchema } from './entities/sistema-alvo';
 import { CategoriaSchema } from './entities/categoria';
 import { ChamadoSchema } from './entities/chamado';
+import { MensagemSchema } from './entities/mensagem';
+import { AnexoSchema } from './entities/anexo';
+import { EventoChamadoSchema } from './entities/evento-chamado';
 import { Init1720000000000 } from './migrations/0000-init';
 import { Auth1720000001000 } from './migrations/0001-auth';
 import { M21720000002000 } from './migrations/0002-m2';
 import { M31720000003000 } from './migrations/0003-m3';
+import { M41720000004000 } from './migrations/0004-m4';
 
 const entidades = [
   TenantSchema,
@@ -25,12 +29,16 @@ const entidades = [
   SistemaAlvoSchema,
   CategoriaSchema,
   ChamadoSchema,
+  MensagemSchema,
+  AnexoSchema,
+  EventoChamadoSchema,
 ];
 const migrations = [
   Init1720000000000,
   Auth1720000001000,
   M21720000002000,
   M31720000003000,
+  M41720000004000,
 ];
 
 /**

@@ -1,42 +1,67 @@
 import type { EntityManager } from 'typeorm';
+import type { TipoEvento } from '@chamados/shared';
+import { EventoChamadoSchema } from '../entities/evento-chamado';
 
 /**
- * ⚠️ SEAM DE AUDITORIA (M3) — PREENCHER EM M4.
+ * Auditoria de `EventoChamado` (specs/04 §9, specs/02). TODA mutação relevante do
+ * chamado (criação, transição de status, prioridade, natureza, complexidade,
+ * atribuição, mensagens, anexos) grava uma linha APPEND-ONLY nesta trilha, dentro
+ * da MESMA transação da mutação — via o auditor default `gravarEvento`.
  *
- * Toda mutação relevante do chamado (criação, transição de status, prioridade,
- * natureza, complexidade, atribuição) DEVE gerar um `EventoChamado` append-only
- * (specs/04 §9, specs/02 "EventoChamado"). Essa entidade e sua tabela são
- * escopo de M4 — aqui NÃO criamos a tabela. Em vez disso, as mutações chamam
- * este hook (no-op por padrão), deixando o ponto de extensão pronto: M4 injeta
- * um `Auditar` que grava a linha de `evento_chamado` dentro da MESMA transação.
- *
- * `tipo` é um string livre por ora; M4 o tipa com o enum `tipo_evento` de
- * specs/02 (`chamado_criado`, `status_alterado`, `prioridade_alterada`, ...).
+ * O ponto de extensão (`HooksChamado.auditar`) segue disponível para injetar um
+ * auditor alternativo (ex.: no-op em testes, ou um coletor). Sem hook, escreve.
  */
 export interface EventoChamadoPendente {
-  /** Tipo do evento (vira o enum `tipo_evento` em M4). */
-  tipo: string;
+  /** Tipo canônico do evento (enum `tipo_evento` — specs/02). */
+  tipo: TipoEvento;
   chamado_id: string;
-  /** Ator (usuário/agente_ia). `null` = sistema. */
+  /** Ator (usuário/agente_ia). `null` = sistema (jobs automáticos). */
   ator_id: string | null;
-  /** Payload (ex.: `{ de, para }`, `{ operador_anterior, operador_novo }`). */
+  /** Referência à `ExecucaoIA` que originou o evento (M6+). */
+  execucao_ia_id?: string | null;
+  /** Payload (ex.: `{ de, para }`, `{ mensagem_id }`, `{ operador_novo }`). */
   dados?: Record<string, unknown>;
 }
 
 /** Callback de auditoria executado dentro da transação da mutação. */
 export type Auditar = (em: EntityManager, ev: EventoChamadoPendente) => Promise<void> | void;
 
+/**
+ * Auditor default: grava o evento em `evento_chamado`. O `tenant_id` vem do
+ * contexto RLS corrente (`app.current_tenant`), garantindo coerência com a policy
+ * (a linha só é aceita para o tenant da transação — WITH CHECK).
+ */
+export const gravarEvento: Auditar = async (em, ev) => {
+  const linhas: Array<{ tenant: string | null }> = await em.query(
+    "SELECT current_setting('app.current_tenant', true) AS tenant",
+  );
+  const tenant = linhas[0]?.tenant;
+  if (!tenant) {
+    throw new Error(
+      'EventoChamado: app.current_tenant não definido — auditoria exige runInTenantContext.',
+    );
+  }
+  await em.insert(EventoChamadoSchema, {
+    tenant_id: tenant,
+    chamado_id: ev.chamado_id,
+    tipo: ev.tipo,
+    ator_id: ev.ator_id,
+    execucao_ia_id: ev.execucao_ia_id ?? null,
+    dados: ev.dados ?? {},
+  });
+};
+
+/** No-op explícito (para testes/cenários que desejam desligar a auditoria). */
+export const auditarNoop: Auditar = () => {
+  /* intencionalmente vazio */
+};
+
 /** Hooks opcionais passados às mutações de chamado. */
 export interface HooksChamado {
   auditar?: Auditar;
 }
 
-/** Implementação no-op default (M4 substitui por gravação em `evento_chamado`). */
-export const auditarNoop: Auditar = () => {
-  // Intencionalmente vazio (M3). M4 grava o EventoChamado aqui.
-};
-
-/** Resolve o auditor efetivo (o injetado ou o no-op). */
+/** Resolve o auditor efetivo: o injetado ou o gravador real (`gravarEvento`). */
 export function auditorDe(hooks?: HooksChamado): Auditar {
-  return hooks?.auditar ?? auditarNoop;
+  return hooks?.auditar ?? gravarEvento;
 }

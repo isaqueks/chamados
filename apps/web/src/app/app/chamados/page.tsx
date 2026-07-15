@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { obterAppDataSource, runInTenantContext, listarChamados } from "@chamados/db"
 import { Papel, StatusChamado, transicoesDoPapel } from "@chamados/shared"
 import { exigirUsuario } from "@/lib/sessao"
@@ -92,7 +93,9 @@ export default async function ChamadosPage() {
                       <span className="text-sm font-medium text-muted-foreground">
                         #{String(c.numero)}
                       </span>
-                      <span className="font-medium">{c.titulo}</span>
+                      <Link href={`/app/chamados/${c.id}`} className="font-medium hover:underline">
+                        {c.titulo}
+                      </Link>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={VARIANTE_STATUS[c.status]}>

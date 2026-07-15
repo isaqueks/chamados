@@ -45,6 +45,19 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-1' })).toBe(true);
       expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-2' })).toBe(false);
     });
+
+    it('cliente NÃO muda prioridade/natureza pós-criação (define só na abertura)', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      // Mesmo sendo o dono do chamado, o cliente não reclassifica depois de abrir.
+      expect(autorizar(c, 'chamado', 'mudar_prioridade', { cliente_id: 'cli-1' })).toBe(false);
+      expect(autorizar(c, 'chamado', 'mudar_natureza', { cliente_id: 'cli-1' })).toBe(false);
+    });
+
+    it('cliente PODE mudar status do próprio chamado (cancelar/reabrir/responder)', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      expect(autorizar(c, 'chamado', 'mudar_status', { cliente_id: 'cli-1' })).toBe(true);
+      expect(autorizar(c, 'chamado', 'mudar_status', { cliente_id: 'cli-2' })).toBe(false);
+    });
   });
 
   describe('operador NÃO gerencia usuários (§8.2)', () => {
@@ -106,6 +119,13 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(a, 'mensagem_interna', 'ler')).toBe(true);
     });
 
+    it('operador/admin reclassificam prioridade e natureza', () => {
+      for (const p of [Papel.operador, Papel.admin]) {
+        expect(autorizar(ator(p), 'chamado', 'mudar_prioridade')).toBe(true);
+        expect(autorizar(ator(p), 'chamado', 'mudar_natureza')).toBe(true);
+      }
+    });
+
     it('admin gerencia usuários, branding e guardrails', () => {
       const a = ator(Papel.admin);
       expect(autorizar(a, 'usuario', 'listar')).toBe(true);
@@ -133,6 +153,8 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(ia, 'mensagem_interna', 'escrever')).toBe(true);
       expect(autorizar(ia, 'mensagem_publica', 'escrever')).toBe(true);
       expect(autorizar(ia, 'chamado', 'classificar_complexidade')).toBe(true);
+      expect(autorizar(ia, 'chamado', 'mudar_prioridade')).toBe(true);
+      expect(autorizar(ia, 'chamado', 'mudar_natureza')).toBe(true);
       expect(autorizar(ia, 'chamado', 'ler', { tenant_id: TENANT })).toBe(true);
     });
 

@@ -17,10 +17,12 @@
     "smoke:secrets": "tsx src/scripts/smoke-secrets.ts",
     "smoke:sistemas": "tsx src/scripts/smoke-sistemas.ts",
     "smoke:chamados": "tsx src/scripts/smoke-chamados.ts",
+    "smoke:mensagens": "tsx src/scripts/smoke-mensagens.ts",
     "seed:dev": "tsx src/scripts/seed-dev.ts"
   },
   "dependencies": {
     "@chamados/shared": "*",
+    "@chamados/storage": "*",
     "@node-rs/argon2": "^2.0.2",
     "pg": "^8.13.1",
     "reflect-metadata": "^0.2.2",
