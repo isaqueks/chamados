@@ -39,6 +39,12 @@ export interface EntradaMensagem {
   corpo: string | DocRico;
   /** Arquivos anexados à parte (não-inline). */
   anexos?: ArquivoUpload[];
+  /**
+   * Referência à `ExecucaoIA` que originou a mensagem (M7 — mensagens/notas do
+   * `agente_ia`). Campo INTERNO/CONFIÁVEL: só o worker o define; NUNCA vem de
+   * entrada do cliente (a camada web constrói a `EntradaMensagem` sem ele).
+   */
+  execucao_ia_id?: string | null;
 }
 
 export type MotivoMensagem =
@@ -139,7 +145,7 @@ export async function criarMensagem(
     visibilidade: entrada.visibilidade,
     corpo_json: { type: 'doc' },
     corpo_html: '',
-    execucao_ia_id: null,
+    execucao_ia_id: entrada.execucao_ia_id ?? null,
   });
   const id = res.identifiers[0]!.id as string;
 
@@ -177,24 +183,29 @@ export async function criarMensagem(
     dados: { mensagem_id: id, visibilidade: entrada.visibilidade },
   });
 
-  // Resposta pública do cliente em aguardando_cliente re-enfileira a triagem
-  // (specs/04 §1.3/§4.2, specs/05 §2): o SISTEMA transiciona → em_triagem (gera
-  // status_alterado) e o despachante emite o gatilho `resposta_cliente` (a
-  // triagem analisa a ÚLTIMA mensagem, `id`). O enfileiramento real é pós-commit
-  // e best-effort (no-op sem despachante injetado).
-  if (
+  // Resposta pública do cliente re-enfileira a triagem (specs/04 §1.3/§4.2,
+  // specs/05 §2): vale para chamado em `aguardando_cliente` E em `em_triagem`
+  // (M7). Vindo de `aguardando_cliente`, o SISTEMA transiciona → em_triagem
+  // (gera status_alterado); em `em_triagem` o chamado já está no estado certo —
+  // apenas reenfileira. O despachante emite `resposta_cliente` sobre a ÚLTIMA
+  // mensagem (`id`); enfileiramento real é pós-commit/best-effort (no-op sem
+  // despachante injetado).
+  const respostaCliente =
     entrada.visibilidade === VisibilidadeMensagem.publica &&
     ator.papel === Papel.cliente &&
-    chamado.status === StatusChamado.aguardando_cliente
-  ) {
-    await transicionarStatus(
-      em,
-      atorSistema(chamado.tenant_id),
-      chamado.id,
-      StatusChamado.em_triagem,
-      { motivo: 'resposta_do_cliente' },
-      hooks,
-    );
+    (chamado.status === StatusChamado.aguardando_cliente ||
+      chamado.status === StatusChamado.em_triagem);
+  if (respostaCliente) {
+    if (chamado.status === StatusChamado.aguardando_cliente) {
+      await transicionarStatus(
+        em,
+        atorSistema(chamado.tenant_id),
+        chamado.id,
+        StatusChamado.em_triagem,
+        { motivo: 'resposta_do_cliente' },
+        hooks,
+      );
+    }
     despacharDe(hooks).publicar({
       tipo: 'triagem_solicitada',
       tenantId: chamado.tenant_id,

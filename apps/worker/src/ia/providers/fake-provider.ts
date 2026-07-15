@@ -2,6 +2,7 @@ import {
   Natureza,
   Prioridade,
   Complexidade,
+  montarTemplateSpec,
   type AIProvider,
   type AIProviderInput,
   type AIProviderResult,
@@ -12,9 +13,9 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  * Provider FAKE, DETERMINÍSTICO — para dev, smokes e testes SEM rede nem custo
  * (specs/10 E-23: abstração com uma impl. real + este fake de apoio). Não chama
  * nenhum modelo: deriva o `AIProviderResult` do texto do chamado, controlado por
- * MARCADORES embutidos no título/mensagens. Também EXERCITA os handles de
- * ferramentas (chama `repo_buscar` uma vez) para provar que o worker os injeta e
- * loga como stub no M6.
+ * MARCADORES embutidos no título/mensagens — dirigindo TODOS os fluxos do M7
+ * (perguntas, diagnóstico+classificação, SPEC de alteração, falhas). Também
+ * EXERCITA um handle de ferramenta real (`repo_buscar`) para provar a injeção.
  *
  * Marcadores reconhecidos (case-insensitive), no título ou em qualquer mensagem:
  *   [[nao-entendeu]]                → compreendido=false + perguntasAoCliente
@@ -82,16 +83,32 @@ export class FakeProvider implements AIProvider {
     }
 
     const ehAlteracao = naturezaAjustada === Natureza.alteracao;
+    const compl = complexidade ?? Complexidade.facil;
     return {
       compreendido: true,
       confianca: 0.9,
       perguntasAoCliente: null,
-      complexidade: complexidade ?? Complexidade.facil,
+      complexidade: compl,
       naturezaAjustada,
       prioridadeSugerida,
-      diagnostico: `[fake] Análise determinística de "${input.contexto.titulo}". Sem execução real de modelo (M6).`,
+      diagnostico:
+        `[fake] Diagnóstico determinístico de "${input.contexto.titulo}". ` +
+        'Resumo: análise simulada sem execução de modelo. Evidências: (fake). ' +
+        'Causa provável: cenário controlado de teste.',
+      // Para natureza=alteracao, gera a SPEC COMPLETA no template de specs/05 §7
+      // (M7): prova determinística de que o fluxo produz uma SPEC utilizável.
       spec: ehAlteracao
-        ? `# SPEC — ${input.contexto.titulo}\n\n(SPEC de exemplo gerada pelo FakeProvider no M6.)`
+        ? montarTemplateSpec({
+            titulo: input.contexto.titulo,
+            sistemaAlvoNome: input.contexto.sistemaAlvo.nome,
+            sistemaAlvoStack: input.contexto.sistemaAlvo.stack,
+            chamadoNumero: 'N/A',
+            complexidade: compl,
+            pedidoResumo: `Pedido (resumo neutro): ${input.contexto.titulo}`,
+            analise: '[fake] análise determinística do estado atual.',
+            mudancasPropostas: ['[fake] módulo alvo: aplicar a alteração pedida'],
+            criteriosAceite: ['[fake] a alteração pedida passa a valer'],
+          })
         : null,
       tentativaResolucao: null,
       telemetria,

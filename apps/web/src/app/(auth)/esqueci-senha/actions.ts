@@ -3,7 +3,7 @@
 import { obterAppDataSource, solicitarRedefinicao } from '@chamados/db';
 import { obterTenantAtual } from '@/lib/tenant';
 import { urlAbsoluta } from '@/lib/url';
-import { logarEmailStub } from '@/lib/email-stub';
+import { enviarEmailTransacional } from '@/lib/email';
 
 export interface EstadoEsqueci {
   enviado?: boolean;
@@ -29,7 +29,12 @@ export async function acaoSolicitarReset(
   const r = await solicitarRedefinicao(ds, tenant.id, email);
   if (r) {
     const url = await urlAbsoluta(`/redefinir-senha?token=${encodeURIComponent(r.token)}`);
-    logarEmailStub({ tipo: 'reset_senha', destinatario: r.email, url });
+    await enviarEmailTransacional({
+      tipo: 'reset_senha',
+      tenantId: tenant.id,
+      destinatario: r.email,
+      url,
+    });
   }
 
   // Genérico independentemente de existir conta (anti-enumeração).

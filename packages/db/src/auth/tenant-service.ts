@@ -6,6 +6,7 @@ import { UsuarioSchema } from '../entities/usuario';
 import { runInTenantContext } from '../rls';
 import { garantirAgenteIA } from './usuario-service';
 import { garantirCategoriaGeral } from '../categorias/categoria-service';
+import { garantirCanaisNotificacaoDefault } from '../notificacoes/provisionamento';
 import { criarSecretStore } from '../secrets/secret-store';
 import type { TenantResolvido } from './tipos';
 
@@ -112,6 +113,9 @@ export async function provisionarTenant(
 
       // Categoria geral do tenant (specs/07 §2.1, passo 5). Idempotente.
       const categoria_geral_id = await garantirCategoriaGeral(em, tenant_id);
+
+      // Canais de notificação default (M9 — e-mail da plataforma). Idempotente.
+      await garantirCanaisNotificacaoDefault(em, tenant_id);
 
       // agente_ia + credencial no cofre. Só cria/guarda segredo se o agente
       // ainda não existir (evita segredo órfão em reexecuções).

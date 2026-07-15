@@ -1,4 +1,12 @@
-import { obterAppDataSource, runInTenantContext, carregarTenant } from '@chamados/db';
+import {
+  obterAppDataSource,
+  runInTenantContext,
+  carregarTenant,
+  buscarCanal,
+  toWebhookView,
+  CATALOGO_NOTIFICACOES,
+  CanalNotificacaoTipo,
+} from '@chamados/db';
 import { Papel } from '@chamados/shared';
 import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,14 +15,23 @@ import { BrandingForm } from './branding-form';
 import { LogoForm } from './logos-form';
 import { GeralForm } from './geral-form';
 import { DominioForm } from './dominio-form';
+import { NotificacoesForm } from './notificacoes-form';
 
 export default async function ConfigPage() {
   const { tenant } = await exigirPapel(Papel.admin);
   const ds = await obterAppDataSource();
-  const t = await runInTenantContext(ds, tenant.id, (em) => carregarTenant(em, tenant.id));
+  const { t, webhook } = await runInTenantContext(ds, tenant.id, async (em) => ({
+    t: await carregarTenant(em, tenant.id),
+    webhook: toWebhookView(await buscarCanal(em, CanalNotificacaoTipo.webhook)),
+  }));
   if (!t) return null;
 
   const b = t.config_branding ?? {};
+  const eventos = Object.values(CATALOGO_NOTIFICACOES).map((c) => ({
+    rotulo: c.rotulo,
+    descricao: c.descricao,
+    webhook: c.webhook !== null,
+  }));
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -82,6 +99,27 @@ export default async function ConfigPage() {
           <GeralForm
             diasFechamento={t.dias_fechamento_automatico}
             iaResolucaoAuto={t.ia_resolucao_automatica_habilitada}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Notificações</CardTitle>
+          <CardDescription>
+            E-mail (SMTP da plataforma) está sempre ativo. Configure um webhook para o seu sistema
+            externo receber, por POST assinado (HMAC), cada atualização de chamado (D-003).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <NotificacoesForm
+            url={webhook.url}
+            temSegredo={webhook.temSegredo}
+            ativo={webhook.ativo}
+            falhas={webhook.falhas_consecutivas}
+            desativadoEm={webhook.desativado_em ? webhook.desativado_em.toISOString() : null}
+            ultimoErro={webhook.ultimo_erro}
+            eventos={eventos}
           />
         </CardContent>
       </Card>

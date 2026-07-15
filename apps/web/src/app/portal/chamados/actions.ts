@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
   obterAppDataSource,
-  runInTenantContext,
   criarChamado,
   transicionarStatus,
   criarMensagem,
@@ -15,6 +14,7 @@ import {
 } from '@chamados/db';
 import { Natureza, Prioridade, StatusChamado, VisibilidadeMensagem } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
+import { comDespacho } from '@/lib/despacho';
 
 export interface EstadoChamado {
   erro?: string;
@@ -106,14 +106,19 @@ export async function acaoCriarChamado(
   if (!doc) return { erro: 'Descreva o seu chamado.' };
 
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    criarChamado(em, usuario, {
-      titulo,
-      descricao: doc,
-      natureza: naturezaRaw,
-      prioridade,
-      sistema_alvo_id: sistemaAlvoRaw || undefined,
-    }),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    criarChamado(
+      em,
+      usuario,
+      {
+        titulo,
+        descricao: doc,
+        natureza: naturezaRaw,
+        prioridade,
+        sistema_alvo_id: sistemaAlvoRaw || undefined,
+      },
+      hooks,
+    ),
   );
   if (!r.ok) return { erro: MOTIVOS_CRIAR[r.motivo] };
 
@@ -146,14 +151,19 @@ export async function acaoResponder(
   }
 
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    criarMensagem(em, usuario, {
-      chamado_id: chamadoId,
-      // O cliente sempre publica mensagem pública (specs/04 §4.1).
-      visibilidade: VisibilidadeMensagem.publica,
-      corpo: doc,
-      anexos: anexos.length > 0 ? anexos : undefined,
-    }),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    criarMensagem(
+      em,
+      usuario,
+      {
+        chamado_id: chamadoId,
+        // O cliente sempre publica mensagem pública (specs/04 §4.1).
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: doc,
+        anexos: anexos.length > 0 ? anexos : undefined,
+      },
+      hooks,
+    ),
   );
   if (!r.ok) return { erro: MOTIVOS_MENSAGEM[r.motivo] };
 
@@ -172,7 +182,9 @@ export async function acaoTransicionarCliente(formData: FormData): Promise<void>
   if (!id || !ehStatus(novoStatus)) return;
 
   const ds = await obterAppDataSource();
-  await runInTenantContext(ds, tenant.id, (em) => transicionarStatus(em, usuario, id, novoStatus));
+  await comDespacho(ds, tenant.id, (em, hooks) =>
+    transicionarStatus(em, usuario, id, novoStatus, {}, hooks),
+  );
   revalidatePath('/portal');
   revalidatePath(`/portal/chamados/${id}`);
 }

@@ -32,7 +32,7 @@ import {
   type DocRico,
   type MotivoRichText,
 } from './rich-text';
-import { auditorDe, despacharDe, type HooksChamado } from './auditoria';
+import { auditorDe, type HooksChamado } from './auditoria';
 
 /**
  * Serviços de Chamado (specs/04). Rodam SEMPRE dentro de `runInTenantContext`
@@ -292,21 +292,46 @@ export async function criarChamado(
     dados: { numero, natureza: entrada.natureza, prioridade },
   });
 
-  // Gatilho de triagem (specs/05 §2): "Chamado criado → enfileira triagem". O
-  // despachante BUFFERIZA aqui (dentro da transação); o enfileiramento real
-  // acontece pós-commit no site de chamada (best-effort). Sem despachante
-  // injetado (seed/smokes), é no-op. NOTA M6: o status permanece `novo` — a
-  // transição novo→em_triagem fica para o pipeline (M7), para não quebrar os
-  // fluxos/tests que já transicionam explicitamente (ver entrega M6).
-  despacharDe(hooks).publicar({
-    tipo: 'triagem_solicitada',
-    tenantId: ator.tenant_id,
-    chamadoId: id,
-    ultimaMensagemId: null,
-    gatilho: GatilhoIA.chamado_criado,
-  });
+  // Gatilho de triagem (specs/05 §2 "Chamado criado → enfileira triagem"). A
+  // transição novo→em_triagem (M7) ACOMPANHA o gatilho e é feita pelo `sistema`
+  // (specs/04 §1.3/§2, specs/05 §3): só ocorre quando a triagem é DE FATO
+  // solicitada — ou seja, quando um despachante REAL foi injetado (web/worker) E
+  // o tenant tem triagem ativa. Sem despachante (seed/smokes/testes) o chamado
+  // permanece `novo`: evita chamado "preso" em em_triagem sem job e preserva os
+  // fluxos que transicionam explicitamente. O evento `status_alterado` é gravado
+  // pela própria `transicionarStatus`. O enfileiramento do job é pós-commit e
+  // best-effort (DespachanteFila.flush no site de chamada).
+  const despachante = hooks?.despachante;
+  if (despachante && (await triagemAtiva(em))) {
+    await transicionarStatus(
+      em,
+      atorSistema(ator.tenant_id),
+      id,
+      StatusChamado.em_triagem,
+      { motivo: 'triagem_automatica' },
+      hooks,
+    );
+    despachante.publicar({
+      tipo: 'triagem_solicitada',
+      tenantId: ator.tenant_id,
+      chamadoId: id,
+      ultimaMensagemId: null,
+      gatilho: GatilhoIA.chamado_criado,
+    });
+  }
 
   return { ok: true, id, numero };
+}
+
+/**
+ * Triagem ativa para o tenant corrente? (specs/05 §2) Proxy SEM coluna dedicada
+ * (nenhuma migration no M7): o tenant tem o service account `agente_ia` que
+ * executa a triagem. Escopado por RLS — só enxerga usuários do tenant da
+ * transação. Sem `agente_ia`, não há quem triar → mantém `novo`.
+ */
+async function triagemAtiva(em: EntityManager): Promise<boolean> {
+  const agente = await em.findOne(UsuarioSchema, { where: { papel: Papel.agente_ia } });
+  return agente !== null;
 }
 
 /** Incremento atômico do contador do tenant (upsert). Retorna o número usado. */

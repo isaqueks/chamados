@@ -145,17 +145,20 @@ Ciclo de vida de um convite (ver `03-autenticacao-perfis-permissoes.md` §4.2).
 
 ### status_execucao_ia
 
-Nomes canônicos únicos; `05-agente-ia.md` deve usar EXATAMENTE estes (não `running`/`falha`). `timeout` e `budget_excedido` são estados terminais próprios, distintos de `falhou` (falha genérica), para telemetria e guardrails.
+Nomes canônicos únicos; `05-agente-ia.md` deve usar EXATAMENTE estes (não
+`running`/`falha`). Enum canônico de **5 valores** — normativo em
+`05-agente-ia.md` §8. `timeout` e `budget_excedido` NÃO são valores de status:
+são MOTIVOS de encerramento, registrados no campo `erro` de `ExecucaoIA`
+(`erro='timeout'` / `erro='budget_excedido'`) com `status='falhou'`. Mantém o
+enum enxuto e evita duplicar semântica entre `status` e `erro`.
 
-| valor             | descrição                                          |
-| ----------------- | -------------------------------------------------- |
-| `na_fila`         | enfileirado                                        |
-| `executando`      | worker em execução (equivale ao `running` de `05`) |
-| `concluido`       | terminou com resultado                             |
-| `falhou`          | erro genérico de execução                          |
-| `timeout`         | excedeu o tempo-limite                             |
-| `budget_excedido` | excedeu o orçamento de custo/tokens                |
-| `cancelado`       | abortado                                           |
+| valor        | descrição                                                                        |
+| ------------ | -------------------------------------------------------------------------------- |
+| `na_fila`    | enfileirado                                                                      |
+| `executando` | worker em execução (equivale ao `running` de `05`)                               |
+| `concluido`  | terminou com resultado                                                           |
+| `falhou`     | erro de execução (motivo detalhado em `erro`, ex.: `timeout`, `budget_excedido`) |
+| `cancelado`  | abortado                                                                         |
 
 ## Diagrama ER
 

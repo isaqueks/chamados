@@ -2,6 +2,24 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marcos M7 + M9 (em paralelo) + integração: triagem real da IA e notificações
+
+### M7 — Pipeline de triagem da IA
+- **Ferramentas reais escopadas** criadas no worker e injetadas como handles (o provider nunca vê credenciais): repo com cache de working copy por tenant+sistema (`git clone`/`pull --ff-only`, credencial do cofre só na URL do fetch e removida do `.git/config`, busca/leitura read-only com bloqueio de path traversal), logs (`arquivo` com tail/limites), `bd_consultar` (transação READ ONLY, statement_timeout, SELECT/WITH-only com rejeição de DML/DDL antes de executar, LIMIT forçado).
+- **Aplicação do resultado ao chamado** (ator `agente_ia`, tudo com `execucao_ia_id`): não entendeu → pergunta pública numerada + `aguardando_cliente` + `ia_pediu_info`; entendeu → nota interna com diagnóstico + complexidade + ajuste de natureza + prioridade (aplicada só se operador não tocou; senão vira sugestão) + `ia_diagnosticou` + `em_atendimento`; alteração → nota interna com a **SPEC completa** (template da spec 05 §7) + `ia_gerou_spec`; falha → escalonamento garantido a humano (`em_atendimento` + `ia_falhou`).
+- Criação de chamado transiciona `novo→em_triagem` automaticamente quando o gatilho de triagem está ativo; resposta do cliente em `em_triagem` reenfileira. `npm run smoke:pipeline` com fixtures reais (repo git, logs, database scratch read-only).
+
+### M9 — Notificações (SMTP + webhook)
+- Entidades `CanalNotificacao`, `PreferenciaNotificacao`, `NotificacaoLog` (idempotência por chave única) com RLS (migration 0006); defaults no provisionamento.
+- **SmtpAdapter** (nodemailer; mailpit no compose para dev) e **WebhookAdapter** (POST JSON assinado HMAC SHA-256 em `X-Chamados-Signature`, timeout curto, payload sem conteúdo interno — D-003); desativação automática do webhook após N falhas consecutivas + alerta aos admins; sucesso zera o contador.
+- Tradução `EventoChamado` → notificações pela matriz da spec 06 (destinatários por papel, preferências respeitadas, obrigatórios não desabilitáveis), templates pt-BR com branding e deep link; convite/reset de senha agora passam pelo gateway real (stub removido).
+- UI: config de webhook no admin (segredo mascarado via cofre, evento de teste) e preferências do usuário nas duas áreas. `npm run smoke:notificacoes`.
+
+### Integração
+- **Despachante composto** (triagem + notificações) em todas as server actions de mutação das duas áreas, com flush pós-commit — fecha o loop UI → job → IA → notificação; mutações aplicadas pela IA no worker também notificam (rollback não notifica; notas internas nunca).
+- `pg` formalizado no worker; docs de desenvolvimento atualizados (worker de IA, mailpit, envs, smokes).
+- **Verificação integrada do zero:** 4 serviços healthy, 7 migrations, build 22 rotas, 87/87 testes, 9 smokes, e **E2E dourado pela interface**: chamado do cliente → triagem fake → diagnóstico interno + classificação → e-mails no Mailpit ("não entendeu" → pergunta pública + aguardando_cliente); varredura confirmou zero vazamento de conteúdo interno nos e-mails.
+
 ## 2026-07-15 — Marco M6: fila de triagem, worker de IA e abstração AIProvider
 
 - **Contrato `AIProvider`** em `packages/shared` (types puros, nomes exatos da spec 01 §4.1) com ferramentas como handles de função tipados e limites (timeout/budget/turnos).

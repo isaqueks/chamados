@@ -5,3 +5,4 @@ export * from './maquina-estados';
 export * from './serializers';
 export * from './contraste';
 export * from './dominio';
+export * from './triagem-notas';

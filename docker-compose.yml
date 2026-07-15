@@ -59,6 +59,26 @@ services:
       retries: 12
       start_period: 10s
 
+  # Mailpit: servidor SMTP + UI de inbox para DEV (M9 — specs/06). O worker envia
+  # os e-mails reais (convite/reset, notificações de chamado) para o SMTP 1025 e a
+  # caixa de entrada fica visível na UI. Não é usado em produção.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: chamados-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 'true'
+      MP_SMTP_AUTH_ALLOW_INSECURE: 'true'
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '-', 'http://localhost:8025/readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   # Provisiona o bucket único (prefixo por tenant — specs/07 §6.2). Roda uma vez
   # e sai; a aplicação também garante o bucket sob demanda (garantirBucket).
   minio-init:

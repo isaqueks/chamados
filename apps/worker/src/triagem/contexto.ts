@@ -14,24 +14,38 @@ import {
   SistemaAlvoSchema,
   CategoriaSchema,
 } from '@chamados/db';
+import type { Registrar } from './ferramentas/config';
+import {
+  resolverConfigFerramentas,
+  montarFerramentasReais,
+  type FerramentasReais,
+} from './ferramentas';
 
 /**
- * Monta o `AIProviderInput` MÍNIMO do M6 (specs/05 §3.1 passo 3, §4.1): metadados
- * do chamado + timeline PÚBLICA sanitizada + metadados do sistema-alvo SEM
- * credenciais (nem DSN, nem caminho de repo cru). Roda dentro de
- * `runInTenantContext` (RLS). As FERRAMENTAS são STUBS no-op que apenas LOGAM a
- * chamada em `acoes` (as reais — git/logs/BD read-only — são M7).
+ * Monta o `AIProviderInput` (specs/05 §3.1 passo 3, §4.1): metadados do chamado +
+ * timeline PÚBLICA sanitizada + metadados do sistema-alvo SEM credenciais (nem
+ * DSN, nem caminho de repo cru). Roda dentro de `runInTenantContext` (RLS).
+ *
+ * M7: as FERRAMENTAS agora são REAIS (repo/logs/BD read-only) — as credenciais
+ * são decifradas do cofre AQUI (no worker, RLS ativa) e capturadas em closures;
+ * o provider recebe só handles. Além do `input`, devolve `sincronizar()` (git
+ * clone/pull antes do provider — specs/05 §3.1 passo 2) e `encerrar()` (libera o
+ * pool de BD ao fim do job).
  */
 
 export interface DepsContexto {
-  /** Trilha de ações (preenchida pelos stubs de ferramenta). */
+  /** Trilha de ações (preenchida pelos handles de ferramenta). */
   acoes: unknown[];
   log: (msg: string, extra?: Record<string, unknown>) => void;
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
 }
 
-export interface ContextoMontado {
+export interface PreparacaoContexto {
   input: AIProviderInput;
+  /** Sincroniza a working copy do sistema-alvo (specs/05 §3.2). */
+  sincronizar: FerramentasReais['sincronizar'];
+  /** Encerra recursos das ferramentas (conexão de BD). */
+  encerrar: FerramentasReais['encerrar'];
 }
 
 /** Converte HTML sanitizado numa projeção de texto puro (para o contexto do modelo). */
@@ -99,59 +113,49 @@ async function timelinePublica(em: EntityManager, chamadoId: string): Promise<Me
   }));
 }
 
-/** Stubs no-op das ferramentas read-only (M6): logam a chamada em `acoes`. */
-function ferramentasStub(deps: DepsContexto): AIProviderInput['ferramentas'] {
-  const registrar = (ferramenta: string, args: unknown): void => {
-    deps.acoes.push({ ferramenta, args, stub: true, em: new Date().toISOString() });
-    deps.log('ferramenta stub chamada (no-op, M6)', { ferramenta });
-  };
-  return {
-    async repo_buscar(consulta) {
-      registrar('repo_buscar', { consulta });
-      return [];
-    },
-    async repo_ler_arquivo(caminho) {
-      registrar('repo_ler_arquivo', { caminho });
-      return '';
-    },
-    async logs_consultar(filtro) {
-      registrar('logs_consultar', filtro);
-      return [];
-    },
-    async bd_consultar(sql) {
-      registrar('bd_consultar', { sql });
-      return [];
-    },
+/** Registrador da trilha de ações: loga a chamada da ferramenta (SEM segredos). */
+function registradorDe(deps: DepsContexto): Registrar {
+  return (ferramenta, args) => {
+    deps.acoes.push({ ferramenta, args, em: new Date().toISOString() });
+    deps.log('ferramenta chamada', { ferramenta });
   };
 }
 
 /**
- * Constrói o `AIProviderInput` do chamado. Retorna `null` se o chamado não
- * existir (rollback/soft delete) — o processador então ignora o job.
+ * Constrói a preparação do contexto do chamado (input + sincronizar + encerrar).
+ * Retorna `null` se o chamado não existir (rollback/soft delete) — o processador
+ * então ignora o job.
  */
 export async function montarInput(
   em: EntityManager,
   chamadoId: string,
   deps: DepsContexto,
-): Promise<AIProviderInput | null> {
+): Promise<PreparacaoContexto | null> {
   const chamado = await em.findOne(ChamadoSchema, {
     where: { id: chamadoId, deleted_at: IsNull() },
   });
   if (!chamado) return null;
 
-  const [timeline, sistemaAlvo] = await Promise.all([
+  const [timeline, sistemaAlvo, configFerramentas] = await Promise.all([
     timelinePublica(em, chamadoId),
     metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id),
+    resolverConfigFerramentas(em, chamado.tenant_id, chamado.sistema_alvo_id),
   ]);
 
+  const reais = montarFerramentasReais(configFerramentas, registradorDe(deps));
+
   return {
-    contexto: {
-      titulo: chamado.titulo,
-      naturezaDeclarada: chamado.natureza,
-      timeline,
-      sistemaAlvo,
+    input: {
+      contexto: {
+        titulo: chamado.titulo,
+        naturezaDeclarada: chamado.natureza,
+        timeline,
+        sistemaAlvo,
+      },
+      ferramentas: reais.ferramentas,
+      limites: deps.limites,
     },
-    ferramentas: ferramentasStub(deps),
-    limites: deps.limites,
+    sincronizar: reais.sincronizar,
+    encerrar: reais.encerrar,
   };
 }

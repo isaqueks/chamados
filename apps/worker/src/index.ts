@@ -13,6 +13,9 @@ import { criarAppDataSource } from '@chamados/db';
 import { redisConnection, iaConfig, triagemConfig } from './config';
 import { resolverProvider } from './ia/resolver-provider';
 import { registrarTriagemIA } from './filas/triagem-ia';
+import { registrarNotificacoes } from './filas/notificacoes';
+import { registryPadrao } from './notificacoes/registry';
+import { notificacoesConfig } from './notificacoes/config';
 
 function log(msg: string, extra?: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), servico: 'worker', msg, ...extra }));
@@ -46,6 +49,18 @@ async function main(): Promise<void> {
       lock: triagemConfig.lock,
       connection: redisConnection,
       concorrencia: triagemConfig.concorrencia,
+      log,
+    }),
+    // M9 — fila de notificações (SMTP + webhook, templates, idempotência).
+    registrarNotificacoes({
+      ds,
+      registry: registryPadrao({
+        smtp: notificacoesConfig.smtp,
+        webhookTimeoutMs: notificacoesConfig.webhook.timeoutMs,
+      }),
+      config: notificacoesConfig,
+      connection: redisConnection,
+      concorrencia: notificacoesConfig.concorrencia,
       log,
     }),
   ];

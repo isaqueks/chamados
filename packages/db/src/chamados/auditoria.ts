@@ -2,6 +2,7 @@ import type { EntityManager } from 'typeorm';
 import type { TipoEvento } from '@chamados/shared';
 import { EventoChamadoSchema } from '../entities/evento-chamado';
 import { despachanteNoop, type Despachante } from './eventos-dominio';
+import { despacharNotificacoes } from '../notificacoes/dispatcher';
 
 /**
  * Auditoria de `EventoChamado` (specs/04 §9, specs/02). TODA mutação relevante do
@@ -68,9 +69,27 @@ export interface HooksChamado {
   despachante?: Despachante;
 }
 
-/** Resolve o auditor efetivo: o injetado ou o gravador real (`gravarEvento`). */
+/**
+ * Resolve o auditor efetivo. Um `auditar` explícito nos hooks SEMPRE vence (tests
+ * que desligam a auditoria). Sem override: grava o `EventoChamado` e, quando o
+ * despachante injetado captura notificações (M9), TRADUZ o evento em notificações
+ * e as publica (buffer) — tudo dentro da transação da mutação. A tradução é
+ * BEST-EFFORT: uma falha nela NUNCA quebra a mutação (a gravação da trilha, sim,
+ * continua obrigatória). Despachantes sem `capturaNotificacoes` (ex.: só triagem)
+ * não pagam a resolução.
+ */
 export function auditorDe(hooks?: HooksChamado): Auditar {
-  return hooks?.auditar ?? gravarEvento;
+  if (hooks?.auditar) return hooks.auditar;
+  const despachante = hooks?.despachante;
+  if (!despachante?.capturaNotificacoes) return gravarEvento;
+  return async (em, ev) => {
+    await gravarEvento(em, ev);
+    try {
+      await despacharNotificacoes(em, ev, despachante);
+    } catch {
+      /* best-effort: resolução de notificação não derruba a mutação já auditada */
+    }
+  };
 }
 
 /** Resolve o despachante efetivo: o injetado nos hooks ou o no-op. */

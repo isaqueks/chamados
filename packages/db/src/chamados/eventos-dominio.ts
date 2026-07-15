@@ -1,4 +1,5 @@
 import type { GatilhoIA } from '@chamados/shared';
+import type { JobNotificacao } from '../notificacoes/tipos';
 
 /**
  * Despachante de EVENTOS DE DOMÍNIO — a evolução do seam de auditoria (specs/04
@@ -20,18 +21,34 @@ import type { GatilhoIA } from '@chamados/shared';
  * para permitir novos consumidores sem alterar os produtores. M6 emite apenas
  * `triagem_solicitada`; M9 adicionará os eventos de notificação.
  */
-export type EventoDominio = {
-  tipo: 'triagem_solicitada';
-  tenantId: string;
-  chamadoId: string;
-  /** id da última mensagem que motivou a triagem; `null` na abertura do chamado. */
-  ultimaMensagemId: string | null;
-  gatilho: GatilhoIA;
-};
+export type EventoDominio =
+  | {
+      tipo: 'triagem_solicitada';
+      tenantId: string;
+      chamadoId: string;
+      /** id da última mensagem que motivou a triagem; `null` na abertura do chamado. */
+      ultimaMensagemId: string | null;
+      gatilho: GatilhoIA;
+    }
+  | {
+      /**
+       * NOTIFICAÇÃO (M9): um job já resolvido (destinatário × canal ou webhook)
+       * traduzido de um `EventoChamado` pelo dispatcher, dentro da transação. O
+       * `DespachanteNotificacoes` bufferiza e enfileira pós-commit.
+       */
+      tipo: 'notificacao';
+      job: JobNotificacao;
+    };
 
 /** Consumidor de eventos de domínio (best-effort, nunca lança em `publicar`). */
 export interface Despachante {
   publicar(ev: EventoDominio): void;
+  /**
+   * Marca (opcional) que este despachante QUER que o seam de auditoria traduza
+   * `EventoChamado` → notificações e as publique aqui (M9). Despachantes que só
+   * cuidam de triagem deixam `undefined`/`false` e não pagam a resolução.
+   */
+  readonly capturaNotificacoes?: boolean;
 }
 
 /**

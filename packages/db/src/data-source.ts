@@ -14,12 +14,17 @@ import { MensagemSchema } from './entities/mensagem';
 import { AnexoSchema } from './entities/anexo';
 import { EventoChamadoSchema } from './entities/evento-chamado';
 import { ExecucaoIASchema } from './entities/execucao-ia';
+// M9 — notificações (canais, preferências, log de idempotência).
+import { CanalNotificacaoSchema } from './entities/canal-notificacao';
+import { PreferenciaNotificacaoSchema } from './entities/preferencia-notificacao';
+import { NotificacaoLogSchema } from './entities/notificacao-log';
 import { Init1720000000000 } from './migrations/0000-init';
 import { Auth1720000001000 } from './migrations/0001-auth';
 import { M21720000002000 } from './migrations/0002-m2';
 import { M31720000003000 } from './migrations/0003-m3';
 import { M41720000004000 } from './migrations/0004-m4';
 import { M61720000005000 } from './migrations/0005-m6';
+import { M91720000006000 } from './migrations/0006-m9';
 
 const entidades = [
   TenantSchema,
@@ -35,6 +40,9 @@ const entidades = [
   AnexoSchema,
   EventoChamadoSchema,
   ExecucaoIASchema,
+  CanalNotificacaoSchema,
+  PreferenciaNotificacaoSchema,
+  NotificacaoLogSchema,
 ];
 const migrations = [
   Init1720000000000,
@@ -43,6 +51,7 @@ const migrations = [
   M31720000003000,
   M41720000004000,
   M61720000005000,
+  M91720000006000,
 ];
 
 /**

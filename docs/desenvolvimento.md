@@ -60,15 +60,18 @@ docker compose up -d
 docker compose ps        # confira STATUS = healthy nos 3 serviços
 ```
 
-Sobem três containers (prefixo `chamados-`):
+Sobem quatro serviços (prefixo `chamados-`):
 
-| Serviço       | Container           | Porta host                  | Para quê                   |
-| ------------- | ------------------- | --------------------------- | -------------------------- |
-| PostgreSQL 16 | `chamados-postgres` | 5432                        | banco (tenant_id + RLS)    |
-| Redis 7       | `chamados-redis`    | 6379                        | filas (BullMQ), cache      |
-| MinIO         | `chamados-minio`    | 9000 (API) / 9001 (console) | storage S3-compat (anexos) |
+| Serviço       | Container           | Porta host                  | Para quê                           |
+| ------------- | ------------------- | --------------------------- | ---------------------------------- |
+| PostgreSQL 16 | `chamados-postgres` | 5432                        | banco (tenant_id + RLS)            |
+| Redis 7       | `chamados-redis`    | 6379                        | filas (BullMQ), cache              |
+| MinIO         | `chamados-minio`    | 9000 (API) / 9001 (console) | storage S3-compat (anexos)         |
+| Mailpit       | `chamados-mailpit`  | 1025 (SMTP) / 8025 (inbox)  | e-mails de dev (M9 — notificações) |
 
-Aguarde todos ficarem `healthy` antes de rodar as migrations.
+Aguarde todos ficarem `healthy` antes de rodar as migrations. (Um serviço extra,
+`chamados-minio-init`, provisiona o bucket e sai — é normal ele aparecer como
+`exited`.)
 
 ### 3.3 Instalar as dependências
 
@@ -129,6 +132,97 @@ curl http://localhost:3000/api/health
 Retorna `200` quando Postgres e Redis estão acessíveis; `503` e
 `"status":"degradado"` caso contrário.
 
+### 3.8 Worker de IA
+
+O worker processa duas filas: `triagem-ia` (triagem automática de chamados pelo
+`agente_ia` — `specs/05-agente-ia.md`) e `notificacoes` (entrega de e-mail/webhook
+— ver §3.9). Um único processo (`npm run dev:worker`) registra as duas.
+
+**Fluxo integrado (M7 + M9).** Ao abrir um chamado pela interface (portal ou
+painel), a própria server action transiciona `novo → em_triagem` e enfileira o job
+de triagem (quando o tenant tem `agente_ia`). O worker então diagnostica e aplica o
+resultado; essas mutações da IA (mensagem pública ao cliente, transições de status)
+GERAM notificações — a nota interna de diagnóstico e a complexidade permanecem
+invisíveis ao cliente e não notificam. A criação/resposta/atribuição feitas na UI
+alimentam os dois pipelines de uma vez (um despachante composto em
+`apps/web/src/lib/despacho.ts`), com enfileiramento pós-commit best-effort.
+
+Variáveis de ambiente da triagem (ver `.env.example` para os defaults reais):
+
+| Variável             | Default           | Descrição                                                                                                                                                                  |
+| -------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IA_PROVIDER`        | `fake`            | `fake` (determinístico, SEM rede nem custo, controlado por marcadores no texto do chamado — ex.: `[[falhar]]`, `[[timeout]]`, `[[budget]]`) ou `claude` (Claude Agent SDK) |
+| `ANTHROPIC_API_KEY`  | vazio             | só necessária quando `IA_PROVIDER=claude`. NUNCA versionar                                                                                                                 |
+| `IA_MODELO`          | `claude-opus-4-8` | modelo do provider real; ignorado pelo `fake`                                                                                                                              |
+| `IA_TIMEOUT_MS`      | `600000`          | timeout por execução (honrado via abort)                                                                                                                                   |
+| `IA_BUDGET_USD`      | `5`               | teto de custo por execução                                                                                                                                                 |
+| `IA_MAX_TURNOS`      | `20`              | limite de turnos/chamadas de ferramenta por execução                                                                                                                       |
+| `TRIAGEM_DEBOUNCE_S` | `45`              | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
+
+Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com
+`status='falhou'` e `erro='timeout'` / `erro='budget_excedido'`
+(`specs/05-agente-ia.md` §8).
+
+Para rodar o worker isoladamente:
+
+```bash
+npm run dev:worker
+```
+
+Para validar a infraestrutura de triagem de ponta a ponta (fila, dedupe,
+debounce, lock por tenant, RLS de `execucao_ia`):
+
+```bash
+npm run smoke:triagem
+```
+
+Requer Postgres e Redis de pé (`docker compose up -d`) e as migrations
+aplicadas; usa `IA_PROVIDER=fake` internamente, sem custo nem rede.
+
+### 3.9 Notificações (e-mail + webhook)
+
+A fila `notificacoes` (M9 — `specs/06-notificacoes.md`) entrega e-mails
+transacionais e de chamado (confirmação de abertura, nova mensagem pública,
+mudança de status/prioridade, atribuição, resolução…) e dispara o webhook do
+tenant. Em dev, os e-mails vão para o **Mailpit** do `docker-compose`:
+
+- **SMTP** em `localhost:1025` (o worker envia para cá).
+- **Inbox (UI)** em http://localhost:8025 — veja os e-mails entregues no navegador.
+  A API REST do Mailpit (`http://localhost:8025/api/v1/messages`) lista as mensagens
+  em JSON, útil para inspeção automatizada.
+
+Variáveis de ambiente (defaults em `.env.example`; batem com o Mailpit do compose):
+
+| Variável                           | Default                       | Descrição                                                          |
+| ---------------------------------- | ----------------------------- | ------------------------------------------------------------------ |
+| `NOTIFICACOES_SMTP_HOST`           | `localhost`                   | host SMTP da plataforma (dev: Mailpit)                             |
+| `NOTIFICACOES_SMTP_PORT`           | `1025`                        | porta SMTP                                                         |
+| `NOTIFICACOES_SMTP_SECURE`         | `false`                       | TLS no SMTP (Mailpit em dev não usa)                               |
+| `NOTIFICACOES_SMTP_USER` / `_PASS` | vazio                         | credenciais SMTP (Mailpit aceita qualquer uma; deixe vazio em dev) |
+| `NOTIFICACOES_REMETENTE_NOME`      | `Chamados`                    | nome do remetente default da plataforma                            |
+| `NOTIFICACOES_REMETENTE_EMAIL`     | `nao-responda@chamados.local` | e-mail do remetente default                                        |
+| `NOTIFICACOES_WEBHOOK_TIMEOUT_MS`  | `5000`                        | timeout por requisição de webhook                                  |
+| `NOTIFICACOES_WEBHOOK_MAX_FALHAS`  | `10`                          | falhas consecutivas até desativar o canal e alertar os admins      |
+| `NOTIFICACOES_HOST_PLATAFORMA`     | `localhost:3000`              | host base para montar os deep links dos e-mails                    |
+| `MAILPIT_SMTP_PORT`                | `1025`                        | porta SMTP publicada pelo container do Mailpit                     |
+| `MAILPIT_UI_PORT`                  | `8025`                        | porta da UI/inbox do Mailpit                                       |
+
+O **webhook** é assinado por HMAC-SHA256 no header `X-Chamados-Signature`
+(`sha256=<hex>`), que o receptor recalcula com o segredo do canal; o payload NUNCA
+inclui conteúdo interno (notas internas, complexidade). Após
+`NOTIFICACOES_WEBHOOK_MAX_FALHAS` falhas consecutivas o canal é desativado
+automaticamente e os admins recebem um e-mail de alerta.
+
+Para validar a camada de notificações de ponta a ponta (e-mail SMTP fake + webhook
+com HMAC, idempotência, retry, desativação por falhas, RLS):
+
+```bash
+npm run smoke:notificacoes
+```
+
+Requer Postgres + Redis de pé; usa um transporte SMTP fake e um servidor HTTP local
+(não precisa do Mailpit). Deve terminar com `RESULTADO: PASSOU`.
+
 ---
 
 ## 4. Portas e URLs
@@ -141,6 +235,8 @@ Retorna `200` quando Postgres e Redis estão acessíveis; `503` e
 | Redis           | localhost:6379                   | —                                                                       |
 | MinIO (API S3)  | http://localhost:9000            | `minioadmin` / `minioadmin`                                             |
 | MinIO (console) | http://localhost:9001            | `minioadmin` / `minioadmin`                                             |
+| Mailpit (SMTP)  | localhost:1025                   | — (aceita qualquer credencial)                                          |
+| Mailpit (inbox) | http://localhost:8025            | —                                                                       |
 
 Todas as portas são configuráveis via `.env`.
 
@@ -158,6 +254,8 @@ Todas as portas são configuráveis via `.env`.
 | `npm run migration:run`                  | aplica as migrations                         |
 | `npm run migration:revert`               | reverte a última migration                   |
 | `npm run smoke:rls`                      | testa o isolamento por RLS                   |
+| `npm run smoke:triagem`                  | testa a infra de triagem (fila/dedupe/lock)  |
+| `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)    |
 | `npm run dev`                            | sobe web + worker juntos                     |
 | `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                  |
 | `npm run build`                          | build de produção do web                     |

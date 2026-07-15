@@ -34,6 +34,7 @@ const {
   transicionarStatus,
   atorSistema,
   DespachanteFila,
+  DespachanteNotificacoes,
   filaTriagem,
   enfileirarTriagem,
   jobIdTriagem,
@@ -43,8 +44,15 @@ const {
   ExecucaoIASchema,
   ChamadoSchema,
 } = await import('@chamados/db');
-const { Papel, StatusTenant, StatusChamado, Natureza, VisibilidadeMensagem, StatusExecucaoIA } =
-  await import('@chamados/shared');
+const {
+  Papel,
+  StatusTenant,
+  StatusChamado,
+  Natureza,
+  Complexidade,
+  VisibilidadeMensagem,
+  StatusExecucaoIA,
+} = await import('@chamados/shared');
 const { processarTriagem } = await import('../triagem/processador');
 const { resolverProvider } = await import('../ia/resolver-provider');
 const { adquirirLockTenant, liberarLockTenant } = await import('../lock-tenant');
@@ -193,7 +201,7 @@ async function main(): Promise<void> {
       );
       ok(
         Array.isArray(linhaAcoes[0]?.acoes) && linhaAcoes[0]!.acoes.length >= 1,
-        'trilha de ações tem ≥1 chamada de ferramenta stub',
+        'trilha de ações tem ≥1 chamada de ferramenta real (repo_buscar)',
       );
     });
 
@@ -443,16 +451,26 @@ async function main(): Promise<void> {
       await j.remove().catch(() => {});
     }
 
-    // Sanidade: o chamado NÃO foi mutado pelo M6 (resultado não aplicado) ----
+    // Sanidade: o M7 APLICA o resultado ao chamado (diagnóstico) -------------
     await runInTenantContext(ds, tenantA, async (em) => {
       const ch = await em.findOne(ChamadoSchema, { where: { id: chamadoId } });
-      ok(ch?.complexidade === null, 'M6 NÃO aplica o resultado ao chamado (complexidade intacta)');
+      ok(
+        ch?.complexidade === Complexidade.facil,
+        'M7 aplica o resultado: complexidade classificada (facil)',
+      );
+      ok(
+        ch?.status === StatusChamado.em_atendimento,
+        'M7 aplica o resultado: chamado diagnosticado → em_atendimento',
+      );
     });
 
     console.log('\n[smoke-triagem] RESULTADO: PASSOU — infra de triagem confirmada.');
   } finally {
     await fila.obliterate({ force: true }).catch(() => {});
     await DespachanteFila.fechar().catch(() => {});
+    // O processador agora enfileira notificações (M9) pós-commit; fecha a conexão
+    // do publicador da fila `notificacoes` para o processo do smoke não travar.
+    await DespachanteNotificacoes.fechar().catch(() => {});
     redis.disconnect();
 
     const admin = criarAdminDataSource();

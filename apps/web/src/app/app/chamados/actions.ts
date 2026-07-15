@@ -31,6 +31,7 @@ import {
   GatilhoIA,
 } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
+import { comDespacho } from '@/lib/despacho';
 import { ROTULO_STATUS_CHAMADO } from '@/lib/rotulos';
 
 export interface EstadoChamado {
@@ -120,8 +121,8 @@ export async function acaoCriarChamado(
   if (prioridade === null) return { erro: 'Prioridade inválida.' };
 
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    criarChamado(em, usuario, { titulo, descricao, natureza: naturezaRaw, prioridade }),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    criarChamado(em, usuario, { titulo, descricao, natureza: naturezaRaw, prioridade }, hooks),
   );
   if (!r.ok) return { erro: MOTIVOS_CRIAR[r.motivo] };
 
@@ -139,8 +140,8 @@ export async function acaoTransicionar(
     return { ok: false, msg: 'Status inválido.' };
   }
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    transicionarStatus(em, usuario, chamadoId, novoStatus as StatusChamado),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    transicionarStatus(em, usuario, chamadoId, novoStatus as StatusChamado, {}, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_TRANSICAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -154,8 +155,8 @@ export async function acaoTransicionar(
 export async function acaoAssumir(chamadoId: string): Promise<ResultadoAcao> {
   const { tenant, usuario } = await exigirUsuario();
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    atribuirOperador(em, usuario, chamadoId, usuario.id),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    atribuirOperador(em, usuario, chamadoId, usuario.id, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -167,8 +168,8 @@ export async function acaoAtribuir(chamadoId: string, operadorId: string): Promi
   const { tenant, usuario } = await exigirUsuario();
   if (!operadorId) return { ok: false, msg: 'Selecione um operador.' };
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    atribuirOperador(em, usuario, chamadoId, operadorId),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    atribuirOperador(em, usuario, chamadoId, operadorId, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -179,8 +180,8 @@ export async function acaoAtribuir(chamadoId: string, operadorId: string): Promi
 export async function acaoDesatribuir(chamadoId: string): Promise<ResultadoAcao> {
   const { tenant, usuario } = await exigirUsuario();
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    desatribuirOperador(em, usuario, chamadoId),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    desatribuirOperador(em, usuario, chamadoId, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -195,8 +196,8 @@ export async function acaoAlterarPrioridade(
   const { tenant, usuario } = await exigirUsuario();
   if (!ehPrioridade(prioridade)) return { ok: false, msg: 'Prioridade inválida.' };
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    alterarPrioridade(em, usuario, chamadoId, prioridade),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    alterarPrioridade(em, usuario, chamadoId, prioridade, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -211,8 +212,8 @@ export async function acaoAlterarNatureza(
   const { tenant, usuario } = await exigirUsuario();
   if (!ehNatureza(natureza)) return { ok: false, msg: 'Natureza inválida.' };
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    alterarNatureza(em, usuario, chamadoId, natureza),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    alterarNatureza(em, usuario, chamadoId, natureza, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -233,8 +234,8 @@ export async function acaoDefinirComplexidade(
         : undefined;
   if (valor === undefined) return { ok: false, msg: 'Complexidade inválida.' };
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    definirComplexidade(em, usuario, chamadoId, valor),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    definirComplexidade(em, usuario, chamadoId, valor, hooks),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
@@ -333,13 +334,18 @@ export async function acaoResponder(
   }
 
   const ds = await obterAppDataSource();
-  const r = await runInTenantContext(ds, tenant.id, (em) =>
-    criarMensagem(em, usuario, {
-      chamado_id: chamadoId,
-      visibilidade,
-      corpo: doc,
-      anexos: anexos.length > 0 ? anexos : undefined,
-    }),
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    criarMensagem(
+      em,
+      usuario,
+      {
+        chamado_id: chamadoId,
+        visibilidade,
+        corpo: doc,
+        anexos: anexos.length > 0 ? anexos : undefined,
+      },
+      hooks,
+    ),
   );
   if (!r.ok) return { erro: MOTIVOS_MENSAGEM[r.motivo] };
 

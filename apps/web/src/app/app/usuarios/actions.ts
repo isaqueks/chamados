@@ -5,7 +5,7 @@ import { obterAppDataSource, runInTenantContext, criarConvite, revogarConvite } 
 import { autorizar, Papel } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 import { urlAbsoluta } from '@/lib/url';
-import { logarEmailStub } from '@/lib/email-stub';
+import { enviarEmailTransacional } from '@/lib/email';
 
 export interface EstadoConvite {
   erro?: string;
@@ -48,11 +48,11 @@ export async function acaoCriarConvite(
   }
 
   const url = await urlAbsoluta(`/aceitar-convite?token=${encodeURIComponent(r.token)}`);
-  logarEmailStub({ tipo: 'convite', destinatario: email, url });
+  await enviarEmailTransacional({ tipo: 'convite', tenantId: tenant.id, destinatario: email, url });
 
   revalidatePath('/app/usuarios');
   return {
-    sucesso: `Convite criado para ${email}. Enquanto o e-mail é stub (M9), o link está no log do servidor.`,
+    sucesso: `Convite enviado para ${email}. O link de acesso também fica no log do servidor (dev).`,
   };
 }
 

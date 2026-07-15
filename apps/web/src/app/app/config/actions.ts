@@ -10,6 +10,12 @@ import {
   atualizarNomeExibicao,
   atualizarConfigGeral,
   definirDominioProprio,
+  buscarCanal,
+  salvarWebhook,
+  lerSegredoWebhook,
+  assinarWebhook,
+  criarSecretStore,
+  CanalNotificacaoTipo,
   type ConfigBranding,
 } from '@chamados/db';
 import {
@@ -234,4 +240,115 @@ export async function acaoSalvarDominio(
   return {
     sucesso: `Domínio ${dominio} salvo. Aponte um CNAME para a plataforma; o certificado TLS (ACME) é provisionado no deploy (fora do escopo de dev).`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// M9 — Webhook de notificações (specs/06 §3.2, D-003)
+// ---------------------------------------------------------------------------
+
+/** Garante admin com permissão de config de notificações. */
+async function exigirAdminNotificacoes() {
+  const ctx = await exigirUsuario();
+  if (!autorizar(ctx.usuario, 'config_notificacoes', 'editar')) {
+    throw new Error('Sem permissão.');
+  }
+  return ctx;
+}
+
+function urlWebhookValida(url: string): boolean {
+  return /^https?:\/\/.+/.test(url);
+}
+
+/** Salva/atualiza o webhook do tenant (URL + segredo HMAC + ativo — specs/06 §3.2). */
+export async function acaoSalvarWebhook(
+  _prev: EstadoConfig,
+  formData: FormData,
+): Promise<EstadoConfig> {
+  const { tenant } = await exigirAdminNotificacoes();
+
+  const url = String(formData.get('url') ?? '').trim();
+  const segredo = String(formData.get('segredo') ?? '');
+  const ativo = formData.get('ativo') === 'on';
+
+  if (url !== '' && !urlWebhookValida(url)) {
+    return { erro: 'Informe uma URL válida começando com http:// ou https://.' };
+  }
+  if (ativo && url === '') {
+    return { erro: 'Informe a URL do webhook para ativá-lo.' };
+  }
+
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, tenant.id, async (em) => {
+    const existente = await buscarCanal(em, CanalNotificacaoTipo.webhook);
+    const temSegredo = Boolean(existente?.config?.segredo_ref);
+    if (ativo && !temSegredo && segredo.trim() === '') {
+      return { faltaSegredo: true as const };
+    }
+    await salvarWebhook(em, tenant.id, { url, segredo, ativo }, criarSecretStore());
+    return { faltaSegredo: false as const };
+  });
+  if (r.faltaSegredo) {
+    return { erro: 'Defina um segredo para assinar os webhooks (HMAC SHA-256).' };
+  }
+
+  revalidatePath('/app/config');
+  return {
+    sucesso: ativo
+      ? 'Webhook salvo e ativo. As atualizações de chamado serão enviadas por POST assinado.'
+      : 'Webhook salvo (desativado).',
+  };
+}
+
+export type ResultadoTeste = { ok: boolean; msg: string };
+
+/**
+ * Dispara um POST de TESTE assinado ao endpoint configurado e mostra o resultado
+ * (síncrono). Usa a mesma assinatura HMAC dos eventos reais (specs/06 §3.2).
+ */
+export async function acaoTestarWebhook(): Promise<ResultadoTeste> {
+  let tenantId: string;
+  try {
+    const ctx = await exigirAdminNotificacoes();
+    tenantId = ctx.tenant.id;
+  } catch {
+    return { ok: false, msg: 'Sem permissão.' };
+  }
+
+  const ds = await obterAppDataSource();
+  const prep = await runInTenantContext(ds, tenantId, async (em) => {
+    const canal = await buscarCanal(em, CanalNotificacaoTipo.webhook);
+    if (!canal?.config?.url) return null;
+    const segredo = await lerSegredoWebhook(em, canal, criarSecretStore());
+    return { url: canal.config.url, segredo: segredo ?? '' };
+  });
+  if (!prep) return { ok: false, msg: 'Configure a URL e o segredo do webhook antes de testar.' };
+
+  const corpo = JSON.stringify({
+    evento: { tipo: 'teste', id: randomUUID(), timestamp: new Date().toISOString() },
+    teste: true,
+    mensagem: 'Evento de teste enviado pelo painel do Chamados.',
+  });
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const resp = await fetch(prep.url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-chamados-signature': assinarWebhook(prep.segredo, corpo),
+        'x-chamados-event': 'teste',
+      },
+      body: corpo,
+      signal: ctrl.signal,
+    });
+    if (resp.status >= 200 && resp.status < 300) {
+      return { ok: true, msg: `Endpoint respondeu HTTP ${resp.status}. Assinatura enviada.` };
+    }
+    return { ok: false, msg: `O endpoint respondeu HTTP ${resp.status}.` };
+  } catch (err) {
+    return { ok: false, msg: `Falha ao chamar o webhook: ${(err as Error).message}` };
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { ChevronDown, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { Bell, ChevronDown, LogOut } from 'lucide-react';
 import type { UsuarioAutenticado } from '@chamados/db';
 import {
   DropdownMenu,
@@ -30,6 +31,14 @@ export function UserMenu({ usuario }: { usuario: UsuarioAutenticado }) {
           <span className="truncate text-xs text-muted-foreground">{usuario.email}</span>
           <span className="mt-1 text-xs text-muted-foreground">{ROTULO_PAPEL[usuario.papel]}</span>
         </div>
+        <DropdownMenuSeparator />
+        <Link
+          href="/portal/preferencias"
+          className="flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent"
+        >
+          <Bell className="size-4" />
+          Preferências de notificação
+        </Link>
         <DropdownMenuSeparator />
         <form action={acaoLogout}>
           <button
