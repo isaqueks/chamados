@@ -1,4 +1,4 @@
-import { Sparkles } from 'lucide-react';
+import { Sparkles, GitPullRequest, ExternalLink } from 'lucide-react';
 import type { ExecucaoIAView } from '@chamados/db';
 import { ExecucaoIABadge } from '@/components/chamado/badges';
 import { ROTULO_GATILHO_IA } from '@/lib/rotulos';
@@ -84,6 +84,9 @@ export function AssistenteIA({
               {e.status === 'concluido' && e.resultado?.diagnostico && (
                 <p className="line-clamp-3 text-xs text-foreground/80">{e.resultado.diagnostico}</p>
               )}
+              {e.resultado?.tentativaResolucao && (
+                <TentativaResolucaoBloco tentativa={e.resultado.tentativaResolucao} />
+              )}
             </li>
           ))}
         </ul>
@@ -93,6 +96,54 @@ export function AssistenteIA({
         <div className="flex justify-end">
           <ReexecutarTriagem chamadoId={chamadoId} />
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Bloco da tentativa de resolução automática (branch, PR, resumo, arquivos). */
+function TentativaResolucaoBloco({
+  tentativa,
+}: {
+  tentativa: NonNullable<NonNullable<ExecucaoIAView['resultado']>['tentativaResolucao']>;
+}) {
+  const falhou = tentativa.situacao === 'falhou';
+  return (
+    <div
+      className={
+        'flex flex-col gap-1.5 rounded-md border p-2 text-xs ' +
+        (falhou
+          ? 'border-rose-300 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20'
+          : 'border-violet-300 bg-violet-50/60 dark:border-violet-900/50 dark:bg-violet-950/20')
+      }
+    >
+      <div className="flex items-center gap-1.5 font-medium">
+        <GitPullRequest className="size-3.5" />
+        {falhou ? 'Tentativa de resolução falhou' : 'Resolução automática — PR'}
+      </div>
+      {tentativa.resumo && <p className="text-foreground/80">{tentativa.resumo}</p>}
+      {tentativa.branch && (
+        <p className="font-mono text-[11px] break-all text-muted-foreground">{tentativa.branch}</p>
+      )}
+      {tentativa.arquivosAlterados.length > 0 && (
+        <p className="text-muted-foreground">Arquivos: {tentativa.arquivosAlterados.join(', ')}</p>
+      )}
+      {tentativa.prUrl ? (
+        <a
+          href={tentativa.prUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex w-fit items-center gap-1 rounded border bg-background px-2 py-1 font-medium hover:bg-accent"
+        >
+          Abrir Pull Request <ExternalLink className="size-3" />
+        </a>
+      ) : (
+        !falhou &&
+        tentativa.branch && (
+          <p className="text-muted-foreground">
+            Branch publicada — abra o PR manualmente no provedor git. Merge/deploy sempre manual.
+          </p>
+        )
       )}
     </div>
   );

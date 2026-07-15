@@ -25,6 +25,13 @@ export const iaConfig = {
     budgetUsd: num('IA_BUDGET_USD', 5),
     maxTurnos: num('IA_MAX_TURNOS', 20),
   },
+  /** Resolução automática (specs/05 §6): PR e link do chamado. */
+  resolucao: {
+    /** Timeout do POST de abertura de PR no GitHub (ms). */
+    prTimeoutMs: num('IA_RESOLUCAO_PR_TIMEOUT_MS', 10_000),
+    /** Base URL do painel para montar o link do chamado no corpo do PR (ou null). */
+    appBaseUrl: process.env.APP_BASE_URL?.trim() || null,
+  },
 };
 
 /**

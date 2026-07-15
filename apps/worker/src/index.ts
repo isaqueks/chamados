@@ -50,6 +50,10 @@ async function main(): Promise<void> {
       connection: redisConnection,
       concorrencia: triagemConfig.concorrencia,
       log,
+      resolucao: {
+        prTimeoutMs: iaConfig.resolucao.prTimeoutMs,
+        appBaseUrl: iaConfig.resolucao.appBaseUrl,
+      },
     }),
     // M9 — fila de notificações (SMTP + webhook, templates, idempotência).
     registrarNotificacoes({

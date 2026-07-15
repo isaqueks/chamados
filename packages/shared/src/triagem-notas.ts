@@ -198,3 +198,154 @@ export function montarTemplateSpec(d: DadosTemplateSpec): string {
     `Complexidade: ${d.complexidade} | Esforço aproximado: ${d.esforco?.trim() || A_DETALHAR}`,
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Resolução automática (specs/05 §6) — branch/commit/PR e notas INTERNAS
+// ---------------------------------------------------------------------------
+
+/**
+ * Slug rastreável a partir do título (specs/05 §6: `ia/chamado-<numero>-<slug>`).
+ * Só ASCII minúsculo/dígitos/hífen; sem acentos, sem espaços; comprimento capado.
+ * Nunca vazio (fallback `chamado`), para a branch ser sempre válida.
+ */
+export function slugChamado(titulo: string, maxLen = 40): string {
+  const s = titulo
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // remove diacríticos combinantes
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLen)
+    .replace(/-+$/g, '');
+  return s.length > 0 ? s : 'chamado';
+}
+
+/** Nome da branch de resolução (specs/05 §6). Determinístico por chamado. */
+export function nomeBranchResolucao(numero: string | number, titulo: string): string {
+  return `ia/chamado-${numero}-${slugChamado(titulo)}`;
+}
+
+export interface DadosCommit {
+  numero: string | number;
+  titulo: string;
+  execucaoId: string;
+  resumo: string;
+}
+
+/**
+ * Mensagem de commit padronizada (specs/05 §6): referencia o Chamado e a
+ * `ExecucaoIA` que originou a mudança, para rastreabilidade. Nunca ecoa segredos.
+ */
+export function montarMensagemCommit(d: DadosCommit): string {
+  const assunto = `fix: chamado #${d.numero} — ${d.titulo.trim()}`.slice(0, 100);
+  return [
+    assunto,
+    '',
+    d.resumo.trim() || 'Correção automática proposta pelo assistente de IA.',
+    '',
+    `Chamado: #${d.numero}`,
+    `ExecucaoIA: ${d.execucaoId}`,
+    '',
+    'Gerado automaticamente pelo assistente de IA (Chamados). Requer revisão',
+    'humana — a IA nunca faz merge nem deploy.',
+  ].join('\n');
+}
+
+export interface DadosPr {
+  numero: string | number;
+  titulo: string;
+  diagnostico?: string | null;
+  resumo: string;
+  arquivos: string[];
+  execucaoId: string;
+  /** Link do chamado no painel (quando derivável); senão `null`. */
+  chamadoUrl?: string | null;
+}
+
+/** Título do PR (specs/05 §6). */
+export function montarTituloPr(d: DadosPr): string {
+  return `Chamados #${d.numero}: ${d.titulo.trim()}`.slice(0, 120);
+}
+
+/**
+ * Corpo do PR (specs/05 §6): diagnóstico + resumo da mudança + arquivos + link do
+ * chamado + `ExecucaoIA`, com o guardrail explícito (merge/deploy só humano).
+ */
+export function montarCorpoPr(d: DadosPr): string {
+  const linhas: string[] = [
+    `Correção automática proposta para o chamado **#${d.numero} — ${d.titulo.trim()}**.`,
+    '',
+  ];
+  if (d.diagnostico && d.diagnostico.trim()) {
+    linhas.push('## Diagnóstico', '', d.diagnostico.trim(), '');
+  }
+  linhas.push('## Resumo da mudança', '', d.resumo.trim() || A_DETALHAR, '');
+  linhas.push('## Arquivos alterados', '', bloco(d.arquivos), '');
+  if (d.chamadoUrl && d.chamadoUrl.trim()) {
+    linhas.push(`Chamado: ${d.chamadoUrl.trim()}`);
+  }
+  linhas.push(`ExecucaoIA: ${d.execucaoId}`);
+  linhas.push(
+    '',
+    '> Gerado automaticamente pelo assistente de IA. **Requer revisão humana** —',
+    '> a IA nunca faz merge nem deploy (guardrail inegociável).',
+  );
+  return linhas.join('\n');
+}
+
+export interface DadosNotaResolucao {
+  branch: string;
+  /** URL do PR (GitHub); `null` quando só houve push (PR manual). */
+  prUrl: string | null;
+  resumo: string;
+  arquivos: string[];
+}
+
+/**
+ * Nota INTERNA de resultado da resolução automática (specs/05 §6): link do PR (ou
+ * instrução de PR manual), resumo da mudança, arquivos tocados e a branch. Nunca
+ * exposta ao cliente (visibilidade interna + evento `ia_abriu_pr` interno).
+ */
+export function montarNotaResolucaoPr(d: DadosNotaResolucao): string {
+  const linhas: string[] = [
+    'Resolução automática (Assistente IA) — Pull Request aguardando revisão',
+    '',
+  ];
+  if (d.prUrl) {
+    linhas.push(`Pull Request: ${d.prUrl}`);
+  } else {
+    linhas.push(
+      `Branch publicada: ${d.branch}`,
+      'Abra o Pull Request manualmente a partir desta branch no seu provedor git',
+      '(o host não é GitHub, então o PR não pôde ser criado automaticamente).',
+    );
+  }
+  linhas.push(
+    `Branch: ${d.branch}`,
+    '',
+    'Resumo da mudança:',
+    d.resumo.trim() || '(sem resumo)',
+    '',
+    'Arquivos alterados:',
+    bloco(d.arquivos),
+    '',
+    'A IA NÃO faz merge nem deploy — a aprovação e o merge são manuais (guardrail).',
+  );
+  return linhas.join('\n');
+}
+
+/**
+ * Nota INTERNA de FALHA da tentativa de resolução (specs/05 §6/§8). O diagnóstico
+ * já aplicado permanece; apenas a tentativa de PR falhou e o chamado segue com o
+ * operador. Nunca ecoa segredos/stack traces crus — só o motivo normalizado.
+ */
+export function montarNotaFalhaResolucao(motivo: string): string {
+  return [
+    'Tentativa de resolução automática NÃO concluída (Assistente IA).',
+    '',
+    `Motivo: ${motivo.trim() || 'erro_desconhecido'}.`,
+    '',
+    'O diagnóstico acima permanece válido. Nenhuma alteração foi enviada ao',
+    'repositório do sistema-alvo. Um operador deve conduzir a correção.',
+  ].join('\n');
+}

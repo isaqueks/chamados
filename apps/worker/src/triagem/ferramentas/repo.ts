@@ -25,8 +25,8 @@ export interface ConfigRepo {
   credencial: string | null;
 }
 
-/** Injeta a credencial na URL http(s) do fetch. Nada de log com esta URL. */
-function urlComCredencial(repoUrl: string, credencial: string | null): string {
+/** Injeta a credencial na URL http(s) do fetch/push. Nada de log com esta URL. */
+export function urlComCredencial(repoUrl: string, credencial: string | null): string {
   if (!credencial) return repoUrl;
   try {
     const u = new URL(repoUrl);

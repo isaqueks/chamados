@@ -1,11 +1,20 @@
 import Link from 'next/link';
-import { ArrowUpRight, AlertTriangle, Clock, GitPullRequest, CheckCircle2 } from 'lucide-react';
+import {
+  ArrowUpRight,
+  AlertTriangle,
+  Clock,
+  GitPullRequest,
+  CheckCircle2,
+  ExternalLink,
+} from 'lucide-react';
 import {
   obterAppDataSource,
   runInTenantContext,
   metricasDashboard,
   blocosPrecisaDeVoce,
+  prsIaAguardandoRevisao,
   type ItemAcionavel,
+  type ItemPrIa,
 } from '@chamados/db';
 import { StatusChamado, Papel } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
@@ -17,12 +26,14 @@ export default async function DashboardPage() {
   const { usuario, tenant } = await exigirUsuario();
   const ds = await obterAppDataSource();
 
-  const { metricas, blocos } = await runInTenantContext(ds, tenant.id, async (em) => ({
+  const { metricas, blocos, prsIa } = await runInTenantContext(ds, tenant.id, async (em) => ({
     metricas: await metricasDashboard(em, usuario),
     blocos: await blocosPrecisaDeVoce(em, usuario),
+    prsIa: await prsIaAguardandoRevisao(em, usuario),
   }));
 
   const primeiroNome = usuario.nome.split(' ')[0];
+  const nomeAssistente = tenant.config_branding?.agente_ia_nome ?? 'assistente';
   const semAcoes = blocos.urgentesSemAtribuicao.length === 0 && blocos.paradosHaMuito.length === 0;
 
   return (
@@ -112,14 +123,8 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Placeholder de PRs da IA (M8) */}
-        <div className="flex items-center gap-3 rounded-xl border border-dashed bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-          <GitPullRequest className="size-4 shrink-0" />
-          <span>
-            Aprovações de PR do {tenant.config_branding?.agente_ia_nome ?? 'assistente'} aparecerão
-            aqui quando a automação entrar em operação (M8).
-          </span>
-        </div>
+        {/* PRs da IA aguardando revisão (M8 — specs/05 §6) */}
+        <BlocoPrsIa itens={prsIa} nomeAssistente={nomeAssistente} />
       </section>
 
       {usuario.papel === Papel.admin && (
@@ -167,6 +172,67 @@ function CardMetricaLeve({
       >
         {valor}
       </span>
+    </div>
+  );
+}
+
+function BlocoPrsIa({ itens, nomeAssistente }: { itens: ItemPrIa[]; nomeAssistente: string }) {
+  return (
+    <div className="flex flex-col rounded-xl border bg-card">
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <GitPullRequest className="size-4 text-violet-500" />
+        <h3 className="text-sm font-semibold">PRs do {nomeAssistente} aguardando revisão</h3>
+        {itens.length > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{itens.length}</span>
+        )}
+      </div>
+      {itens.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground">
+          Nenhum PR da IA aguardando revisão. Correções automáticas de problemas fáceis aparecem
+          aqui — o merge é sempre manual.
+        </p>
+      ) : (
+        <ul className="divide-y">
+          {itens.map((c) => (
+            <li key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+              <Link
+                href={`/app/chamados/${c.id}`}
+                className="flex min-w-0 flex-1 items-center gap-3 transition-colors hover:opacity-80"
+              >
+                <span className="text-xs font-medium text-muted-foreground tabular-nums">
+                  #{c.numero}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.titulo}</span>
+                <PrioridadeBadge prioridade={c.prioridade} />
+                <StatusBadge status={c.status} className="hidden sm:inline-flex" />
+                <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
+                  {tempoRelativo(c.aberto_em)}
+                </span>
+              </Link>
+              {c.prUrl ? (
+                <a
+                  href={c.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-accent"
+                  title="Abrir Pull Request"
+                >
+                  PR <ExternalLink className="size-3" />
+                </a>
+              ) : (
+                c.branch && (
+                  <span
+                    className="hidden shrink-0 rounded-md border px-2 py-1 font-mono text-[11px] text-muted-foreground lg:inline"
+                    title="Branch publicada — abra o PR manualmente"
+                  >
+                    {c.branch}
+                  </span>
+                )
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

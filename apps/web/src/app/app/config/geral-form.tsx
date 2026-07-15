@@ -56,8 +56,8 @@ export function GeralForm({ diasFechamento, iaResolucaoAuto }: Props) {
         <span className="flex flex-col gap-0.5">
           <span className="text-sm font-medium">Resolução automática pela IA habilitada</span>
           <span className="text-xs text-muted-foreground">
-            A IA pode gerar um PR para problemas fáceis. Merge/deploy sempre exige aprovação humana
-            (guardrail — o uso real chega no M6+).
+            A IA pode abrir um PR para problemas fáceis bem compreendidos. Merge/deploy sempre exige
+            aprovação humana (guardrail inegociável — a IA nunca faz merge).
           </span>
         </span>
       </label>

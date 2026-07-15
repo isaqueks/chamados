@@ -247,3 +247,67 @@ export async function blocosPrecisaDeVoce(
     paradosHaMuito: parados.map(toItem),
   };
 }
+
+/** Item do bloco "PRs da IA aguardando revisão" (M8 — specs/05 §6, specs/08 §3.1). */
+export interface ItemPrIa {
+  id: string;
+  numero: string;
+  titulo: string;
+  status: StatusChamado;
+  prioridade: Prioridade;
+  /** Branch publicada pela IA. */
+  branch: string | null;
+  /** URL do PR (GitHub) ou `null` (push apenas → PR manual). */
+  prUrl: string | null;
+  /** Quando o PR/branch foi publicado (evento `ia_abriu_pr`). */
+  aberto_em: Date;
+}
+
+/**
+ * PRs da IA aguardando revisão humana (M8 — specs/05 §6): chamados com evento
+ * `ia_abriu_pr` que ainda NÃO tiveram resolução posterior (status ainda aberto —
+ * não `resolvido`/`fechado`/`cancelado`). Read-only, escopo do tenant por RLS,
+ * área de operador/admin (o cliente NUNCA vê — o evento `ia_abriu_pr` é interno).
+ * Usa o evento `ia_abriu_pr` mais recente por chamado (branch/prUrl do payload).
+ */
+export async function prsIaAguardandoRevisao(
+  em: EntityManager,
+  ator: Ator,
+  limite = 6,
+): Promise<ItemPrIa[]> {
+  if (!equipe(ator)) return [];
+
+  const linhas: Array<{
+    id: string;
+    numero: string;
+    titulo: string;
+    status: StatusChamado;
+    prioridade: Prioridade;
+    aberto_em: Date;
+    dados: { branch?: string | null; prUrl?: string | null } | null;
+  }> = await em.query(
+    `SELECT DISTINCT ON (c.id)
+        c.id, c.numero::text AS numero, c.titulo, c.status, c.prioridade,
+        e.created_at AS aberto_em, e.dados AS dados
+       FROM chamado c
+       JOIN evento_chamado e
+         ON e.chamado_id = c.id AND e.tipo = 'ia_abriu_pr'
+      WHERE c.deleted_at IS NULL
+        AND c.status IN ('novo','em_triagem','aguardando_cliente','em_atendimento')
+      ORDER BY c.id, e.created_at DESC`,
+  );
+
+  return linhas
+    .map((l) => ({
+      id: l.id,
+      numero: String(l.numero),
+      titulo: l.titulo,
+      status: l.status,
+      prioridade: l.prioridade,
+      branch: l.dados?.branch ?? null,
+      prUrl: l.dados?.prUrl ?? null,
+      aberto_em: l.aberto_em,
+    }))
+    .sort((a, b) => new Date(b.aberto_em).getTime() - new Date(a.aberto_em).getTime())
+    .slice(0, limite);
+}

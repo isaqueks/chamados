@@ -30,6 +30,7 @@
     "smoke:mensagens": "npm run smoke:mensagens -w @chamados/db",
     "smoke:triagem": "npm run smoke:triagem -w @chamados/worker",
     "smoke:pipeline": "npm run smoke:pipeline -w @chamados/worker",
+    "smoke:resolucao": "npm run smoke:resolucao -w @chamados/worker",
     "smoke:notificacoes": "npm run smoke:notificacoes -w @chamados/worker",
     "seed:dev": "npm run seed:dev -w @chamados/db",
     "test": "vitest run",

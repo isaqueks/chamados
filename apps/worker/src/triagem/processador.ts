@@ -18,7 +18,10 @@ import {
   type JobTriagem,
 } from '@chamados/db';
 import { montarInput, type PreparacaoContexto } from './contexto';
-import { aplicarResultado, escalarParaHumano } from './aplicador';
+import { aplicarResultado, escalarParaHumano, type ResultadoResolucao } from './aplicador';
+import { deveTentarResolver, executarResolucao } from './resolucao';
+import { ferramentasConfig } from './ferramentas/config';
+import type { FetchImpl } from './github-pr';
 import { motivoErro } from '../ia/erros';
 import { adquirirLockComEspera, liberarLockTenant, type OpcoesEspera } from '../lock-tenant';
 
@@ -46,6 +49,15 @@ export interface DepsProcessador {
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
   lock: OpcoesEspera;
   log: (msg: string, extra?: Record<string, unknown>) => void;
+  /** Config da RESOLUÇÃO automática (specs/05 §6). Opcional (default: rede real). */
+  resolucao?: {
+    /** Fronteira HTTP do cliente GitHub (injetável em teste/smoke). */
+    githubFetch?: FetchImpl;
+    /** Timeout do POST de PR (ms). */
+    prTimeoutMs?: number;
+    /** Base URL do painel para montar o link do chamado no PR (ou null). */
+    appBaseUrl?: string | null;
+  };
 }
 
 export type ResultadoProcessamento =
@@ -136,20 +148,56 @@ export async function processarTriagem(
       return { status: 'ignorado', motivo: prep.motivo };
     }
     ctx = prep.ctx;
+    const ctxAtivo = prep.ctx;
 
     // ---- Sincronização + provider (FORA da transação) ----------------------
     let resultado: AIProviderResult | null = null;
     let erro: string | null = null;
     try {
-      await ctx.sincronizar(); // git clone/pull (specs/05 §3.2)
+      await ctxAtivo.sincronizar(); // git clone/pull (specs/05 §3.2)
     } catch (err) {
       erro = motivoErro(err);
     }
+    // Prepara a working copy DESCARTÁVEL da resolução (specs/05 §6) — no-op se o
+    // gate PRÉ-call fechou. Falha aqui NÃO derruba a triagem (best-effort): a
+    // resolução simplesmente não acontece.
     if (!erro) {
       try {
-        resultado = await provider.executarTriagem(ctx.input);
+        await ctxAtivo.prepararResolucao();
+      } catch (err) {
+        log('resolucao: preparo da working copy falhou', {
+          chamadoId: job.chamadoId,
+          erro: motivoErro(err),
+        });
+      }
+    }
+    if (!erro) {
+      try {
+        resultado = await provider.executarTriagem(ctxAtivo.input);
       } catch (err) {
         erro = motivoErro(err);
+      }
+    }
+
+    // ---- Resolução automática (branch/push/PR — I/O, FORA da transação) -----
+    // Gate PÓS-call no PIPELINE (specs/05 §6), nunca no provider. Falha da
+    // tentativa NÃO derruba o diagnóstico: vira nota interna de falha + ia_falhou.
+    let resolucaoOutcome: ResultadoResolucao = { tipo: 'nenhuma' };
+    let resultadoRegistro = resultado;
+    if (resultado && !erro) {
+      resolucaoOutcome = await tentarResolver(resultado, ctxAtivo, prep.execucaoId, deps, job);
+      if (resolucaoOutcome.tipo === 'sucesso') {
+        resultadoRegistro = { ...resultado, tentativaResolucao: resolucaoOutcome.tentativa };
+      } else if (resolucaoOutcome.tipo === 'falha' && resultado.tentativaResolucao) {
+        resultadoRegistro = {
+          ...resultado,
+          tentativaResolucao: { ...resultado.tentativaResolucao, situacao: 'falhou' },
+        };
+      } else if (resultado.tentativaResolucao) {
+        // Gate não autorizou (ex.: complexidade != facil): o provider propôs algo,
+        // mas NENHUM PR/push foi feito → não registra como tentativa (evita
+        // sugerir no painel que houve resolução).
+        resultadoRegistro = { ...resultado, tentativaResolucao: null };
       }
     }
 
@@ -164,6 +212,7 @@ export async function processarTriagem(
     const despachanteNotif = new DespachanteNotificacoes(log);
     if (resultado) {
       const r = resultado;
+      const rRegistro = resultadoRegistro ?? r;
       try {
         await runInTenantContext(ds, job.tenantId, async (em) => {
           await aplicarResultado(
@@ -173,10 +222,12 @@ export async function processarTriagem(
               chamadoId: job.chamadoId,
               execucaoId: prep.execucaoId,
               resultado: r,
+              resolucao: resolucaoOutcome,
             },
             { log, despachante: despachanteNotif },
           );
-          await concluirExecucao(em, prep.execucaoId, r, prep.acoes);
+          // Grava o resultado ENRIQUECIDO (tentativa com branch/prUrl/situacao).
+          await concluirExecucao(em, prep.execucaoId, rRegistro, prep.acoes);
         });
         concluido = true;
       } catch (err) {
@@ -213,5 +264,67 @@ export async function processarTriagem(
   } finally {
     if (ctx) await ctx.encerrar().catch(() => {});
     await liberarLockTenant(redis, job.tenantId, token).catch(() => {});
+  }
+}
+
+/**
+ * Avalia o gate PÓS-call e, se autorizado, executa a tentativa de resolução
+ * (branch/push/PR). Devolve o desfecho para o aplicador registrar em Tx2. Nunca
+ * lança: falha da tentativa vira `{ tipo: 'falha' }` (o diagnóstico segue intacto).
+ */
+async function tentarResolver(
+  resultado: AIProviderResult,
+  ctx: PreparacaoContexto,
+  execucaoId: string,
+  deps: DepsProcessador,
+  job: JobTriagem,
+): Promise<ResultadoResolucao> {
+  const { log } = deps;
+  const copia = ctx.copiaResolucao();
+  const repo = ctx.resolucao.repo;
+
+  const gate = deveTentarResolver({
+    tenantHabilitado: ctx.resolucao.tenantHabilitado,
+    naturezaEfetiva: resultado.naturezaAjustada ?? ctx.input.contexto.naturezaDeclarada,
+    complexidade: resultado.complexidade,
+    compreendido: resultado.compreendido,
+    confianca: resultado.confianca,
+    confiancaMin: ferramentasConfig.resolucao.confiancaMin,
+    temTentativa: resultado.tentativaResolucao !== null,
+    repoConfigurado: repo !== null,
+  });
+  if (!gate || !copia || !repo || !resultado.tentativaResolucao) {
+    return { tipo: 'nenhuma' };
+  }
+
+  const appBaseUrl = deps.resolucao?.appBaseUrl ?? null;
+  const chamadoUrl = appBaseUrl
+    ? `${appBaseUrl.replace(/\/+$/, '')}/app/chamados/${job.chamadoId}`
+    : null;
+
+  try {
+    const tentativa = await executarResolucao(
+      {
+        dir: copia.dir,
+        repoUrl: repo.repoUrl,
+        credencial: repo.credencial,
+        branchPadrao: repo.branchPadrao,
+        chamado: { numero: ctx.resolucao.numeroChamado, titulo: ctx.input.contexto.titulo },
+        execucaoId,
+        tentativaProvider: resultado.tentativaResolucao,
+        diagnostico: resultado.diagnostico,
+        chamadoUrl,
+      },
+      {
+        log,
+        githubFetch: deps.resolucao?.githubFetch,
+        webhookTimeoutMs: deps.resolucao?.prTimeoutMs,
+      },
+    );
+    return { tipo: 'sucesso', tentativa };
+  } catch (err) {
+    const motivo = motivoErro(err);
+    log('resolucao: tentativa falhou', { chamadoId: job.chamadoId, motivo });
+    return { tipo: 'falha', motivo };
   }
 }

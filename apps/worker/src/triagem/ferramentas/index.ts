@@ -6,6 +6,7 @@ import type { Registrar } from './config';
 import { criarHandlesRepo, sincronizarRepo, type ConfigRepo } from './repo';
 import { criarHandleLogs, type ConfigLogs } from './logs';
 import { criarFerramentaBd, type ConfigBd } from './bd';
+import { criarHandlesEscrita, criarCopiaDescartavel, type CopiaDescartavel } from './escrita';
 
 /**
  * Montagem das FERRAMENTAS REAIS read-only (M7) e sua injeção como HANDLES no
@@ -26,7 +27,16 @@ export interface FerramentasReais {
   ferramentas: AIProviderInput['ferramentas'];
   /** Sincroniza a working copy (clone/pull). No-op se não há repo (specs/05 §3.2). */
   sincronizar(): Promise<void>;
-  /** Libera recursos (fecha o pool de BD do sistema-alvo) ao fim do job. */
+  /**
+   * Prepara a WORKING COPY DESCARTÁVEL (specs/05 §6): clona o checkout do cache
+   * para um diretório temp e habilita as ferramentas de escrita a apontarem para
+   * ela. No-op se a resolução não está habilitada ou não há repo sincronizado.
+   * Chamado pelo pipeline DEPOIS de `sincronizar()` e ANTES do provider.
+   */
+  prepararResolucao(): Promise<void>;
+  /** Cópia descartável preparada (ou null) — o worker commita/faz push a partir dela. */
+  copiaResolucao(): CopiaDescartavel | null;
+  /** Libera recursos (BD + destrói a cópia descartável) ao fim do job. */
   encerrar(): Promise<void>;
 }
 
@@ -86,16 +96,23 @@ function emptyBd(): ConfigBd {
 /**
  * Constrói os HANDLES injetáveis no `AIProviderInput.ferramentas` a partir da
  * config já resolvida/decifrada. O checkout do repo é preenchido por
- * `sincronizar()` (chamado pelo pipeline ANTES do provider — specs/05 §3.1).
+ * `sincronizar()` (chamado pelo pipeline ANTES do provider — specs/05 §3.1). As
+ * ferramentas de ESCRITA só são incluídas quando `resolucaoHabilitada` (o gate
+ * PRÉ-call do pipeline autorizou — specs/05 §6); do contrário são `undefined`.
  */
 export function montarFerramentasReais(
   cfg: ConfigFerramentas,
   registrar: Registrar,
+  opcoes: { resolucaoHabilitada?: boolean } = {},
 ): FerramentasReais {
   let checkoutDir: string | null = null;
+  let copia: CopiaDescartavel | null = null;
   const repo = criarHandlesRepo(() => checkoutDir, registrar);
   const logs = criarHandleLogs(cfg.logs, registrar);
   const bd = criarFerramentaBd(cfg.bd, registrar);
+  const escrita = criarHandlesEscrita(() => copia?.dir ?? null, registrar);
+
+  const habilitada = opcoes.resolucaoHabilitada === true && cfg.repo !== null;
 
   return {
     ferramentas: {
@@ -103,12 +120,30 @@ export function montarFerramentasReais(
       repo_ler_arquivo: repo.repo_ler_arquivo,
       logs_consultar: logs,
       bd_consultar: bd.bd_consultar,
+      // Escrita SÓ quando o gate PRÉ-call passou (specs/05 §6).
+      ...(habilitada
+        ? {
+            repo_escrever_arquivo: escrita.repo_escrever_arquivo,
+            repo_criar_arquivo: escrita.repo_criar_arquivo,
+          }
+        : {}),
     },
     async sincronizar() {
       if (cfg.repo) checkoutDir = await sincronizarRepo(cfg.repo);
     },
+    async prepararResolucao() {
+      if (!habilitada || !checkoutDir) return;
+      copia = await criarCopiaDescartavel(checkoutDir);
+    },
+    copiaResolucao() {
+      return copia;
+    },
     async encerrar() {
       await bd.encerrar();
+      if (copia) {
+        await copia.destruir();
+        copia = null;
+      }
     },
   };
 }

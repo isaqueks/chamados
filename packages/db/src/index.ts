@@ -167,9 +167,11 @@ export {
 export {
   metricasDashboard,
   blocosPrecisaDeVoce,
+  prsIaAguardandoRevisao,
   type MetricasDashboard,
   type ItemAcionavel,
   type BlocosPrecisaDeVoce,
+  type ItemPrIa,
 } from './chamados/dashboard-service';
 
 // ---- M6: fila de triagem (publicador) + serviço de ExecucaoIA (E-16, E-22) -

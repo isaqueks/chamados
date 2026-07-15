@@ -13,6 +13,7 @@ import {
   UsuarioSchema,
   SistemaAlvoSchema,
   CategoriaSchema,
+  carregarTenant,
 } from '@chamados/db';
 import type { Registrar } from './ferramentas/config';
 import {
@@ -20,6 +21,8 @@ import {
   montarFerramentasReais,
   type FerramentasReais,
 } from './ferramentas';
+import type { ConfigRepo } from './ferramentas/repo';
+import { portaResolucaoAberta } from './resolucao';
 
 /**
  * Monta o `AIProviderInput` (specs/05 §3.1 passo 3, §4.1): metadados do chamado +
@@ -40,12 +43,34 @@ export interface DepsContexto {
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
 }
 
+/**
+ * Metadados de RESOLUÇÃO (specs/05 §6) que o pipeline usa após o provider: o
+ * resultado do gate PRÉ-call e a config do repo (repoUrl/credencial/branchPadrao)
+ * — que vive SÓ no worker, nunca no provider — necessária para branch/push/PR.
+ */
+export interface ResolucaoContexto {
+  /** Gate PRÉ-call: as ferramentas de escrita foram injetadas nesta triagem? */
+  habilitadaPreCall: boolean;
+  /** Guardrail do tenant (`ia_resolucao_automatica_habilitada`). */
+  tenantHabilitado: boolean;
+  /** Config do repo (worker-only): usada pelo push/PR. `null` se não há repo. */
+  repo: ConfigRepo | null;
+  /** Número legível do chamado (para nomear a branch / referenciar no PR). */
+  numeroChamado: string;
+}
+
 export interface PreparacaoContexto {
   input: AIProviderInput;
   /** Sincroniza a working copy do sistema-alvo (specs/05 §3.2). */
   sincronizar: FerramentasReais['sincronizar'];
-  /** Encerra recursos das ferramentas (conexão de BD). */
+  /** Prepara a working copy descartável da resolução (specs/05 §6). */
+  prepararResolucao: FerramentasReais['prepararResolucao'];
+  /** Cópia descartável preparada (ou null). */
+  copiaResolucao: FerramentasReais['copiaResolucao'];
+  /** Encerra recursos das ferramentas (conexão de BD + cópia descartável). */
   encerrar: FerramentasReais['encerrar'];
+  /** Metadados do gate de resolução (specs/05 §6). */
+  resolucao: ResolucaoContexto;
 }
 
 /** Converte HTML sanitizado numa projeção de texto puro (para o contexto do modelo). */
@@ -136,13 +161,26 @@ export async function montarInput(
   });
   if (!chamado) return null;
 
-  const [timeline, sistemaAlvo, configFerramentas] = await Promise.all([
+  const [timeline, sistemaAlvo, configFerramentas, tenant] = await Promise.all([
     timelinePublica(em, chamadoId),
     metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id),
     resolverConfigFerramentas(em, chamado.tenant_id, chamado.sistema_alvo_id),
+    carregarTenant(em, chamado.tenant_id),
   ]);
 
-  const reais = montarFerramentasReais(configFerramentas, registradorDe(deps));
+  // Gate PRÉ-call da resolução automática (specs/05 §6): decide se as ferramentas
+  // de escrita são sequer injetadas. O gate PÓS-call (natureza efetiva/complexidade/
+  // confiança) é reavaliado no processador com o resultado real do provider.
+  const tenantHabilitado = tenant?.ia_resolucao_automatica_habilitada === true;
+  const habilitadaPreCall = portaResolucaoAberta({
+    tenantHabilitado,
+    naturezaDeclarada: chamado.natureza,
+    repoConfigurado: configFerramentas.repo !== null,
+  });
+
+  const reais = montarFerramentasReais(configFerramentas, registradorDe(deps), {
+    resolucaoHabilitada: habilitadaPreCall,
+  });
 
   return {
     input: {
@@ -156,6 +194,14 @@ export async function montarInput(
       limites: deps.limites,
     },
     sincronizar: reais.sincronizar,
+    prepararResolucao: reais.prepararResolucao,
+    copiaResolucao: reais.copiaResolucao,
     encerrar: reais.encerrar,
+    resolucao: {
+      habilitadaPreCall,
+      tenantHabilitado,
+      repo: configFerramentas.repo,
+      numeroChamado: String(chamado.numero),
+    },
   };
 }

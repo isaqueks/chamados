@@ -9,9 +9,12 @@ import {
   formatarPerguntasCliente,
   montarNotaDiagnostico,
   montarNotaEscalonamento,
+  montarNotaResolucaoPr,
+  montarNotaFalhaResolucao,
   montarTemplateSpec,
   type AIProviderResult,
   type Prioridade,
+  type TentativaResolucao,
 } from '@chamados/shared';
 import {
   ChamadoSchema,
@@ -44,6 +47,17 @@ import {
  *    operador; caso contrário vira apenas sugestão na nota interna;
  *  - o `agente_ia` nunca marca `resolvido` (garantido pela máquina de estados).
  */
+
+/**
+ * Desfecho da tentativa de resolução automática (specs/05 §6), computado pelo
+ * PIPELINE (branch/push/PR são I/O, feitos FORA da transação) e aplicado aqui em
+ * Tx2. `nenhuma` = gate não passou / não tentou; `sucesso` = tentativa registrada
+ * (PR ou push); `falha` = a tentativa falhou (o diagnóstico já aplicado permanece).
+ */
+export type ResultadoResolucao =
+  | { tipo: 'nenhuma' }
+  | { tipo: 'sucesso'; tentativa: TentativaResolucao }
+  | { tipo: 'falha'; motivo: string };
 
 export interface DepsAplicador {
   log: (msg: string, extra?: Record<string, unknown>) => void;
@@ -89,10 +103,18 @@ function exigir(ok: boolean, etapa: string): void {
  */
 export async function aplicarResultado(
   em: EntityManager,
-  args: { tenantId: string; chamadoId: string; execucaoId: string; resultado: AIProviderResult },
+  args: {
+    tenantId: string;
+    chamadoId: string;
+    execucaoId: string;
+    resultado: AIProviderResult;
+    /** Desfecho da resolução automática (specs/05 §6); default `nenhuma`. */
+    resolucao?: ResultadoResolucao;
+  },
   deps: DepsAplicador,
 ): Promise<void> {
   const { tenantId, chamadoId, execucaoId, resultado } = args;
+  const resolucao = args.resolucao ?? { tipo: 'nenhuma' };
 
   const chamado = await em.findOne(ChamadoSchema, {
     where: { id: chamadoId, deleted_at: IsNull() },
@@ -103,9 +125,9 @@ export async function aplicarResultado(
   if (!ator) throw new Error('aplicacao_falhou:agente_ia_ausente');
 
   if (!resultado.compreendido) {
-    await aplicarNaoEntendeu(em, { ator, chamado, execucaoId, resultado }, deps);
+    await aplicarNaoEntendeu(em, { ator, chamado, execucaoId, resultado, resolucao }, deps);
   } else {
-    await aplicarEntendeu(em, { ator, chamado, execucaoId, resultado }, deps);
+    await aplicarEntendeu(em, { ator, chamado, execucaoId, resultado, resolucao }, deps);
   }
 }
 
@@ -114,6 +136,7 @@ interface CtxAplicar {
   chamado: Chamado;
   execucaoId: string;
   resultado: AIProviderResult;
+  resolucao: ResultadoResolucao;
 }
 
 /** Fluxo "não entendeu" (specs/05 §5.3): pergunta pública + aguardando_cliente. */
@@ -275,6 +298,12 @@ async function aplicarEntendeu(
     });
   }
 
+  // 4b) RESOLUÇÃO automática (specs/05 §6): registra o desfecho da tentativa
+  //     (branch/push/PR já feita FORA da transação pelo pipeline). Nota INTERNA +
+  //     evento `ia_abriu_pr` (sucesso) ou nota de falha + `ia_falhou` (falha). O
+  //     diagnóstico acima permanece intacto de qualquer forma (specs/05 §6/§8).
+  await aplicarResolucao(em, ctx, deps);
+
   // 5) Transição para em_atendimento (só a partir de em_triagem; reprocesso a
   //    partir de em_atendimento não precisa transicionar).
   if (chamado.status === StatusChamado.em_triagem) {
@@ -289,6 +318,79 @@ async function aplicarEntendeu(
     exigir(t.ok, 'transicao_em_atendimento');
   }
   deps.log('ia diagnosticou', { chamadoId: chamado.id, complexidade, natureza: naturezaEfetiva });
+}
+
+/**
+ * Registra o desfecho da RESOLUÇÃO automática (specs/05 §6) na Tx2. Roda só no
+ * fluxo "entendeu". O I/O (branch/push/PR) já ocorreu no pipeline; aqui só se
+ * persiste a nota interna + o evento correspondente. Toda saída é INTERNA — o
+ * cliente nunca vê (visibilidade interna + `ia_abriu_pr`/`ia_falhou` internos).
+ */
+async function aplicarResolucao(
+  em: EntityManager,
+  ctx: CtxAplicar,
+  deps: DepsAplicador,
+): Promise<void> {
+  const { ator, chamado, execucaoId, resolucao } = ctx;
+  const hooks: HooksChamado = { despachante: deps.despachante };
+  if (resolucao.tipo === 'nenhuma') return;
+
+  if (resolucao.tipo === 'sucesso') {
+    const t = resolucao.tentativa;
+    const nota = await criarMensagem(
+      em,
+      ator,
+      {
+        chamado_id: chamado.id,
+        visibilidade: VisibilidadeMensagem.interna,
+        corpo: montarNotaResolucaoPr({
+          branch: t.branch ?? '',
+          prUrl: t.prUrl ?? null,
+          resumo: t.resumo,
+          arquivos: t.arquivosAlterados,
+        }),
+        execucao_ia_id: execucaoId,
+      },
+      hooks,
+    );
+    exigir(nota.ok, 'nota_resolucao_pr');
+    await gravarEvento(em, {
+      tipo: 'ia_abriu_pr',
+      chamado_id: chamado.id,
+      ator_id: ator.id,
+      execucao_ia_id: execucaoId,
+      dados: {
+        branch: t.branch ?? null,
+        prUrl: t.prUrl ?? null,
+        situacao: t.situacao ?? null,
+        arquivos: t.arquivosAlterados,
+      },
+    });
+    deps.log('ia abriu PR', { chamadoId: chamado.id, branch: t.branch, situacao: t.situacao });
+    return;
+  }
+
+  // Falha da tentativa: nota interna + ia_falhou, SEM derrubar o diagnóstico.
+  const nota = await criarMensagem(
+    em,
+    ator,
+    {
+      chamado_id: chamado.id,
+      visibilidade: VisibilidadeMensagem.interna,
+      corpo: montarNotaFalhaResolucao(resolucao.motivo),
+      execucao_ia_id: execucaoId,
+    },
+    hooks,
+  );
+  exigir(nota.ok, 'nota_falha_resolucao');
+  await gravarEvento(em, {
+    tipo: 'ia_falhou',
+    chamado_id: chamado.id,
+    ator_id: ator.id,
+    execucao_ia_id: execucaoId,
+    dados: { erro: resolucao.motivo, etapa: 'resolucao' },
+  });
+  deps.log('ia falhou na resolução', { chamadoId: chamado.id, motivo: resolucao.motivo });
 }
 
 /**

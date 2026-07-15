@@ -13,6 +13,14 @@ function num(nome: string, padrao: number): number {
   return Number.isFinite(v) && v > 0 ? v : padrao;
 }
 
+/** Número dentro de [min, max] (aceita 0 e frações — ex.: limiar de confiança). */
+function numMin(nome: string, padrao: number, min: number, max: number): number {
+  const raw = process.env[nome];
+  if (raw === undefined || raw.trim() === '') return padrao;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= min && v <= max ? v : padrao;
+}
+
 export const ferramentasConfig = {
   /** Base do cache PERSISTENTE de working copies (specs/05 §3.2). */
   repoCacheDir: process.env.IA_REPO_CACHE_DIR ?? join(tmpdir(), 'chamados-repos'),
@@ -39,6 +47,20 @@ export const ferramentasConfig = {
     maxLinhas: num('IA_BD_MAX_LINHAS', 100),
     /** Timeout de estabelecimento de conexão (ms). */
     conexaoTimeoutMs: num('IA_BD_CONEXAO_TIMEOUT_MS', 5000),
+  },
+  /**
+   * RESOLUÇÃO automática (specs/05 §6): limites das ferramentas de ESCRITA na
+   * working copy descartável + limiar de confiança do gate. `IA_RESOLUCAO_*`.
+   */
+  resolucao: {
+    /** Confiança mínima do gate (specs/05 §5.1: default 0.7). */
+    confiancaMin: numMin('IA_RESOLUCAO_CONFIANCA_MIN', 0.7, 0, 1),
+    /** Teto de arquivos que a tentativa pode criar/alterar (correção pontual). */
+    maxArquivos: num('IA_RESOLUCAO_MAX_ARQUIVOS', 10),
+    /** Teto de tamanho de cada arquivo escrito (bytes). */
+    maxArquivoBytes: num('IA_RESOLUCAO_MAX_ARQUIVO_BYTES', 256 * 1024),
+    /** Teto de bytes totais escritos na tentativa. */
+    maxBytesTotal: num('IA_RESOLUCAO_MAX_BYTES_TOTAL', 1024 * 1024),
   },
 };
 

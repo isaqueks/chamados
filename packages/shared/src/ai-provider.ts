@@ -74,8 +74,26 @@ export interface LinhaLog {
 export type Linha = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
-// Contrato do provider (specs/01 §4.1)
+// Ferramentas de ESCRITA (specs/05 §6) — presentes SÓ na tentativa de resolução
+// automática, quando o GATE do pipeline autorizou. Operam numa working copy
+// DESCARTÁVEL (clone do cache → diretório temp), nunca no cache nem em produção.
+// O provider apenas ESCREVE arquivos; branch/commit/push/PR são do WORKER (nunca
+// do provider — specs/05 §6, specs/09 §4). É por isso que estes handles NÃO
+// abrem branch nem PR: essa fronteira fica fora do provider (menor privilégio).
 // ---------------------------------------------------------------------------
+
+/**
+ * Ferramentas de escrita injetadas pelo worker SÓ quando o gate de resolução
+ * automática passou (specs/05 §6). Ausentes no fluxo normal de triagem. Ambas
+ * bloqueiam path traversal e o diretório `.git`, e respeitam limites de
+ * tamanho/quantidade impostos pelo worker.
+ */
+export interface FerramentasEscrita {
+  /** Sobrescreve (ou cria) um arquivo na working copy descartável. */
+  repo_escrever_arquivo(caminho: string, conteudo: string): Promise<void>;
+  /** Cria um arquivo novo; falha se o caminho já existir. */
+  repo_criar_arquivo(caminho: string, conteudo: string): Promise<void>;
+}
 
 export interface AIProviderInput {
   /** Contexto do chamado — SEM credenciais do sistema-alvo. */
@@ -90,7 +108,10 @@ export interface AIProviderInput {
 
   /**
    * Handles de ferramentas JÁ escopadas, injetados pelo worker (nunca
-   * conexões/credenciais cruas). Todas read-only sobre o sistema-alvo.
+   * conexões/credenciais cruas). As quatro primeiras são read-only sobre o
+   * sistema-alvo. As de ESCRITA (`repo_escrever_arquivo`/`repo_criar_arquivo`)
+   * SÓ existem quando o gate de resolução automática passou (specs/05 §6) —
+   * caso contrário são `undefined` e o provider não tem como tentar resolver.
    */
   ferramentas: {
     repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
@@ -98,7 +119,7 @@ export interface AIProviderInput {
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
     /** SELECT-only, com timeout imposto pelo worker. */
     bd_consultar(sql: string): Promise<Linha[]>;
-  };
+  } & Partial<FerramentasEscrita>;
 
   limites: {
     timeoutMs: number;
@@ -115,6 +136,34 @@ export interface TelemetriaIA {
   tokensSaida: number;
 }
 
+/** Situação do registro da tentativa de resolução (preenchida pelo WORKER). */
+export type SituacaoResolucao = 'pr_aberto' | 'push_sem_pr' | 'falhou';
+
+/**
+ * Tentativa de resolução automática (specs/05 §6).
+ *
+ * DIVERGÊNCIA de specs/01 §4.1 (reportada — a spec ganha, mas ficou desalinhada
+ * com o desenho do M8): a spec define `{ branch, prUrl, resumo }`, mas o PROVIDER
+ * não abre branch nem PR (isso é do worker — specs/05 §6, specs/09 §4); ele só
+ * IMPLEMENTA a correção via ferramentas de escrita. Logo o provider preenche
+ * `resumo` + `arquivosAlterados`, e o WORKER, ao registrar a tentativa
+ * (branch/push/PR), acrescenta `branch`/`prUrl`/`situacao`. Estes últimos são
+ * opcionais: ausentes na saída crua do provider, presentes em
+ * `ExecucaoIA.resultado` e no evento `ia_abriu_pr` depois do registro.
+ */
+export interface TentativaResolucao {
+  /** Resumo NEUTRO e sanitizado da mudança proposta (specs/05 §6/§9). */
+  resumo: string;
+  /** Caminhos (relativos ao repo) que o provider alterou na working copy. */
+  arquivosAlterados: string[];
+  /** Branch criada pelo worker (`ia/chamado-<numero>-<slug>`). */
+  branch?: string;
+  /** URL do PR quando o host é GitHub; `null` em outros hosts (PR manual). */
+  prUrl?: string | null;
+  /** Como a tentativa terminou, do ponto de vista do worker. */
+  situacao?: SituacaoResolucao;
+}
+
 export interface AIProviderResult {
   compreendido: boolean;
   /** 0..1 */
@@ -126,7 +175,9 @@ export interface AIProviderResult {
   diagnostico: string | null;
   /** Preenchido quando `naturezaAjustada = 'alteracao'` (specs/05 §7). */
   spec: string | null;
-  tentativaResolucao: { branch: string; prUrl: string; resumo: string } | null;
+  /** Tentativa de resolução (specs/05 §6): preenchida SÓ quando o provider usou
+   *  as ferramentas de escrita. `null` no fluxo normal de diagnóstico. */
+  tentativaResolucao: TentativaResolucao | null;
   telemetria: TelemetriaIA;
 }
 

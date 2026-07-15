@@ -5,6 +5,13 @@ import {
   montarNotaDiagnostico,
   montarNotaEscalonamento,
   montarTemplateSpec,
+  slugChamado,
+  nomeBranchResolucao,
+  montarMensagemCommit,
+  montarTituloPr,
+  montarCorpoPr,
+  montarNotaResolucaoPr,
+  montarNotaFalhaResolucao,
 } from './triagem-notas';
 
 describe('formatarPerguntasCliente', () => {
@@ -103,5 +110,76 @@ describe('montarTemplateSpec', () => {
     });
     expect(spec).toContain('<a detalhar>');
     expect(spec).toContain('## Critérios de aceite');
+  });
+});
+
+describe('resolução automática — branch/commit/PR', () => {
+  it('slugChamado remove acentos, espaços e capa o tamanho', () => {
+    expect(slugChamado('Erro 500 ao Salvar Pedido (Ação!)')).toBe('erro-500-ao-salvar-pedido-acao');
+    expect(slugChamado('')).toBe('chamado');
+    expect(slugChamado('!!!')).toBe('chamado');
+  });
+
+  it('nomeBranchResolucao segue ia/chamado-<numero>-<slug>', () => {
+    expect(nomeBranchResolucao(42, 'Erro ao salvar')).toBe('ia/chamado-42-erro-ao-salvar');
+  });
+
+  it('mensagem de commit referencia chamado e ExecucaoIA', () => {
+    const msg = montarMensagemCommit({
+      numero: 42,
+      titulo: 'Erro ao salvar',
+      execucaoId: 'exec-1',
+      resumo: 'corrige o handler',
+    });
+    expect(msg).toContain('chamado #42');
+    expect(msg).toContain('ExecucaoIA: exec-1');
+    expect(msg).toContain('nunca faz merge');
+  });
+
+  it('corpo do PR traz diagnóstico, resumo, arquivos e o guardrail', () => {
+    const corpo = montarCorpoPr({
+      numero: 42,
+      titulo: 'Erro ao salvar',
+      diagnostico: 'NPE no handler',
+      resumo: 'valida entrada',
+      arquivos: ['app.js'],
+      execucaoId: 'exec-1',
+      chamadoUrl: 'https://acme.app/app/chamados/x',
+    });
+    expect(corpo).toContain('## Diagnóstico');
+    expect(corpo).toContain('NPE no handler');
+    expect(corpo).toContain('## Resumo da mudança');
+    expect(corpo).toContain('- app.js');
+    expect(corpo).toContain('https://acme.app/app/chamados/x');
+    expect(corpo).toContain('Requer revisão humana');
+    expect(
+      montarTituloPr({ numero: 42, titulo: 'Erro', resumo: '', arquivos: [], execucaoId: 'e' }),
+    ).toBe('Chamados #42: Erro');
+  });
+
+  it('nota de PR mostra link quando há prUrl e instrução manual quando não há', () => {
+    const comPr = montarNotaResolucaoPr({
+      branch: 'ia/chamado-1-x',
+      prUrl: 'https://github.com/a/b/pull/3',
+      resumo: 'r',
+      arquivos: ['a.js'],
+    });
+    expect(comPr).toContain('Pull Request: https://github.com/a/b/pull/3');
+    expect(comPr).toContain('ia/chamado-1-x');
+
+    const semPr = montarNotaResolucaoPr({
+      branch: 'ia/chamado-1-x',
+      prUrl: null,
+      resumo: 'r',
+      arquivos: ['a.js'],
+    });
+    expect(semPr).toContain('manualmente');
+    expect(semPr).toContain('ia/chamado-1-x');
+  });
+
+  it('nota de falha da resolução não expõe segredos e mantém o diagnóstico', () => {
+    const nota = montarNotaFalhaResolucao('push_falhou');
+    expect(nota).toContain('push_falhou');
+    expect(nota).toContain('diagnóstico acima permanece');
   });
 });

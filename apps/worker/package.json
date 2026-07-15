@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "smoke:triagem": "tsx src/scripts/smoke-triagem.ts",
     "smoke:pipeline": "tsx src/scripts/smoke-pipeline.ts",
+    "smoke:resolucao": "tsx src/scripts/smoke-resolucao.ts",
     "smoke:notificacoes": "tsx src/scripts/smoke-notificacoes.ts"
   },
   "dependencies": {

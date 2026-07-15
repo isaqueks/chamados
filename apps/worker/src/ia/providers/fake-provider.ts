@@ -22,6 +22,10 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  *   [[complexidade:facil|medio|dificil]]
  *   [[natureza:problema|alteracao]] → naturezaAjustada (+ spec quando alteracao)
  *   [[prioridade:baixa|media|alta|urgente]]
+ *   [[resolver]]                    → tentativaResolucao determinística: USA as
+ *                                     ferramentas de escrita (se presentes — só
+ *                                     quando o gate do pipeline abriu) p/ gravar
+ *                                     um arquivo fixo na working copy descartável.
  *   [[falhar]]                      → lança Error genérico (→ status falhou)
  *   [[timeout]]                     → lança ErroProviderTimeout (→ erro='timeout')
  *   [[budget]]                      → lança ErroProviderBudget (→ erro='budget_excedido')
@@ -84,6 +88,28 @@ export class FakeProvider implements AIProvider {
 
     const ehAlteracao = naturezaAjustada === Natureza.alteracao;
     const compl = complexidade ?? Complexidade.facil;
+
+    // [[resolver]]: tentativa de resolução determinística. Usa as ferramentas de
+    // ESCRITA (presentes SÓ quando o gate do pipeline abriu — specs/05 §6) para
+    // gravar um arquivo fixo na working copy DESCARTÁVEL. Sem as ferramentas
+    // (gate fechado), NÃO tenta — devolve tentativaResolucao=null.
+    let tentativaResolucao = null as AIProviderResult['tentativaResolucao'];
+    if (texto.includes('[[resolver]]') && input.ferramentas.repo_escrever_arquivo) {
+      try {
+        await input.ferramentas.repo_escrever_arquivo(
+          'CORRECAO-IA.md',
+          '# Correção automática (fake)\n\n' +
+            'Ajuste determinístico aplicado pelo FakeProvider para o smoke de resolução.\n',
+        );
+        tentativaResolucao = {
+          resumo: 'Correção determinística: adiciona CORRECAO-IA.md com a nota da correção.',
+          arquivosAlterados: ['CORRECAO-IA.md'],
+        };
+      } catch {
+        tentativaResolucao = null; // ferramenta indisponível/erro → sem tentativa
+      }
+    }
+
     return {
       compreendido: true,
       confianca: 0.9,
@@ -110,7 +136,7 @@ export class FakeProvider implements AIProvider {
             criteriosAceite: ['[fake] a alteração pedida passa a valer'],
           })
         : null,
-      tentativaResolucao: null,
+      tentativaResolucao,
       telemetria,
     };
   }
