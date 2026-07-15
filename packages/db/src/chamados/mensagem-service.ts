@@ -6,13 +6,14 @@ import {
   StatusChamado,
   VisibilidadeMensagem,
   Papel,
+  GatilhoIA,
   serializarMensagemParaCliente,
   type MensagemInterna,
   type MensagemCliente,
 } from '@chamados/shared';
 import { MensagemSchema, type Mensagem } from '../entities/mensagem';
 import { ChamadoSchema } from '../entities/chamado';
-import { auditorDe, type HooksChamado } from './auditoria';
+import { auditorDe, despacharDe, type HooksChamado } from './auditoria';
 import {
   validarDocRico,
   materializarDoc,
@@ -177,7 +178,10 @@ export async function criarMensagem(
   });
 
   // Resposta pública do cliente em aguardando_cliente re-enfileira a triagem
-  // (specs/04 §1.3/§4.2): o SISTEMA transiciona → em_triagem (gera status_alterado).
+  // (specs/04 §1.3/§4.2, specs/05 §2): o SISTEMA transiciona → em_triagem (gera
+  // status_alterado) e o despachante emite o gatilho `resposta_cliente` (a
+  // triagem analisa a ÚLTIMA mensagem, `id`). O enfileiramento real é pós-commit
+  // e best-effort (no-op sem despachante injetado).
   if (
     entrada.visibilidade === VisibilidadeMensagem.publica &&
     ator.papel === Papel.cliente &&
@@ -191,6 +195,13 @@ export async function criarMensagem(
       { motivo: 'resposta_do_cliente' },
       hooks,
     );
+    despacharDe(hooks).publicar({
+      tipo: 'triagem_solicitada',
+      tenantId: chamado.tenant_id,
+      chamadoId: chamado.id,
+      ultimaMensagemId: id,
+      gatilho: GatilhoIA.resposta_cliente,
+    });
   }
 
   return { ok: true, id };

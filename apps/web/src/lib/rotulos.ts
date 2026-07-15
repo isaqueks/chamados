@@ -6,6 +6,8 @@ import {
   Prioridade,
   Complexidade,
   TipoEvento,
+  StatusExecucaoIA,
+  GatilhoIA,
 } from '@chamados/shared';
 
 /** Rótulos amigáveis (pt-BR) dos papéis, para exibição na UI. */
@@ -91,6 +93,34 @@ export const ROTULO_TIPO_EVENTO: Record<TipoEvento, string> = {
   [TipoEvento.ia_abriu_pr]: 'IA abriu um PR',
   [TipoEvento.ia_gerou_spec]: 'IA gerou uma SPEC',
   [TipoEvento.ia_falhou]: 'execução da IA falhou',
+};
+
+/** Rótulos do status de uma ExecucaoIA (painel Assistente IA — specs/08 §4.3). */
+export const ROTULO_STATUS_EXECUCAO_IA: Record<StatusExecucaoIA, string> = {
+  [StatusExecucaoIA.na_fila]: 'Na fila',
+  [StatusExecucaoIA.executando]: 'Executando',
+  [StatusExecucaoIA.concluido]: 'Concluída',
+  [StatusExecucaoIA.falhou]: 'Falhou',
+  [StatusExecucaoIA.cancelado]: 'Cancelada',
+};
+
+/** Variante de Badge por status da execução (visual coerente). */
+export const VARIANTE_EXECUCAO_IA: Record<
+  StatusExecucaoIA,
+  'default' | 'secondary' | 'outline' | 'muted' | 'destructive'
+> = {
+  [StatusExecucaoIA.na_fila]: 'outline',
+  [StatusExecucaoIA.executando]: 'secondary',
+  [StatusExecucaoIA.concluido]: 'default',
+  [StatusExecucaoIA.falhou]: 'destructive',
+  [StatusExecucaoIA.cancelado]: 'muted',
+};
+
+/** Rótulos do gatilho de uma triagem (specs/05 §2). */
+export const ROTULO_GATILHO_IA: Record<string, string> = {
+  [GatilhoIA.chamado_criado]: 'Abertura do chamado',
+  [GatilhoIA.resposta_cliente]: 'Resposta do cliente',
+  [GatilhoIA.reprocessamento_manual]: 'Reprocessamento manual',
 };
 
 /** Iniciais para o avatar a partir do nome. */

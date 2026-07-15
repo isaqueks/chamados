@@ -1,6 +1,7 @@
 import type { EntityManager } from 'typeorm';
 import type { TipoEvento } from '@chamados/shared';
 import { EventoChamadoSchema } from '../entities/evento-chamado';
+import { despachanteNoop, type Despachante } from './eventos-dominio';
 
 /**
  * Auditoria de `EventoChamado` (specs/04 §9, specs/02). TODA mutação relevante do
@@ -58,10 +59,21 @@ export const auditarNoop: Auditar = () => {
 
 /** Hooks opcionais passados às mutações de chamado. */
 export interface HooksChamado {
+  /** Auditor síncrono (grava `EventoChamado` na transação). Default: `gravarEvento`. */
   auditar?: Auditar;
+  /**
+   * Despachante de eventos de DOMÍNIO (triagem de IA no M6, notificações no M9).
+   * Default: no-op — só há efeito assíncrono quando um despachante é injetado.
+   */
+  despachante?: Despachante;
 }
 
 /** Resolve o auditor efetivo: o injetado ou o gravador real (`gravarEvento`). */
 export function auditorDe(hooks?: HooksChamado): Auditar {
   return hooks?.auditar ?? gravarEvento;
+}
+
+/** Resolve o despachante efetivo: o injetado nos hooks ou o no-op. */
+export function despacharDe(hooks?: HooksChamado): Despachante {
+  return hooks?.despachante ?? despachanteNoop;
 }

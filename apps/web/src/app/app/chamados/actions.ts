@@ -12,6 +12,8 @@ import {
   alterarNatureza,
   definirComplexidade,
   criarMensagem,
+  obterChamado,
+  enfileirarTriagem,
   type MotivoCriar,
   type MotivoMensagem,
   type MotivoTransicionar,
@@ -26,6 +28,7 @@ import {
   StatusChamado,
   VisibilidadeMensagem,
   Papel,
+  GatilhoIA,
 } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 import { ROTULO_STATUS_CHAMADO } from '@/lib/rotulos';
@@ -236,6 +239,49 @@ export async function acaoDefinirComplexidade(
   if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
   revalidarChamado(chamadoId);
   return { ok: true, msg: valor ? 'Complexidade atualizada.' : 'Complexidade removida.' };
+}
+
+/**
+ * Reexecuta a triagem manualmente (specs/05 §2 — "reprocessamento manual"). Só
+ * operador/admin. Enfileira o job (`manual: true` → jobId único, sem debounce) de
+ * forma BEST-EFFORT: uma falha de fila NÃO quebra a ação (informa o operador).
+ */
+export async function acaoReexecutarTriagem(chamadoId: string): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  if (usuario.papel !== Papel.operador && usuario.papel !== Papel.admin) {
+    return { ok: false, msg: 'Sem permissão para reexecutar a triagem.' };
+  }
+
+  const ds = await obterAppDataSource();
+  const info = await runInTenantContext(ds, tenant.id, async (em) => {
+    const chamado = await obterChamado(em, usuario, chamadoId);
+    if (!chamado || !('operador_id' in chamado)) return null; // inexistente/sem acesso
+    const linhas: Array<{ id: string }> = await em.query(
+      `SELECT id FROM mensagem
+        WHERE chamado_id = $1 AND visibilidade = 'publica' AND deleted_at IS NULL
+        ORDER BY created_at DESC LIMIT 1`,
+      [chamadoId],
+    );
+    return { ultimaMensagemId: linhas[0]?.id ?? null };
+  });
+  if (!info) return { ok: false, msg: 'Chamado não encontrado.' };
+
+  try {
+    await enfileirarTriagem(
+      {
+        tenantId: tenant.id,
+        chamadoId,
+        ultimaMensagemId: info.ultimaMensagemId,
+        gatilho: GatilhoIA.reprocessamento_manual,
+      },
+      { manual: true },
+    );
+  } catch {
+    return { ok: false, msg: 'Não foi possível enfileirar a triagem agora. Tente novamente.' };
+  }
+
+  revalidarChamado(chamadoId);
+  return { ok: true, msg: 'Triagem reenfileirada. A análise aparecerá aqui em instantes.' };
 }
 
 const MOTIVOS_MENSAGEM: Record<MotivoMensagem, string> = {

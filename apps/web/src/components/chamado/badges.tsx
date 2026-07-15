@@ -1,11 +1,18 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { StatusChamado, Natureza, Prioridade, Complexidade } from '@chamados/shared';
+import {
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  StatusExecucaoIA,
+} from '@chamados/shared';
 import { cn } from '@/lib/utils';
 import {
   ROTULO_STATUS_CHAMADO,
   ROTULO_NATUREZA,
   ROTULO_PRIORIDADE,
   ROTULO_COMPLEXIDADE,
+  ROTULO_STATUS_EXECUCAO_IA,
 } from '@/lib/rotulos';
 
 /**
@@ -158,6 +165,55 @@ export function NotaInternaBadge({ className }: { className?: string }) {
       )}
     >
       Nota interna
+    </span>
+  );
+}
+
+// --- Execução de IA (interna — só operador/admin, specs/08 §4.3) ------------
+
+const execucaoIaBadge = cva(baseBadge, {
+  variants: {
+    tom: {
+      neutral: 'border-transparent bg-muted text-muted-foreground',
+      violet:
+        'border-transparent bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300',
+      emerald:
+        'border-transparent bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
+      rose: 'border-transparent bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',
+    },
+  },
+  defaultVariants: { tom: 'neutral' },
+});
+
+type TomExec = NonNullable<VariantProps<typeof execucaoIaBadge>['tom']>;
+
+const TOM_EXECUCAO: Record<StatusExecucaoIA, TomExec> = {
+  [StatusExecucaoIA.na_fila]: 'neutral',
+  [StatusExecucaoIA.executando]: 'violet',
+  [StatusExecucaoIA.concluido]: 'emerald',
+  [StatusExecucaoIA.falhou]: 'rose',
+  [StatusExecucaoIA.cancelado]: 'neutral',
+};
+
+const PONTO_EXECUCAO: Record<TomExec, string> = {
+  neutral: 'bg-muted-foreground/50',
+  violet: 'bg-violet-500',
+  emerald: 'bg-emerald-500',
+  rose: 'bg-rose-500',
+};
+
+export function ExecucaoIABadge({
+  status,
+  className,
+}: {
+  status: StatusExecucaoIA;
+  className?: string;
+}) {
+  const tom = TOM_EXECUCAO[status];
+  return (
+    <span className={cn(execucaoIaBadge({ tom }), className)}>
+      <span className={cn('size-1.5 rounded-full', PONTO_EXECUCAO[tom])} aria-hidden />
+      {ROTULO_STATUS_EXECUCAO_IA[status]}
     </span>
   );
 }

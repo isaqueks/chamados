@@ -10,6 +10,7 @@ import {
   listarEventos,
   listarAnexosDaMensagem,
   listarOperadoresDoTenant,
+  listarExecucoesDoChamado,
   buscarSistemaAlvo,
   buscarCategoria,
   UsuarioSchema,
@@ -80,6 +81,7 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     for (const u of usuarios) nomes[u.id] = { nome: u.nome, papel: u.papel };
 
     const operadores = await listarOperadoresDoTenant(em);
+    const execucoesIa = await listarExecucoesDoChamado(em, usuario, id);
     const sistema = chamado.sistema_alvo_id
       ? await buscarSistemaAlvo(em, chamado.sistema_alvo_id)
       : null;
@@ -92,6 +94,7 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
       anexosPorMensagem,
       nomes,
       operadores,
+      execucoesIa,
       sistemaNome: sistema?.nome ?? null,
       categoriaNome: categoria?.nome ?? null,
     };
@@ -105,6 +108,7 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     anexosPorMensagem,
     nomes,
     operadores,
+    execucoesIa,
     sistemaNome,
     categoriaNome,
   } = dados;
@@ -250,7 +254,12 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
             <LinhaMeta rotulo="Reaberturas" valor={String(chamado.reaberto_count)} />
           </div>
 
-          <AssistenteIA nomeAssistente={nomeAssistente} />
+          <AssistenteIA
+            nomeAssistente={nomeAssistente}
+            chamadoId={chamado.id}
+            execucoes={execucoesIa}
+            podeReexecutar={podeInterna}
+          />
         </aside>
       </div>
     </div>

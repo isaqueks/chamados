@@ -14,6 +14,7 @@ export { ChamadoSchema, type Chamado, type DocRichText } from './entities/chamad
 export { MensagemSchema, type Mensagem } from './entities/mensagem';
 export { AnexoSchema, type Anexo } from './entities/anexo';
 export { EventoChamadoSchema, type EventoChamado } from './entities/evento-chamado';
+export { ExecucaoIASchema, type ExecucaoIA } from './entities/execucao-ia';
 export * from './auth';
 
 // ---- M2: cofre de segredos, sistemas-alvo, categorias, config do tenant ----
@@ -96,11 +97,13 @@ export {
 export {
   auditarNoop,
   auditorDe,
+  despacharDe,
   gravarEvento,
   type Auditar,
   type HooksChamado,
   type EventoChamadoPendente,
 } from './chamados/auditoria';
+export { despachanteNoop, type Despachante, type EventoDominio } from './chamados/eventos-dominio';
 
 // ---- M4: rich text, mensagens, anexos, eventos (E-10, E-11, E-12, E-15) ----
 export {
@@ -168,3 +171,28 @@ export {
   type ItemAcionavel,
   type BlocosPrecisaDeVoce,
 } from './chamados/dashboard-service';
+
+// ---- M6: fila de triagem (publicador) + serviço de ExecucaoIA (E-16, E-22) -
+export {
+  NOME_FILA_TRIAGEM,
+  NOME_JOB_TRIAGEM,
+  filaTriagem,
+  enfileirarTriagem,
+  jobIdTriagem,
+  prefixoJobChamado,
+  opcoesJobTriagem,
+  debounceSegundos,
+  DespachanteFila,
+  type JobTriagem,
+  type OpcoesEnfileirar,
+} from './fila';
+export {
+  criarExecucao,
+  marcarExecutando,
+  concluirExecucao,
+  falharExecucao,
+  existeConcluidaParaMensagem,
+  listarExecucoesDoChamado,
+  type EntradaCriarExecucao,
+  type ExecucaoIAView,
+} from './chamados/execucao-ia-service';

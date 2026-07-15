@@ -128,6 +128,40 @@ export const StatusConvite = {
 export type StatusConvite = (typeof StatusConvite)[keyof typeof StatusConvite];
 
 // ---------------------------------------------------------------------------
+// Agente de IA (specs/05, specs/02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Status de uma `ExecucaoIA` (specs/05 §8). Enum canônico ÚNICO de 5 valores.
+ *
+ * IMPORTANTE (divergência de spec conciliada): specs/05 §8 é explícita — os
+ * motivos de encerramento `timeout` e `budget_excedido` NÃO são valores de
+ * status; vão no campo `erro` de `ExecucaoIA`, com `status = falhou`. A tabela
+ * de specs/02 §status_execucao_ia lista `timeout`/`budget_excedido` como estados
+ * próprios; aqui seguimos specs/05 §8 (e a instrução do marco M6). Ver o relato
+ * de divergências no CHANGELOG/entrega do M6.
+ */
+export const StatusExecucaoIA = {
+  na_fila: 'na_fila',
+  executando: 'executando',
+  concluido: 'concluido',
+  falhou: 'falhou',
+  cancelado: 'cancelado',
+} as const;
+export type StatusExecucaoIA = (typeof StatusExecucaoIA)[keyof typeof StatusExecucaoIA];
+
+/**
+ * Gatilho que originou uma triagem de IA (specs/05 §2). Persistido em
+ * `ExecucaoIA.gatilho` (coluna `text`) e carregado no job da fila `triagem-ia`.
+ */
+export const GatilhoIA = {
+  chamado_criado: 'chamado_criado',
+  resposta_cliente: 'resposta_cliente',
+  reprocessamento_manual: 'reprocessamento_manual',
+} as const;
+export type GatilhoIA = (typeof GatilhoIA)[keyof typeof GatilhoIA];
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

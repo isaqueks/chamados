@@ -10,6 +10,7 @@ import {
   Prioridade,
   Complexidade,
   Papel,
+  GatilhoIA,
   serializarChamadoParaCliente,
   type Ator,
   type PapelTransicao,
@@ -31,7 +32,7 @@ import {
   type DocRico,
   type MotivoRichText,
 } from './rich-text';
-import { auditorDe, type HooksChamado } from './auditoria';
+import { auditorDe, despacharDe, type HooksChamado } from './auditoria';
 
 /**
  * Serviços de Chamado (specs/04). Rodam SEMPRE dentro de `runInTenantContext`
@@ -289,6 +290,20 @@ export async function criarChamado(
     chamado_id: id,
     ator_id: ator.id,
     dados: { numero, natureza: entrada.natureza, prioridade },
+  });
+
+  // Gatilho de triagem (specs/05 §2): "Chamado criado → enfileira triagem". O
+  // despachante BUFFERIZA aqui (dentro da transação); o enfileiramento real
+  // acontece pós-commit no site de chamada (best-effort). Sem despachante
+  // injetado (seed/smokes), é no-op. NOTA M6: o status permanece `novo` — a
+  // transição novo→em_triagem fica para o pipeline (M7), para não quebrar os
+  // fluxos/tests que já transicionam explicitamente (ver entrega M6).
+  despacharDe(hooks).publicar({
+    tipo: 'triagem_solicitada',
+    tenantId: ator.tenant_id,
+    chamadoId: id,
+    ultimaMensagemId: null,
+    gatilho: GatilhoIA.chamado_criado,
   });
 
   return { ok: true, id, numero };

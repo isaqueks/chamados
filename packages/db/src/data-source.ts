@@ -13,11 +13,13 @@ import { ChamadoSchema } from './entities/chamado';
 import { MensagemSchema } from './entities/mensagem';
 import { AnexoSchema } from './entities/anexo';
 import { EventoChamadoSchema } from './entities/evento-chamado';
+import { ExecucaoIASchema } from './entities/execucao-ia';
 import { Init1720000000000 } from './migrations/0000-init';
 import { Auth1720000001000 } from './migrations/0001-auth';
 import { M21720000002000 } from './migrations/0002-m2';
 import { M31720000003000 } from './migrations/0003-m3';
 import { M41720000004000 } from './migrations/0004-m4';
+import { M61720000005000 } from './migrations/0005-m6';
 
 const entidades = [
   TenantSchema,
@@ -32,6 +34,7 @@ const entidades = [
   MensagemSchema,
   AnexoSchema,
   EventoChamadoSchema,
+  ExecucaoIASchema,
 ];
 const migrations = [
   Init1720000000000,
@@ -39,6 +42,7 @@ const migrations = [
   M21720000002000,
   M31720000003000,
   M41720000004000,
+  M61720000005000,
 ];
 
 /**

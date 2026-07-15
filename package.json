@@ -28,6 +28,7 @@
     "smoke:sistemas": "npm run smoke:sistemas -w @chamados/db",
     "smoke:chamados": "npm run smoke:chamados -w @chamados/db",
     "smoke:mensagens": "npm run smoke:mensagens -w @chamados/db",
+    "smoke:triagem": "npm run smoke:triagem -w @chamados/worker",
     "seed:dev": "npm run seed:dev -w @chamados/db",
     "test": "vitest run",
     "test:watch": "vitest"

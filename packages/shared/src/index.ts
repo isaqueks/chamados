@@ -1,4 +1,5 @@
 export * from './enums';
+export * from './ai-provider';
 export * from './autorizacao';
 export * from './maquina-estados';
 export * from './serializers';

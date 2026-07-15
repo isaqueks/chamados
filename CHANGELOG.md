@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M6: fila de triagem, worker de IA e abstração AIProvider
+
+- **Contrato `AIProvider`** em `packages/shared` (types puros, nomes exatos da spec 01 §4.1) com ferramentas como handles de função tipados e limites (timeout/budget/turnos).
+- **Providers no worker**: `ClaudeAgentProvider` (Claude Agent SDK, model default `claude-opus-4-8`, tools MCP, structured output, telemetria real, fronteira do SDK injetável — testado sem rede) e `FakeProvider` determinístico para dev/teste (marcadores `[[nao-entendeu]]`, `[[complexidade:...]]` etc.). Seleção por `IA_PROVIDER` (default fake). Guardrails fora do provider.
+- **Entidade `ExecucaoIA`** (migration 0005) com RLS, sem DELETE (append-only), telemetria custo/duração/tokens, FKs pendentes de `mensagem`/`evento_chamado` criadas.
+- **Fila `triagem-ia`** (BullMQ, publicador em `packages/db/src/fila/`): jobId determinístico (dedupe), debounce substituível de 45s, retries com backoff, concorrência global baixa + lock Redis por tenant (um tenant não esgota o worker).
+- **Despachante de eventos de domínio** evoluído do seam de auditoria (`eventos-dominio.ts`): mutações publicam `triagem_solicitada` best-effort com flush pós-commit — ponto de plug pronto para as notificações (M9).
+- **Worker modular** (`filas/registrar()`): processa triagem com contexto mínimo sem credenciais, ferramentas stub (reais no M7), eventos `ia_iniciou`/`ia_falhou`, timeout/budget → `falhou` com `erro` dedicado. Painel: seção "Assistente IA" real (execuções com status/custo/tokens + reexecutar).
+- `npm run smoke:triagem` (dedupe, debounce, lock, falhas, RLS, autorização); **verificado:** format, typecheck, lint, build, migrations zero/incremental/revert, 7 smokes, 80/80 testes, worker processando job real.
+- Divergência relatada: enum `status_execucao_ia` com 5 valores (spec 05 §8 manda; spec 02 listava 7) — reconciliação da spec 02 em andamento.
+
 ## 2026-07-15 — Marco M5: portal do cliente + painel operador/admin (2 agentes em paralelo + integração)
 
 - **Portal do cliente (`/portal`)**: experiência minimalista mobile-first com branding whitelabel — lista "Meus chamados" (abertos/histórico, destaque "Aguardando você"), abertura com formulário mínimo (sistema-alvo só se >1, natureza em cards, prioridade recolhida em opções avançadas), detalhe com timeline pública, responder/reabrir/cancelar conforme a máquina de estados, estados vazios e skeletons.

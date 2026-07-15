@@ -1,43 +1,54 @@
 /**
- * Esqueleto do worker BullMQ do Chamados (M0).
+ * Worker BullMQ do Chamados (M6 — infra de IA, specs/01 §3.3/§3.5, specs/05).
  *
- * - Conecta no Redis.
- * - Registra a fila "healthcheck" com um processor trivial.
- * - Enfileira um job de heartbeat na subida (prova ponta-a-ponta).
- * - Encerra de forma limpa em SIGTERM/SIGINT.
- *
- * Os workers reais (triagem de IA, notificações) virão em marcos seguintes.
+ * Processo Node ISOLADO do web app (falha/lentidão da IA nunca degrada o request
+ * síncrono). Estrutura MODULAR: cada fila tem seu `registrar()` em `src/filas/*`;
+ * o `index` só inicializa dependências (DataSource, Redis, provider) e registra
+ * as filas. O M9 adiciona `src/filas/notificacoes.ts` chamando outro `registrar()`
+ * aqui, sem tocar na triagem.
  */
-import { Queue, Worker, type Job } from 'bullmq';
-import { FILA_HEALTHCHECK, redisConnection } from './config';
+import { Worker } from 'bullmq';
+import Redis from 'ioredis';
+import { criarAppDataSource } from '@chamados/db';
+import { redisConnection, iaConfig, triagemConfig } from './config';
+import { resolverProvider } from './ia/resolver-provider';
+import { registrarTriagemIA } from './filas/triagem-ia';
 
 function log(msg: string, extra?: Record<string, unknown>): void {
-  const base = { ts: new Date().toISOString(), servico: 'worker', msg, ...extra };
-  console.log(JSON.stringify(base));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), servico: 'worker', msg, ...extra }));
 }
 
 async function main(): Promise<void> {
-  log('iniciando worker', { redis: `${redisConnection.host}:${redisConnection.port}` });
+  log('iniciando worker', {
+    redis: `${redisConnection.host}:${redisConnection.port}`,
+    ia_provider: iaConfig.provider,
+  });
 
-  const fila = new Queue(FILA_HEALTHCHECK, { connection: redisConnection });
+  // Dependências compartilhadas pelas filas.
+  const ds = criarAppDataSource();
+  await ds.initialize();
+  const redis = new Redis({ ...redisConnection, maxRetriesPerRequest: null });
+  const provider = resolverProvider({
+    provider: iaConfig.provider,
+    modelo: iaConfig.modelo,
+    apiKey: iaConfig.apiKey,
+    log,
+  });
+  log('provider de IA resolvido', { nome: provider.nome, modelo: provider.modelo });
 
-  const worker = new Worker(
-    FILA_HEALTHCHECK,
-    async (job: Job) => {
-      log('processando job', { fila: FILA_HEALTHCHECK, jobId: job.id, nome: job.name });
-      return { ok: true, processadoEm: new Date().toISOString() };
-    },
-    { connection: redisConnection },
-  );
-
-  worker.on('ready', () => log('worker pronto', { fila: FILA_HEALTHCHECK }));
-  worker.on('completed', (job) => log('job concluído', { jobId: job.id }));
-  worker.on('failed', (job, err) => log('job falhou', { jobId: job?.id, erro: err.message }));
-  worker.on('error', (err) => log('erro do worker', { erro: err.message }));
-
-  // Heartbeat inicial: prova que enfileirar + processar funcionam.
-  await fila.add('heartbeat', { origem: 'startup' }, { removeOnComplete: true });
-  log('job de heartbeat enfileirado');
+  // Registro modular das filas (M9 adiciona notificacoes aqui).
+  const workers: Worker[] = [
+    registrarTriagemIA({
+      ds,
+      redis,
+      provider,
+      limites: iaConfig.limites,
+      lock: triagemConfig.lock,
+      connection: redisConnection,
+      concorrencia: triagemConfig.concorrencia,
+      log,
+    }),
+  ];
 
   // ---- Encerramento limpo ------------------------------------------------
   let encerrando = false;
@@ -46,8 +57,9 @@ async function main(): Promise<void> {
     encerrando = true;
     log('encerrando', { sinal });
     try {
-      await worker.close();
-      await fila.close();
+      await Promise.all(workers.map((w) => w.close()));
+      await redis.quit();
+      await ds.destroy();
       log('encerrado com sucesso');
       process.exit(0);
     } catch (err) {
@@ -55,7 +67,6 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   };
-
   process.on('SIGTERM', () => void encerrar('SIGTERM'));
   process.on('SIGINT', () => void encerrar('SIGINT'));
 }

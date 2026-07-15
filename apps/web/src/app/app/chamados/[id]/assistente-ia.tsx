@@ -1,12 +1,29 @@
 import { Sparkles } from 'lucide-react';
+import type { ExecucaoIAView } from '@chamados/db';
+import { ExecucaoIABadge } from '@/components/chamado/badges';
+import { ROTULO_GATILHO_IA } from '@/lib/rotulos';
+import { dataHora, tempoRelativo } from '@/lib/tempo';
+import { ReexecutarTriagem } from './reexecutar-triagem';
 
 /**
- * Painel "Assistente IA" (specs/08 §4.3). Estado vazio elegante: a triagem e a
- * resolução automática chegam no M6+ (pipeline `ExecucaoIA`). A estrutura já está
- * pronta para ser preenchida — diagnóstico, natureza/complexidade sugeridas, PR e
- * guardrails de aprovação humana — quando o agente_ia entrar em operação.
+ * Painel "Assistente IA" (specs/08 §4.3) — VISÍVEL só a operador/admin (o cliente
+ * nunca vê `ExecucaoIA`). Lista as execuções de triagem do chamado (status,
+ * gatilho, provider/modelo, duração, custo, erro, horário) e oferece o botão
+ * "Reexecutar triagem" (reprocessamento manual — specs/05 §2). O RESULTADO da IA
+ * (diagnóstico/classificação/PR) passa a ser aplicado ao chamado no M7; aqui é a
+ * trilha de execuções da infraestrutura entregue no M6.
  */
-export function AssistenteIA({ nomeAssistente }: { nomeAssistente: string }) {
+export function AssistenteIA({
+  nomeAssistente,
+  chamadoId,
+  execucoes,
+  podeReexecutar,
+}: {
+  nomeAssistente: string;
+  chamadoId: string;
+  execucoes: ExecucaoIAView[];
+  podeReexecutar: boolean;
+}) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
       <div className="flex items-center gap-2">
@@ -14,30 +31,82 @@ export function AssistenteIA({ nomeAssistente }: { nomeAssistente: string }) {
           <Sparkles className="size-4" />
         </span>
         <h3 className="font-heading text-sm font-semibold">{nomeAssistente}</h3>
+        {execucoes.length > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+            {execucoes.length} execução(ões)
+          </span>
+        )}
       </div>
 
-      <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
-        <p className="text-sm font-medium">A triagem automática chega no próximo marco</p>
-        <p className="text-xs text-muted-foreground">
-          Aqui aparecerão o diagnóstico da IA, natureza e complexidade sugeridas, PRs de correção e
-          a aprovação humana dos guardrails.
-        </p>
-      </div>
+      {execucoes.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
+          <p className="text-sm font-medium">Nenhuma triagem executada ainda</p>
+          <p className="text-xs text-muted-foreground">
+            A triagem automática roda ao abrir o chamado e quando o cliente responde. Você também
+            pode acioná-la manualmente.
+          </p>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {execucoes.map((e) => (
+            <li key={e.id} className="flex flex-col gap-1.5 rounded-lg border bg-background/40 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <ExecucaoIABadge status={e.status} />
+                <span className="text-xs text-muted-foreground">
+                  {ROTULO_GATILHO_IA[e.gatilho] ?? e.gatilho}
+                </span>
+                <span
+                  className="ml-auto text-xs text-muted-foreground"
+                  title={dataHora(e.created_at)}
+                >
+                  {tempoRelativo(e.created_at)}
+                </span>
+              </div>
 
-      <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-        <li className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-          Diagnóstico e plano de resolução
-        </li>
-        <li className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-          Sugestões de classificação
-        </li>
-        <li className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-          PR de correção com aprovação humana
-        </li>
-      </ul>
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <span>
+                  {e.provider} · {e.modelo}
+                </span>
+                {e.duracao_ms !== null && <span>{formatarDuracao(e.duracao_ms)}</span>}
+                {e.custo_usd !== null && <span>{formatarCusto(e.custo_usd)}</span>}
+                {e.tokens_entrada !== null && e.tokens_saida !== null && (
+                  <span>
+                    {e.tokens_entrada}↑ / {e.tokens_saida}↓ tokens
+                  </span>
+                )}
+              </div>
+
+              {e.erro && (
+                <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  Erro: {e.erro}
+                </p>
+              )}
+              {e.status === 'concluido' && e.resultado?.diagnostico && (
+                <p className="line-clamp-3 text-xs text-foreground/80">{e.resultado.diagnostico}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {podeReexecutar && (
+        <div className="flex justify-end">
+          <ReexecutarTriagem chamadoId={chamadoId} />
+        </div>
+      )}
     </div>
   );
+}
+
+/** Duração legível (ms → "1,2 s" ou "820 ms"). */
+function formatarDuracao(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s`;
+}
+
+/** Custo em USD legível (numeric string). */
+function formatarCusto(usd: string): string {
+  const n = Number(usd);
+  if (!Number.isFinite(n)) return `$${usd}`;
+  return `$${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
 }
