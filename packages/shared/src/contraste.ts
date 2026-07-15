@@ -70,11 +70,7 @@ function canalLinear(c: number): number {
 export function luminanciaRelativa(hex: string): number {
   const rgb = parseHex(hex);
   if (!rgb) throw new Error(`Cor hex inválida: ${hex}`);
-  return (
-    0.2126 * canalLinear(rgb.r) +
-    0.7152 * canalLinear(rgb.g) +
-    0.0722 * canalLinear(rgb.b)
-  );
+  return 0.2126 * canalLinear(rgb.r) + 0.7152 * canalLinear(rgb.g) + 0.0722 * canalLinear(rgb.b);
 }
 
 /** Razão de contraste (1–21) entre duas cores hex. */

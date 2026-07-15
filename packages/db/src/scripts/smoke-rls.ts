@@ -80,10 +80,7 @@ async function main(): Promise<void> {
       ok(usuarios.length === 1, `vê exatamente 1 usuário (viu ${usuarios.length})`);
       ok(usuarios[0]?.tenant_id === tenantA, 'o usuário visível é do tenant A');
       ok(usuarios[0]?.email === emailA, 'é o e-mail do usuário A');
-      ok(
-        !usuarios.some((u) => u.email === emailB),
-        'NÃO enxerga o usuário do tenant B',
-      );
+      ok(!usuarios.some((u) => u.email === emailB), 'NÃO enxerga o usuário do tenant B');
 
       const tenants = await em.find(TenantSchema);
       ok(tenants.length === 1 && tenants[0]?.id === tenantA, 'só vê o próprio tenant A');
@@ -95,10 +92,7 @@ async function main(): Promise<void> {
       const usuarios = await em.find(UsuarioSchema);
       ok(usuarios.length === 1, `vê exatamente 1 usuário (viu ${usuarios.length})`);
       ok(usuarios[0]?.email === emailB, 'é o e-mail do usuário B');
-      ok(
-        !usuarios.some((u) => u.email === emailA),
-        'NÃO enxerga o usuário do tenant A',
-      );
+      ok(!usuarios.some((u) => u.email === emailA), 'NÃO enxerga o usuário do tenant A');
     });
 
     console.log('\n[smoke-rls] RESULTADO: PASSOU — isolamento por RLS confirmado.');

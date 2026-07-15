@@ -42,13 +42,9 @@ export class Auth1720000001000 implements MigrationInterface {
     );
 
     // ---- usuario: colunas de auth que faltavam (specs/02) --------------------
-    await queryRunner.query(
-      `ALTER TABLE "usuario" ADD COLUMN "credencial_servico_ref" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "usuario" ADD COLUMN "credencial_servico_ref" text`);
     await queryRunner.query(`ALTER TABLE "usuario" ADD COLUMN "avatar_url" text`);
-    await queryRunner.query(
-      `ALTER TABLE "usuario" ADD COLUMN "ultimo_acesso_em" timestamptz`,
-    );
+    await queryRunner.query(`ALTER TABLE "usuario" ADD COLUMN "ultimo_acesso_em" timestamptz`);
     // agente_ia autentica só por credencial de serviço: nunca tem senha_hash.
     await queryRunner.query(`
       ALTER TABLE "usuario" ADD CONSTRAINT "ck_usuario_agente_ia_sem_senha"
@@ -195,9 +191,7 @@ export class Auth1720000001000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP FUNCTION IF EXISTS "chamados_resolver_tenant"(text, text)`,
-    );
+    await queryRunner.query(`DROP FUNCTION IF EXISTS "chamados_resolver_tenant"(text, text)`);
 
     for (const tabela of ['redefinicao_senha', 'convite', 'sessao']) {
       await queryRunner.query(`DROP POLICY IF EXISTS "tenant_isolation" ON "${tabela}"`);
@@ -206,19 +200,13 @@ export class Auth1720000001000 implements MigrationInterface {
 
     await queryRunner.query(`DROP TYPE IF EXISTS "status_convite"`);
 
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "uq_usuario_agente_ia_por_tenant"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "uq_usuario_agente_ia_por_tenant"`);
     await queryRunner.query(
       `ALTER TABLE "usuario" DROP CONSTRAINT IF EXISTS "ck_usuario_agente_ia_sem_senha"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "usuario" DROP COLUMN IF EXISTS "ultimo_acesso_em"`,
-    );
+    await queryRunner.query(`ALTER TABLE "usuario" DROP COLUMN IF EXISTS "ultimo_acesso_em"`);
     await queryRunner.query(`ALTER TABLE "usuario" DROP COLUMN IF EXISTS "avatar_url"`);
-    await queryRunner.query(
-      `ALTER TABLE "usuario" DROP COLUMN IF EXISTS "credencial_servico_ref"`,
-    );
+    await queryRunner.query(`ALTER TABLE "usuario" DROP COLUMN IF EXISTS "credencial_servico_ref"`);
 
     await queryRunner.query(
       `ALTER TABLE "tenant" DROP CONSTRAINT IF EXISTS "uq_tenant_dominio_proprio"`,

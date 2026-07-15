@@ -22,12 +22,8 @@ const { runInTenantContext } = await import('../rls');
 const { provisionarTenant } = await import('../auth');
 const { SistemaAlvoSchema } = await import('../entities/sistema-alvo');
 const { criarSecretStore } = await import('../secrets/secret-store');
-const {
-  criarSistemaAlvo,
-  atualizarSistemaAlvo,
-  listarSistemasAlvo,
-  buscarSistemaAlvo,
-} = await import('../sistemas/sistema-alvo-service');
+const { criarSistemaAlvo, atualizarSistemaAlvo, listarSistemasAlvo, buscarSistemaAlvo } =
+  await import('../sistemas/sistema-alvo-service');
 const {
   listarCategorias,
   criarCategoria,
@@ -98,9 +94,7 @@ async function main(): Promise<void> {
     ok(!!sistemaId, 'criar sistema-alvo retornou um id');
 
     // 3) Leituras nunca vazam segredo em claro ------------------------------
-    const resumo = await runInTenantContext(ds, tenantA, (em) =>
-      buscarSistemaAlvo(em, sistemaId),
-    );
+    const resumo = await runInTenantContext(ds, tenantA, (em) => buscarSistemaAlvo(em, sistemaId));
     ok(!!resumo, 'buscarSistemaAlvo retornou o resumo');
     ok(resumo!.tem_git_credencial === true, 'resumo indica presença da credencial git');
     ok(resumo!.tem_bd_credencial === true, 'resumo indica presença da credencial de BD');
@@ -111,10 +105,7 @@ async function main(): Promise<void> {
     const lista = await runInTenantContext(ds, tenantA, (em) =>
       listarSistemasAlvo(em, { incluirInativos: true }),
     );
-    ok(
-      !JSON.stringify(lista).includes(GIT_TOKEN),
-      'listagem NÃO contém nenhum segredo em claro',
-    );
+    ok(!JSON.stringify(lista).includes(GIT_TOKEN), 'listagem NÃO contém nenhum segredo em claro');
 
     // 4) Worker recupera o segredo pela referência (roundtrip) --------------
     await runInTenantContext(ds, tenantA, async (em) => {

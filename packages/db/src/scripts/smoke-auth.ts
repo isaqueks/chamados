@@ -136,10 +136,7 @@ async function main(): Promise<void> {
       autorizar(cliente, 'mensagem_interna', 'ler') === false,
       'authorize NEGA cliente ler nota interna',
     );
-    ok(
-      autorizar(admin, 'usuario', 'listar') === true,
-      'authorize PERMITE admin listar usuários',
-    );
+    ok(autorizar(admin, 'usuario', 'listar') === true, 'authorize PERMITE admin listar usuários');
 
     // 6) Logout revoga a sessão --------------------------------------------
     await encerrarSessao(ds, tenantId, loginCliente.token);
@@ -160,10 +157,7 @@ async function main(): Promise<void> {
     const red = await redefinirComToken(ds, tenantId, pedido!.token, SENHA_NOVA);
     ok(red.ok, 'redefinição de senha com token válido: OK');
     const sessaoAposReset = await carregarSessao(ds, tenantId, loginAdmin2.token);
-    ok(
-      sessaoAposReset === null,
-      'reset de senha invalidou as sessões ativas do admin',
-    );
+    ok(sessaoAposReset === null, 'reset de senha invalidou as sessões ativas do admin');
     const loginSenhaNova = await autenticarComSenha(ds, tenant!, {
       email: emailAdmin,
       senha: SENHA_NOVA,

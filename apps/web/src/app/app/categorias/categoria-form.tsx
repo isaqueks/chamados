@@ -1,21 +1,21 @@
-"use client"
+'use client';
 
-import { useActionState, useEffect, useRef } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { acaoCriarCategoria, type EstadoCategoria } from "./actions"
+import { useActionState, useEffect, useRef } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoCriarCategoria, type EstadoCategoria } from './actions';
 
-const INICIAL: EstadoCategoria = {}
+const INICIAL: EstadoCategoria = {};
 
 export function CategoriaForm() {
-  const [estado, acao, pendente] = useActionState(acaoCriarCategoria, INICIAL)
-  const formRef = useRef<HTMLFormElement>(null)
+  const [estado, acao, pendente] = useActionState(acaoCriarCategoria, INICIAL);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (estado.sucesso) formRef.current?.reset()
-  }, [estado.sucesso])
+    if (estado.sucesso) formRef.current?.reset();
+  }, [estado.sucesso]);
 
   return (
     <form ref={formRef} action={acao} className="flex flex-col gap-4">
@@ -40,9 +40,9 @@ export function CategoriaForm() {
           <Input id="descricao" name="descricao" />
         </div>
         <Button type="submit" disabled={pendente} size="lg">
-          {pendente ? "Criando…" : "Adicionar"}
+          {pendente ? 'Criando…' : 'Adicionar'}
         </Button>
       </div>
     </form>
-  )
+  );
 }

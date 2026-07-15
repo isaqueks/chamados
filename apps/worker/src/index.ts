@@ -32,9 +32,7 @@ async function main(): Promise<void> {
 
   worker.on('ready', () => log('worker pronto', { fila: FILA_HEALTHCHECK }));
   worker.on('completed', (job) => log('job concluído', { jobId: job.id }));
-  worker.on('failed', (job, err) =>
-    log('job falhou', { jobId: job?.id, erro: err.message }),
-  );
+  worker.on('failed', (job, err) => log('job falhou', { jobId: job?.id, erro: err.message }));
   worker.on('error', (err) => log('erro do worker', { erro: err.message }));
 
   // Heartbeat inicial: prova que enfileirar + processar funcionam.

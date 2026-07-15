@@ -42,7 +42,11 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
 
   describe('guardrail humano-no-circuito (§1.3): agente_ia NUNCA resolve', () => {
     it('agente_ia não marca em_atendimento → resolvido', () => {
-      const r = transicaoValida(Papel.agente_ia, StatusChamado.em_atendimento, StatusChamado.resolvido);
+      const r = transicaoValida(
+        Papel.agente_ia,
+        StatusChamado.em_atendimento,
+        StatusChamado.resolvido,
+      );
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.motivo).toBe('papel_nao_autorizado');
     });
@@ -54,44 +58,72 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
     });
 
     it('operador e admin marcam resolvido a partir de em_atendimento', () => {
-      expect(podeTransicionar(Papel.operador, StatusChamado.em_atendimento, StatusChamado.resolvido)).toBe(true);
-      expect(podeTransicionar(Papel.admin, StatusChamado.em_atendimento, StatusChamado.resolvido)).toBe(true);
+      expect(
+        podeTransicionar(Papel.operador, StatusChamado.em_atendimento, StatusChamado.resolvido),
+      ).toBe(true);
+      expect(
+        podeTransicionar(Papel.admin, StatusChamado.em_atendimento, StatusChamado.resolvido),
+      ).toBe(true);
     });
   });
 
   describe('reabertura de resolvido', () => {
     it('resolvido → em_atendimento é permitido a cliente e operador', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.em_atendimento)).toBe(true);
-      expect(podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.em_atendimento)).toBe(true);
-      expect(podeTransicionar(Papel.admin, StatusChamado.resolvido, StatusChamado.em_atendimento)).toBe(true);
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(true);
+      expect(
+        podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(true);
+      expect(
+        podeTransicionar(Papel.admin, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(true);
     });
 
     it('agente_ia não reabre', () => {
-      expect(podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.em_atendimento)).toBe(false);
+      expect(
+        podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(false);
     });
   });
 
   describe('fechamento de resolvido', () => {
     it('resolvido → fechado é permitido a sistema (auto) e operador (manual)', () => {
-      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.resolvido, StatusChamado.fechado)).toBe(true);
-      expect(podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.fechado)).toBe(true);
+      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
+        true,
+      );
+      expect(podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
+        true,
+      );
     });
 
     it('cliente e agente_ia não fecham', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.fechado)).toBe(false);
-      expect(podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.fechado)).toBe(false);
+      expect(podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
+        false,
+      );
+      expect(
+        podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.fechado),
+      ).toBe(false);
     });
   });
 
   describe('cancelamento e suas regras (§1.3)', () => {
     it('cliente cancela novo e aguardando_cliente', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.novo, StatusChamado.cancelado)).toBe(true);
-      expect(podeTransicionar(Papel.cliente, StatusChamado.aguardando_cliente, StatusChamado.cancelado)).toBe(true);
+      expect(podeTransicionar(Papel.cliente, StatusChamado.novo, StatusChamado.cancelado)).toBe(
+        true,
+      );
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.aguardando_cliente, StatusChamado.cancelado),
+      ).toBe(true);
     });
 
     it('cliente NÃO cancela em_triagem nem em_atendimento', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.em_triagem, StatusChamado.cancelado)).toBe(false);
-      expect(podeTransicionar(Papel.cliente, StatusChamado.em_atendimento, StatusChamado.cancelado)).toBe(false);
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.em_triagem, StatusChamado.cancelado),
+      ).toBe(false);
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.em_atendimento, StatusChamado.cancelado),
+      ).toBe(false);
     });
 
     it('operador cancela de novo/em_triagem/aguardando_cliente/em_atendimento', () => {
@@ -114,8 +146,12 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
 
   describe('transições de sistema', () => {
     it('só o sistema inicia triagem (novo → em_triagem) e re-enfileira (aguardando_cliente → em_triagem)', () => {
-      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.novo, StatusChamado.em_triagem)).toBe(true);
-      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.aguardando_cliente, StatusChamado.em_triagem)).toBe(true);
+      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.novo, StatusChamado.em_triagem)).toBe(
+        true,
+      );
+      expect(
+        podeTransicionar(ATOR_SISTEMA, StatusChamado.aguardando_cliente, StatusChamado.em_triagem),
+      ).toBe(true);
       for (const ator of [Papel.operador, Papel.cliente, Papel.agente_ia]) {
         expect(podeTransicionar(ator, StatusChamado.novo, StatusChamado.em_triagem)).toBe(false);
       }
@@ -131,8 +167,12 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
     });
 
     it('cliente não faz transições de triagem', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.em_triagem, StatusChamado.em_atendimento)).toBe(false);
-      expect(podeTransicionar(Papel.cliente, StatusChamado.em_atendimento, StatusChamado.resolvido)).toBe(false);
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.em_triagem, StatusChamado.em_atendimento),
+      ).toBe(false);
+      expect(
+        podeTransicionar(Papel.cliente, StatusChamado.em_atendimento, StatusChamado.resolvido),
+      ).toBe(false);
     });
   });
 
@@ -148,12 +188,20 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
     });
 
     it('aresta existente mas papel errado → papel_nao_autorizado', () => {
-      const r = transicaoValida(Papel.cliente, StatusChamado.em_triagem, StatusChamado.em_atendimento);
+      const r = transicaoValida(
+        Papel.cliente,
+        StatusChamado.em_triagem,
+        StatusChamado.em_atendimento,
+      );
       expect(r).toEqual({ ok: false, motivo: 'papel_nao_autorizado' });
     });
 
     it('a partir de terminal → estado_terminal', () => {
-      const r = transicaoValida(Papel.operador, StatusChamado.fechado, StatusChamado.em_atendimento);
+      const r = transicaoValida(
+        Papel.operador,
+        StatusChamado.fechado,
+        StatusChamado.em_atendimento,
+      );
       expect(r).toEqual({ ok: false, motivo: 'estado_terminal' });
     });
   });

@@ -9,12 +9,12 @@ infraestrutura em Docker, banco com Row-Level Security, web (Next.js) e worker
 
 ## 1. Pré-requisitos
 
-| Ferramenta | Versão testada | Observação |
-|---|---|---|
-| Node.js | 22.18.0 | use a linha 22 LTS (`node -v`) |
-| npm | 10.9.3 | vem com o Node 22 |
-| Docker Desktop | 28.3.2 | com Compose v2 (`docker compose version`) |
-| Git | qualquer recente | |
+| Ferramenta     | Versão testada   | Observação                                |
+| -------------- | ---------------- | ----------------------------------------- |
+| Node.js        | 22.18.0          | use a linha 22 LTS (`node -v`)            |
+| npm            | 10.9.3           | vem com o Node 22                         |
+| Docker Desktop | 28.3.2           | com Compose v2 (`docker compose version`) |
+| Git            | qualquer recente |                                           |
 
 Sistema de referência: **Windows 11 + PowerShell**. Os comandos abaixo funcionam
 em PowerShell e em Git Bash.
@@ -62,11 +62,11 @@ docker compose ps        # confira STATUS = healthy nos 3 serviços
 
 Sobem três containers (prefixo `chamados-`):
 
-| Serviço | Container | Porta host | Para quê |
-|---|---|---|---|
-| PostgreSQL 16 | `chamados-postgres` | 5432 | banco (tenant_id + RLS) |
-| Redis 7 | `chamados-redis` | 6379 | filas (BullMQ), cache |
-| MinIO | `chamados-minio` | 9000 (API) / 9001 (console) | storage S3-compat (anexos) |
+| Serviço       | Container           | Porta host                  | Para quê                   |
+| ------------- | ------------------- | --------------------------- | -------------------------- |
+| PostgreSQL 16 | `chamados-postgres` | 5432                        | banco (tenant_id + RLS)    |
+| Redis 7       | `chamados-redis`    | 6379                        | filas (BullMQ), cache      |
+| MinIO         | `chamados-minio`    | 9000 (API) / 9001 (console) | storage S3-compat (anexos) |
 
 Aguarde todos ficarem `healthy` antes de rodar as migrations.
 
@@ -133,14 +133,14 @@ Retorna `200` quando Postgres e Redis estão acessíveis; `503` e
 
 ## 4. Portas e URLs
 
-| Recurso | URL / porta | Credenciais (dev) |
-|---|---|---|
-| Web (Next.js) | http://localhost:3000 | — |
-| Health check | http://localhost:3000/api/health | — |
-| PostgreSQL | localhost:5432 | `chamados` / `chamados` (admin) · `chamados_app` / `chamados_app` (app) |
-| Redis | localhost:6379 | — |
-| MinIO (API S3) | http://localhost:9000 | `minioadmin` / `minioadmin` |
-| MinIO (console) | http://localhost:9001 | `minioadmin` / `minioadmin` |
+| Recurso         | URL / porta                      | Credenciais (dev)                                                       |
+| --------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| Web (Next.js)   | http://localhost:3000            | —                                                                       |
+| Health check    | http://localhost:3000/api/health | —                                                                       |
+| PostgreSQL      | localhost:5432                   | `chamados` / `chamados` (admin) · `chamados_app` / `chamados_app` (app) |
+| Redis           | localhost:6379                   | —                                                                       |
+| MinIO (API S3)  | http://localhost:9000            | `minioadmin` / `minioadmin`                                             |
+| MinIO (console) | http://localhost:9001            | `minioadmin` / `minioadmin`                                             |
 
 Todas as portas são configuráveis via `.env`.
 
@@ -148,22 +148,22 @@ Todas as portas são configuráveis via `.env`.
 
 ## 5. Comandos úteis
 
-| Comando (na raiz) | O que faz |
-|---|---|
-| `npm install` | instala todos os workspaces |
-| `docker compose up -d` | sobe Postgres, Redis, MinIO |
-| `docker compose ps` | status/health dos containers |
-| `docker compose down` | derruba os containers (mantém volumes) |
-| `docker compose down -v` | derruba e **apaga os volumes** (reset total) |
-| `npm run migration:run` | aplica as migrations |
-| `npm run migration:revert` | reverte a última migration |
-| `npm run smoke:rls` | testa o isolamento por RLS |
-| `npm run dev` | sobe web + worker juntos |
-| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados |
-| `npm run build` | build de produção do web |
-| `npm run typecheck` | typecheck de todos os workspaces |
-| `npm run lint` | ESLint (flat config) |
-| `npm run format` | Prettier (escreve) |
+| Comando (na raiz)                        | O que faz                                    |
+| ---------------------------------------- | -------------------------------------------- |
+| `npm install`                            | instala todos os workspaces                  |
+| `docker compose up -d`                   | sobe Postgres, Redis, MinIO                  |
+| `docker compose ps`                      | status/health dos containers                 |
+| `docker compose down`                    | derruba os containers (mantém volumes)       |
+| `docker compose down -v`                 | derruba e **apaga os volumes** (reset total) |
+| `npm run migration:run`                  | aplica as migrations                         |
+| `npm run migration:revert`               | reverte a última migration                   |
+| `npm run smoke:rls`                      | testa o isolamento por RLS                   |
+| `npm run dev`                            | sobe web + worker juntos                     |
+| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                  |
+| `npm run build`                          | build de produção do web                     |
+| `npm run typecheck`                      | typecheck de todos os workspaces             |
+| `npm run lint`                           | ESLint (flat config)                         |
+| `npm run format`                         | Prettier (escreve)                           |
 
 ---
 

@@ -168,8 +168,7 @@ export function motivoRichParaCriar(m: MotivoRichText): MotivoCriar {
 }
 
 export type ResultadoCriar =
-  | { ok: true; id: string; numero: string }
-  | { ok: false; motivo: MotivoCriar };
+  { ok: true; id: string; numero: string } | { ok: false; motivo: MotivoCriar };
 
 /** Resolve o alvo (sistema-alvo XOR categoria) conforme specs/04 §2 e o CHECK. */
 async function resolverAlvo(
@@ -415,7 +414,9 @@ export async function listarChamados(
     }
   }
 
-  qb.orderBy('c.updated_at', 'DESC').addOrderBy('c.id', 'DESC').take(limite + 1);
+  qb.orderBy('c.updated_at', 'DESC')
+    .addOrderBy('c.id', 'DESC')
+    .take(limite + 1);
 
   const linhas = await qb.getMany();
   const temMais = linhas.length > limite;
@@ -436,8 +437,7 @@ export async function listarChamados(
 export type MotivoTransicionar = 'inexistente' | 'sem_permissao' | MotivoNegacao;
 
 export type ResultadoTransicionar =
-  | { ok: true; chamado: ChamadoInterno }
-  | { ok: false; motivo: MotivoTransicionar };
+  { ok: true; chamado: ChamadoInterno } | { ok: false; motivo: MotivoTransicionar };
 
 /**
  * Tipo de evento canônico (specs/02) associado a uma transição. As transições
@@ -478,10 +478,12 @@ export async function transicionarStatus(
   // Ownership/papel (coarse): o `sistema` é contexto confiável (jobs).
   if (ator.papel !== ATOR_SISTEMA) {
     const atorU: Ator = { id: ator.id ?? '', tenant_id: ator.tenant_id, papel: ator.papel };
-    if (!autorizar(atorU, 'chamado', 'mudar_status', {
-      cliente_id: c.cliente_id,
-      tenant_id: c.tenant_id,
-    })) {
+    if (
+      !autorizar(atorU, 'chamado', 'mudar_status', {
+        cliente_id: c.cliente_id,
+        tenant_id: c.tenant_id,
+      })
+    ) {
       return { ok: false, motivo: 'sem_permissao' };
     }
   }
@@ -527,11 +529,7 @@ export async function transicionarStatus(
 // ---------------------------------------------------------------------------
 
 export type MotivoMutacao =
-  | 'inexistente'
-  | 'sem_permissao'
-  | 'estado_terminal'
-  | 'valor_invalido'
-  | 'operador_invalido';
+  'inexistente' | 'sem_permissao' | 'estado_terminal' | 'valor_invalido' | 'operador_invalido';
 
 export type ResultadoMutacao = { ok: true } | { ok: false; motivo: MotivoMutacao };
 
@@ -597,10 +595,12 @@ export async function alterarPrioridade(
 ): Promise<ResultadoMutacao> {
   const c = await carregar(em, id);
   if (!c) return { ok: false, motivo: 'inexistente' };
-  if (!autorizar(ator, 'chamado', 'mudar_prioridade', {
-    cliente_id: c.cliente_id,
-    tenant_id: c.tenant_id,
-  })) {
+  if (
+    !autorizar(ator, 'chamado', 'mudar_prioridade', {
+      cliente_id: c.cliente_id,
+      tenant_id: c.tenant_id,
+    })
+  ) {
     return { ok: false, motivo: 'sem_permissao' };
   }
   if (ehTerminal(c.status)) return { ok: false, motivo: 'estado_terminal' };
@@ -657,10 +657,12 @@ export async function alterarNatureza(
 ): Promise<ResultadoMutacao> {
   const c = await carregar(em, id);
   if (!c) return { ok: false, motivo: 'inexistente' };
-  if (!autorizar(ator, 'chamado', 'mudar_natureza', {
-    cliente_id: c.cliente_id,
-    tenant_id: c.tenant_id,
-  })) {
+  if (
+    !autorizar(ator, 'chamado', 'mudar_natureza', {
+      cliente_id: c.cliente_id,
+      tenant_id: c.tenant_id,
+    })
+  ) {
     return { ok: false, motivo: 'sem_permissao' };
   }
   if (ehTerminal(c.status)) return { ok: false, motivo: 'estado_terminal' };

@@ -26,18 +26,12 @@ export async function buscarUsuarioAtivoPorEmail(
 }
 
 /** Busca um usuário por id no tenant corrente. */
-export async function buscarUsuarioPorId(
-  em: EntityManager,
-  id: string,
-): Promise<Usuario | null> {
+export async function buscarUsuarioPorId(em: EntityManager, id: string): Promise<Usuario | null> {
   return em.findOne(UsuarioSchema, { where: { id } });
 }
 
 /** Verifica se já existe conta (qualquer status não-removido) para o e-mail. */
-export async function existeContaPorEmail(
-  em: EntityManager,
-  email: string,
-): Promise<boolean> {
+export async function existeContaPorEmail(em: EntityManager, email: string): Promise<boolean> {
   const n = await em.count(UsuarioSchema, {
     where: { email: normalizarEmail(email) },
   });
@@ -101,17 +95,10 @@ export async function definirSenha(
   senha: string,
 ): Promise<void> {
   const senha_hash = await gerarHashSenha(senha);
-  await em.update(
-    UsuarioSchema,
-    { id: usuario_id },
-    { senha_hash, status: StatusUsuario.ativo },
-  );
+  await em.update(UsuarioSchema, { id: usuario_id }, { senha_hash, status: StatusUsuario.ativo });
 }
 
 /** Marca o último acesso do usuário (login bem-sucedido). */
-export async function registrarUltimoAcesso(
-  em: EntityManager,
-  usuario_id: string,
-): Promise<void> {
+export async function registrarUltimoAcesso(em: EntityManager, usuario_id: string): Promise<void> {
   await em.update(UsuarioSchema, { id: usuario_id }, { ultimo_acesso_em: new Date() });
 }

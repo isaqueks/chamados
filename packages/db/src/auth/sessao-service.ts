@@ -63,10 +63,7 @@ export async function validarSessao(
 }
 
 /** Revoga uma sessão pelo token (logout). Idempotente. */
-export async function revogarSessaoPorToken(
-  em: EntityManager,
-  token: string,
-): Promise<void> {
+export async function revogarSessaoPorToken(em: EntityManager, token: string): Promise<void> {
   await em.update(
     SessaoSchema,
     { token_hash: hashToken(token), revogada_em: IsNull() },

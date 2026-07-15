@@ -36,9 +36,7 @@ export class Init1720000000000 implements MigrationInterface {
     await queryRunner.query(
       `CREATE TYPE "status_usuario" AS ENUM (${enumValores(valoresEnum(StatusUsuario))})`,
     );
-    await queryRunner.query(
-      `CREATE TYPE "papel" AS ENUM (${enumValores(valoresEnum(Papel))})`,
-    );
+    await queryRunner.query(`CREATE TYPE "papel" AS ENUM (${enumValores(valoresEnum(Papel))})`);
 
     // ---- Tabela tenant -----------------------------------------------------
     await queryRunner.query(`
@@ -76,9 +74,7 @@ export class Init1720000000000 implements MigrationInterface {
         CONSTRAINT "uq_usuario_tenant_email" UNIQUE ("tenant_id", "email")
       )
     `);
-    await queryRunner.query(
-      `CREATE INDEX "ix_usuario_tenant" ON "usuario" ("tenant_id")`,
-    );
+    await queryRunner.query(`CREATE INDEX "ix_usuario_tenant" ON "usuario" ("tenant_id")`);
 
     // ---- Role da aplicação (SEM BYPASSRLS) ---------------------------------
     // Criado de forma idempotente; a senha vem de APP_DB_PASSWORD (default dev).

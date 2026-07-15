@@ -1,19 +1,19 @@
-"use client"
+'use client';
 
-import { useActionState } from "react"
-import { Papel } from "@chamados/shared"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ROTULO_PAPEL } from "@/lib/rotulos"
-import { acaoCriarConvite, type EstadoConvite } from "./actions"
+import { useActionState } from 'react';
+import { Papel } from '@chamados/shared';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ROTULO_PAPEL } from '@/lib/rotulos';
+import { acaoCriarConvite, type EstadoConvite } from './actions';
 
-const INICIAL: EstadoConvite = {}
-const OPCOES: Papel[] = [Papel.cliente, Papel.operador, Papel.admin]
+const INICIAL: EstadoConvite = {};
+const OPCOES: Papel[] = [Papel.cliente, Papel.operador, Papel.admin];
 
 export function ConviteForm() {
-  const [estado, acao, pendente] = useActionState(acaoCriarConvite, INICIAL)
+  const [estado, acao, pendente] = useActionState(acaoCriarConvite, INICIAL);
 
   return (
     <form action={acao} className="flex flex-col gap-4">
@@ -31,13 +31,7 @@ export function ConviteForm() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex flex-1 flex-col gap-2">
           <Label htmlFor="email">E-mail</Label>
-          <Input
-            id="email"
-            name="email"
-            type="email"
-            placeholder="pessoa@empresa.com"
-            required
-          />
+          <Input id="email" name="email" type="email" placeholder="pessoa@empresa.com" required />
         </div>
         <div className="flex flex-col gap-2 sm:w-44">
           <Label htmlFor="papel">Papel</Label>
@@ -55,9 +49,9 @@ export function ConviteForm() {
           </select>
         </div>
         <Button type="submit" disabled={pendente} size="lg">
-          {pendente ? "Enviando…" : "Convidar"}
+          {pendente ? 'Enviando…' : 'Convidar'}
         </Button>
       </div>
     </form>
-  )
+  );
 }

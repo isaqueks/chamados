@@ -1,10 +1,6 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
-import {
-  SistemaAlvoSchema,
-  type SistemaAlvo,
-  type LogsConfig,
-} from '../entities/sistema-alvo';
+import { SistemaAlvoSchema, type SistemaAlvo, type LogsConfig } from '../entities/sistema-alvo';
 import type { SecretStore } from '../secrets/secret-store';
 
 /**

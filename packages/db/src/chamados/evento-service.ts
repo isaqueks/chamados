@@ -1,11 +1,6 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
-import {
-  autorizar,
-  Papel,
-  EVENTOS_INTERNOS,
-  type TipoEvento,
-} from '@chamados/shared';
+import { autorizar, Papel, EVENTOS_INTERNOS, type TipoEvento } from '@chamados/shared';
 import { EventoChamadoSchema, type EventoChamado } from '../entities/evento-chamado';
 import { ChamadoSchema } from '../entities/chamado';
 import type { AtorChamado } from './chamado-service';

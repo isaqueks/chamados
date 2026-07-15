@@ -51,8 +51,7 @@ export const VisibilidadeMensagem = {
   publica: 'publica',
   interna: 'interna',
 } as const;
-export type VisibilidadeMensagem =
-  (typeof VisibilidadeMensagem)[keyof typeof VisibilidadeMensagem];
+export type VisibilidadeMensagem = (typeof VisibilidadeMensagem)[keyof typeof VisibilidadeMensagem];
 
 /**
  * Tipos de evento de auditoria (`EventoChamado`). Taxonomia canônica ÚNICA —

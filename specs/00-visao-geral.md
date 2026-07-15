@@ -4,18 +4,18 @@ Este é o documento raiz da especificação da plataforma **Chamados**. Ele defi
 
 Os detalhes de implementação vivem em documentos próprios; este documento não os duplica:
 
-| Tema | Documento |
-| --- | --- |
-| Stack, componentes, filas, storage, deploy, abstração de provider IA | `01-arquitetura.md` |
-| Entidades, campos, relações, enums no BD, estratégia multi-tenant | `02-modelo-de-dados.md` |
-| Auth, convites, matriz de permissões, service account da IA | `03-autenticacao-perfis-permissoes.md` |
-| Ciclo de vida do chamado, máquina de estados, mensagens, anexos, busca | `04-chamados.md` |
-| Pipeline de triagem, classificação, resolução automática, SPEC, guardrails | `05-agente-ia.md` |
-| Gateways de notificação, adapters, eventos, templates, preferências | `06-notificacoes.md` |
-| Tenant, provisionamento, branding, domínios, isolamento, sistemas-alvo | `07-multitenancy-whitelabel.md` |
-| Mapa de telas, fluxos, portal do cliente vs. painel do operador | `08-ui-ux.md` |
-| Ameaças, isolamento, uploads, XSS, prompt injection, LGPD | `09-seguranca-lgpd.md` |
-| Fases de entrega, escopo do MVP, itens futuros | `10-roadmap-mvp.md` |
+| Tema                                                                       | Documento                              |
+| -------------------------------------------------------------------------- | -------------------------------------- |
+| Stack, componentes, filas, storage, deploy, abstração de provider IA       | `01-arquitetura.md`                    |
+| Entidades, campos, relações, enums no BD, estratégia multi-tenant          | `02-modelo-de-dados.md`                |
+| Auth, convites, matriz de permissões, service account da IA                | `03-autenticacao-perfis-permissoes.md` |
+| Ciclo de vida do chamado, máquina de estados, mensagens, anexos, busca     | `04-chamados.md`                       |
+| Pipeline de triagem, classificação, resolução automática, SPEC, guardrails | `05-agente-ia.md`                      |
+| Gateways de notificação, adapters, eventos, templates, preferências        | `06-notificacoes.md`                   |
+| Tenant, provisionamento, branding, domínios, isolamento, sistemas-alvo     | `07-multitenancy-whitelabel.md`        |
+| Mapa de telas, fluxos, portal do cliente vs. painel do operador            | `08-ui-ux.md`                          |
+| Ameaças, isolamento, uploads, XSS, prompt injection, LGPD                  | `09-seguranca-lgpd.md`                 |
+| Fases de entrega, escopo do MVP, itens futuros                             | `10-roadmap-mvp.md`                    |
 
 A fonte da verdade dos requisitos originais (IDs RF-xx / RNF-xx) é `specs/requisitos-originais.md`.
 
@@ -74,17 +74,21 @@ Escopo explicitamente **fora** do produto (ao menos na fase 1), para evitar ambi
 Quatro papéis, três humanos e um de serviço. Os nomes canônicos são **admin**, **operador**, **cliente** e **agente_ia**. A matriz detalhada de permissões está em `03-autenticacao-perfis-permissoes.md`.
 
 ### admin
+
 Administra um tenant. Configura branding, domínios, sistemas-alvo, categorias, canais de notificação e políticas (ex.: prazo de fechamento automático, guardrails da IA). Convida e gerencia operadores e clientes. Tem acesso a tudo dentro do seu tenant.
 
 > DECISÃO PENDENTE: existência de um papel super-admin de plataforma (cross-tenant) para operar a instalação inteira. Provisoriamente tratado como responsabilidade operacional fora do produto; ver `07-multitenancy-whitelabel.md`.
 
 ### operador
+
 Atende os chamados. Vê tudo do chamado (inclusive notas internas e informações da IA), responde ao cliente, muda status/prioridade/atribuição, cria notas internas, aprova ou rejeita as ações propostas pela IA (merge de PR, aplicação de SPEC). É o principal usuário do painel de produtividade.
 
 ### cliente
+
 Usuário final da empresa-tenant. Abre chamados com formulário mínimo, acompanha status/prioridade/mensagens públicas, responde a solicitações de informação, reabre chamados resolvidos. **Não** vê notas internas, complexidade nem dados técnicos da IA.
 
 ### agente_ia
+
 Usuário de **serviço** (não humano) que participa dos chamados como um operador automatizado. Faz triagem, publica mensagens públicas (pedidos de informação) e notas internas (diagnóstico, SPEC, resultado de PR), classifica complexidade, ajusta natureza e sugere prioridade. Toda ação sua gera `EventoChamado` e é registrada em `ExecucaoIA`. Detalhes em `05-agente-ia.md`; sua natureza de service account em `03-autenticacao-perfis-permissoes.md`.
 
 ## 6. Princípios de produto
@@ -102,17 +106,17 @@ Usuário de **serviço** (não humano) que participa dos chamados como um operad
 
 Indicadores para avaliar se o produto cumpre a visão. Metas numéricas a calibrar após baseline do osTicket.
 
-| Métrica | Definição | Direção |
-| --- | --- | --- |
-| Tempo de abertura de chamado | Tempo/campos que o cliente leva para submeter | ↓ |
-| Taxa de triagem automática | % de chamados triados pela IA sem intervenção humana inicial | ↑ |
-| Taxa de auto-resolução | % de chamados `problema`+`facil` resolvidos via PR proposto pela IA e aprovado | ↑ |
-| Tempo até primeira resposta | Da criação até a primeira mensagem pública (humana ou IA) | ↓ |
-| Tempo de resolução | Da criação até `resolvido` | ↓ |
-| Retrabalho / reabertura | % de chamados `resolvido` reabertos pelo cliente | ↓ |
-| Precisão da classificação | % de acerto de complexidade/natureza da IA vs. avaliação do operador | ↑ |
-| Custo de IA por chamado | Custo médio agregado de `ExecucaoIA` por chamado | ↓ / controlado |
-| Satisfação do cliente (CSAT) | Avaliação pós-fechamento | ↑ |
+| Métrica                      | Definição                                                                      | Direção        |
+| ---------------------------- | ------------------------------------------------------------------------------ | -------------- |
+| Tempo de abertura de chamado | Tempo/campos que o cliente leva para submeter                                  | ↓              |
+| Taxa de triagem automática   | % de chamados triados pela IA sem intervenção humana inicial                   | ↑              |
+| Taxa de auto-resolução       | % de chamados `problema`+`facil` resolvidos via PR proposto pela IA e aprovado | ↑              |
+| Tempo até primeira resposta  | Da criação até a primeira mensagem pública (humana ou IA)                      | ↓              |
+| Tempo de resolução           | Da criação até `resolvido`                                                     | ↓              |
+| Retrabalho / reabertura      | % de chamados `resolvido` reabertos pelo cliente                               | ↓              |
+| Precisão da classificação    | % de acerto de complexidade/natureza da IA vs. avaliação do operador           | ↑              |
+| Custo de IA por chamado      | Custo médio agregado de `ExecucaoIA` por chamado                               | ↓ / controlado |
+| Satisfação do cliente (CSAT) | Avaliação pós-fechamento                                                       | ↑              |
 
 > DECISÃO PENDENTE: metas numéricas concretas por métrica, dependentes de baseline do osTicket e de instrumentação (ver `10-roadmap-mvp.md`).
 
@@ -124,19 +128,19 @@ Os nomes, entidades e valores de enums abaixo são **canônicos**: devem ser usa
 
 ### 8.1 Entidades
 
-| Entidade | Descrição |
-| --- | --- |
-| **Tenant** | Empresa cliente da plataforma. Unidade de isolamento; possui branding, domínios, usuários e sistemas-alvo próprios. |
-| **Usuario** | Conta de acesso vinculada a um tenant, com um papel (`admin`, `operador`, `cliente` ou `agente_ia`). |
-| **SistemaAlvo** | Sistema de software do tenant sobre o qual os chamados são abertos. Guarda URL do repositório git + credenciais, fontes/caminhos de logs e conexão **somente leitura** ao banco de dados. Um tenant pode ter vários. |
-| **Categoria** | Classificação de chamado do tenant. Todo chamado referencia um sistema-alvo **ou** a categoria geral do tenant. |
-| **Chamado** | Solicitação de suporte. Tem natureza, status, prioridade, complexidade (interna), sistema-alvo/categoria e uma timeline de mensagens. |
-| **Mensagem** | Entrada na timeline do chamado, com visibilidade `publica` ou `interna`. |
-| **Anexo** | Arquivo/imagem associado a uma mensagem ou à descrição do chamado. |
-| **EventoChamado** | Registro de auditoria/histórico de todo evento relevante (mudança de status/prioridade/atribuição, ações da IA). |
-| **ExecucaoIA** | Registro de uma execução do agente_ia: entrada, ações, custo, duração e resultado. |
-| **CanalNotificacao** | Configuração de um gateway de notificação (ex.: SMTP) no nível do tenant. |
-| **PreferenciaNotificacao** | Preferências de notificação por usuário (quais eventos, quais canais). |
+| Entidade                   | Descrição                                                                                                                                                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tenant**                 | Empresa cliente da plataforma. Unidade de isolamento; possui branding, domínios, usuários e sistemas-alvo próprios.                                                                                                  |
+| **Usuario**                | Conta de acesso vinculada a um tenant, com um papel (`admin`, `operador`, `cliente` ou `agente_ia`).                                                                                                                 |
+| **SistemaAlvo**            | Sistema de software do tenant sobre o qual os chamados são abertos. Guarda URL do repositório git + credenciais, fontes/caminhos de logs e conexão **somente leitura** ao banco de dados. Um tenant pode ter vários. |
+| **Categoria**              | Classificação de chamado do tenant. Todo chamado referencia um sistema-alvo **ou** a categoria geral do tenant.                                                                                                      |
+| **Chamado**                | Solicitação de suporte. Tem natureza, status, prioridade, complexidade (interna), sistema-alvo/categoria e uma timeline de mensagens.                                                                                |
+| **Mensagem**               | Entrada na timeline do chamado, com visibilidade `publica` ou `interna`.                                                                                                                                             |
+| **Anexo**                  | Arquivo/imagem associado a uma mensagem ou à descrição do chamado.                                                                                                                                                   |
+| **EventoChamado**          | Registro de auditoria/histórico de todo evento relevante (mudança de status/prioridade/atribuição, ações da IA).                                                                                                     |
+| **ExecucaoIA**             | Registro de uma execução do agente_ia: entrada, ações, custo, duração e resultado.                                                                                                                                   |
+| **CanalNotificacao**       | Configuração de um gateway de notificação (ex.: SMTP) no nível do tenant.                                                                                                                                            |
+| **PreferenciaNotificacao** | Preferências de notificação por usuário (quais eventos, quais canais).                                                                                                                                               |
 
 ```mermaid
 erDiagram
@@ -156,11 +160,11 @@ erDiagram
 
 ### 8.2 Papéis (roles)
 
-| Papel | Tipo | Resumo |
-| --- | --- | --- |
-| **admin** | humano | Administra o tenant e suas configurações. |
-| **operador** | humano | Atende chamados; aprova ações da IA. |
-| **cliente** | humano | Abre e acompanha os próprios chamados. |
+| Papel         | Tipo    | Resumo                                                      |
+| ------------- | ------- | ----------------------------------------------------------- |
+| **admin**     | humano  | Administra o tenant e suas configurações.                   |
+| **operador**  | humano  | Atende chamados; aprova ações da IA.                        |
+| **cliente**   | humano  | Abre e acompanha os próprios chamados.                      |
 | **agente_ia** | serviço | Usuário automatizado que faz triagem e assiste a resolução. |
 
 ### 8.3 Enums
@@ -169,45 +173,45 @@ Valores **exatos**, usados em todos os documentos e no código.
 
 **status do chamado**
 
-| Valor | Significado |
-| --- | --- |
-| `novo` | Recém-criado, ainda não triado. |
-| `em_triagem` | Sob análise da IA (ou aguardando triagem). |
-| `aguardando_cliente` | Aguardando informação/resposta do cliente. |
-| `em_atendimento` | Em tratamento por operador e/ou IA. |
-| `resolvido` | Solução entregue; fecha automaticamente após N dias (configurável por tenant); reabrível pelo cliente → `em_atendimento`. |
-| `fechado` | Terminal. |
-| `cancelado` | Encerrado sem resolução. |
+| Valor                | Significado                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `novo`               | Recém-criado, ainda não triado.                                                                                           |
+| `em_triagem`         | Sob análise da IA (ou aguardando triagem).                                                                                |
+| `aguardando_cliente` | Aguardando informação/resposta do cliente.                                                                                |
+| `em_atendimento`     | Em tratamento por operador e/ou IA.                                                                                       |
+| `resolvido`          | Solução entregue; fecha automaticamente após N dias (configurável por tenant); reabrível pelo cliente → `em_atendimento`. |
+| `fechado`            | Terminal.                                                                                                                 |
+| `cancelado`          | Encerrado sem resolução.                                                                                                  |
 
 **natureza**
 
-| Valor | Significado |
-| --- | --- |
-| `problema` | Algo não funciona como deveria. |
+| Valor       | Significado                                       |
+| ----------- | ------------------------------------------------- |
+| `problema`  | Algo não funciona como deveria.                   |
 | `alteracao` | Pedido de mudança/nova funcionalidade no sistema. |
 
 **prioridade**
 
-| Valor |
-| --- |
-| `baixa` |
-| `media` |
-| `alta` |
+| Valor     |
+| --------- |
+| `baixa`   |
+| `media`   |
+| `alta`    |
 | `urgente` |
 
 **complexidade** (interna; visível só para operador/admin/agente_ia)
 
-| Valor |
-| --- |
-| `facil` |
-| `medio` |
+| Valor     |
+| --------- |
+| `facil`   |
+| `medio`   |
 | `dificil` |
 
 **visibilidade de mensagem**
 
-| Valor | Significado |
-| --- | --- |
-| `publica` | Visível ao cliente e a todos os papéis. |
+| Valor     | Significado                                             |
+| --------- | ------------------------------------------------------- |
+| `publica` | Visível ao cliente e a todos os papéis.                 |
 | `interna` | Nota interna; visível só para operador/admin/agente_ia. |
 
 A máquina de estados completa (transições válidas, fechamento automático, reabertura) está em `04-chamados.md`.

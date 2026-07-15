@@ -1,49 +1,43 @@
-import Link from "next/link"
-import { obterAppDataSource, runInTenantContext, listarChamados } from "@chamados/db"
-import { Papel, StatusChamado, transicoesDoPapel } from "@chamados/shared"
-import { exigirUsuario } from "@/lib/sessao"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import Link from 'next/link';
+import { obterAppDataSource, runInTenantContext, listarChamados } from '@chamados/db';
+import { Papel, StatusChamado, transicoesDoPapel } from '@chamados/shared';
+import { exigirUsuario } from '@/lib/sessao';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   ROTULO_STATUS_CHAMADO,
   ROTULO_NATUREZA,
   ROTULO_PRIORIDADE,
   VARIANTE_STATUS,
-} from "@/lib/rotulos"
-import { ChamadoForm } from "./chamado-form"
-import { acaoTransicionar } from "./actions"
+} from '@/lib/rotulos';
+import { ChamadoForm } from './chamado-form';
+import { acaoTransicionar } from './actions';
 
 /** Verbo de ação por status-alvo (rótulo dos botões de transição). */
 const ACAO_STATUS: Record<StatusChamado, string> = {
-  [StatusChamado.novo]: "Reabrir triagem",
-  [StatusChamado.em_triagem]: "Enviar à triagem",
-  [StatusChamado.aguardando_cliente]: "Pedir informações",
-  [StatusChamado.em_atendimento]: "Atender",
-  [StatusChamado.resolvido]: "Resolver",
-  [StatusChamado.fechado]: "Fechar",
-  [StatusChamado.cancelado]: "Cancelar",
-}
+  [StatusChamado.novo]: 'Reabrir triagem',
+  [StatusChamado.em_triagem]: 'Enviar à triagem',
+  [StatusChamado.aguardando_cliente]: 'Pedir informações',
+  [StatusChamado.em_atendimento]: 'Atender',
+  [StatusChamado.resolvido]: 'Resolver',
+  [StatusChamado.fechado]: 'Fechar',
+  [StatusChamado.cancelado]: 'Cancelar',
+};
 
 function acaoRotulo(de: StatusChamado, para: StatusChamado): string {
-  if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido) return "Reabrir"
-  return ACAO_STATUS[para]
+  if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido) return 'Reabrir';
+  return ACAO_STATUS[para];
 }
 
 export default async function ChamadosPage() {
-  const { usuario, tenant } = await exigirUsuario()
-  const ds = await obterAppDataSource()
+  const { usuario, tenant } = await exigirUsuario();
+  const ds = await obterAppDataSource();
   const pagina = await runInTenantContext(ds, tenant.id, (em) =>
     listarChamados(em, usuario, { limite: 50 }),
-  )
+  );
 
-  const ehCliente = usuario.papel === Papel.cliente
+  const ehCliente = usuario.papel === Papel.cliente;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -51,8 +45,8 @@ export default async function ChamadosPage() {
         <h1 className="font-heading text-2xl font-semibold tracking-tight">Chamados</h1>
         <p className="text-sm text-muted-foreground">
           {ehCliente
-            ? "Abra e acompanhe os seus chamados em " + tenant.nome_exibicao + "."
-            : "Fila de chamados de " + tenant.nome_exibicao + "."}
+            ? 'Abra e acompanhe os seus chamados em ' + tenant.nome_exibicao + '.'
+            : 'Fila de chamados de ' + tenant.nome_exibicao + '.'}
         </p>
       </div>
 
@@ -71,7 +65,7 @@ export default async function ChamadosPage() {
       <Card>
         <CardHeader>
           <CardTitle>
-            {ehCliente ? "Seus chamados" : "Todos os chamados"} ({pagina.itens.length})
+            {ehCliente ? 'Seus chamados' : 'Todos os chamados'} ({pagina.itens.length})
           </CardTitle>
           {!ehCliente && (
             <CardDescription>
@@ -85,8 +79,8 @@ export default async function ChamadosPage() {
           ) : (
             <div className="flex flex-col divide-y">
               {pagina.itens.map((c) => {
-                const alvos = transicoesDoPapel(usuario.papel, c.status)
-                const temComplexidade = "complexidade" in c && c.complexidade
+                const alvos = transicoesDoPapel(usuario.papel, c.status);
+                const temComplexidade = 'complexidade' in c && c.complexidade;
                 return (
                   <div key={c.id} className="flex flex-col gap-2 py-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -107,7 +101,7 @@ export default async function ChamadosPage() {
                         <Badge variant="secondary">complexidade: {c.complexidade}</Badge>
                       )}
                       <span className="ml-auto text-xs text-muted-foreground">
-                        atualizado {new Date(c.updated_at).toLocaleString("pt-BR")}
+                        atualizado {new Date(c.updated_at).toLocaleString('pt-BR')}
                       </span>
                     </div>
                     {alvos.length > 0 && (
@@ -124,12 +118,12 @@ export default async function ChamadosPage() {
                       </div>
                     )}
                   </div>
-                )
+                );
               })}
             </div>
           )}
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

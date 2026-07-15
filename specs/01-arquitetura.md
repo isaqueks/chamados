@@ -23,33 +23,37 @@ Derivados dos princípios de produto (formulários mínimos, UX moderna, IA-firs
 
 > DECIDIDO (2026-07-15): a stack abaixo está **confirmada** (com TypeORM no lugar de Prisma e autenticação própria conforme spec 03 no lugar de better-auth) — ver specs/decisoes.md (D-001, D-010).
 
-| Camada | Escolha confirmada | Papel |
-|---|---|---|
-| Monorepo / linguagem | TypeScript, monorepo (npm workspaces) | Código compartilhado entre web e worker (tipos, validação, clients) |
-| Web full-stack | Next.js 16 (App Router) | UI + API (Route Handlers / Server Actions) numa base só |
-| Banco de dados | PostgreSQL 16 | Persistência transacional; `tenant_id` + RLS |
-| ORM | TypeORM | Acesso ao banco (entities/repositories), migrações |
-| Fila | Redis + BullMQ | Jobs de triagem de IA, notificações, manutenção |
-| Cache / sessão | Redis | Cache, rate limiting, locks distribuídos |
-| Storage de anexos | S3-compatível (MinIO em dev; S3/R2 em prod) | `Anexo`, imagens inline do rich text |
-| Editor rich text | TipTap + sanitização server-side | Descrição/mensagens; imagens e anexos inline |
-| Autenticação | Autenticação própria conforme spec 03 (D-010) | Login, sessão, resolução de tenant por subdomínio/domínio |
-| Engine de IA (fase 1) | Claude Agent SDK, modelo Opus 4.8 | Execução da triagem em worker isolado |
+| Camada                | Escolha confirmada                            | Papel                                                               |
+| --------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
+| Monorepo / linguagem  | TypeScript, monorepo (npm workspaces)         | Código compartilhado entre web e worker (tipos, validação, clients) |
+| Web full-stack        | Next.js 16 (App Router)                       | UI + API (Route Handlers / Server Actions) numa base só             |
+| Banco de dados        | PostgreSQL 16                                 | Persistência transacional; `tenant_id` + RLS                        |
+| ORM                   | TypeORM                                       | Acesso ao banco (entities/repositories), migrações                  |
+| Fila                  | Redis + BullMQ                                | Jobs de triagem de IA, notificações, manutenção                     |
+| Cache / sessão        | Redis                                         | Cache, rate limiting, locks distribuídos                            |
+| Storage de anexos     | S3-compatível (MinIO em dev; S3/R2 em prod)   | `Anexo`, imagens inline do rich text                                |
+| Editor rich text      | TipTap + sanitização server-side              | Descrição/mensagens; imagens e anexos inline                        |
+| Autenticação          | Autenticação própria conforme spec 03 (D-010) | Login, sessão, resolução de tenant por subdomínio/domínio           |
+| Engine de IA (fase 1) | Claude Agent SDK, modelo Opus 4.8             | Execução da triagem em worker isolado                               |
 
 ### 2.1 Justificativas e alternativas consideradas
 
 **Monorepo TypeScript.** Web app e worker de IA compartilham tipos das entidades canônicas (`Chamado`, `Mensagem`, `ExecucaoIA` etc.), schemas de validação (Zod) e o client do provider de IA. Um monorepo elimina duplicação e drift de contrato.
+
 - Alternativas: repositórios separados (mais isolamento, mais overhead de versionamento de contratos compartilhados); poliglota com worker em Python. Python teria SDKs de IA maduros, porém pagaria custo de duplicar modelos de domínio e validação em duas linguagens. TypeScript ponta a ponta vence pela coesão, dado que o Claude Agent SDK/CLI é acessível a partir de Node.
 
 **Next.js (App Router) full-stack.** Entrega UI moderna (SSR/RSC), API co-localizada e boa DX. Suporta o portal do cliente e o painel operador/admin (`08-ui-ux.md`) na mesma base.
+
 - Alternativas: SPA (React/Vite) + API dedicada (NestJS/Fastify). Dá separação mais limpa entre front e back, ao custo de dois deployables e mais boilerplate. Para a fase inicial, a coesão do Next.js supera. Se a API crescer além do que Route Handlers comportam, extrai-se um serviço dedicado sem trocar o front.
 
 **PostgreSQL 16 + RLS.** RLS aplica isolamento por `tenant_id` no nível do banco, defesa em profundidade além do filtro na aplicação. JSONB para campos flexíveis, full-text search nativo para busca de chamados (`04-chamados.md`).
+
 - Alternativas: MySQL (RLS mais fraco); um banco por tenant (isolamento máximo, custo operacional e de migração alto — inviável para muitos tenants pequenos). Schema-per-tenant é meio-termo, porém complica migrações e pooling; RLS num schema compartilhado é o melhor equilíbrio para whitelabel com muitos tenants.
 
 **TypeORM.** Escolhido (D-001) pelo controle explícito de transação/`queryRunner`, necessário para o isolamento por tenant: RLS exige que cada transação carregue o `tenant_id` corrente via `SET LOCAL app.current_tenant`. Todo acesso a dados passa por um helper `runInTenantContext(tenantId, fn)` que abre uma transação, aplica o `SET LOCAL` e executa as queries dentro dela — nunca um `SET` de sessão, para que a conexão do pool não vaze tenant entre requests (ver §5 e `02-modelo-de-dados.md`). O spike Prisma vs Drizzle foi cancelado.
 
 **Redis + BullMQ.** Filas confiáveis com retries, backoff, agendamento (delayed jobs para o auto-fechamento de `resolvido`) e concorrência controlada. Redis também serve cache e locks.
+
 - Alternativas: pg-boss (fila sobre o próprio Postgres — menos uma dependência, menor throughput/features); serviços gerenciados (SQS). BullMQ é maduro no ecossistema Node e cobre bem os padrões necessários.
 
 **Storage S3-compatível.** Anexos e imagens inline não vão ao banco. MinIO em dev garante paridade com S3/R2 em prod. Uploads via URLs pré-assinadas; varredura e limites em `09-seguranca-lgpd.md`.
@@ -122,27 +126,35 @@ graph TB
 ```
 
 ### 3.1 Web app (Next.js)
+
 Serve o portal do cliente e o painel operador/admin. Renderização via RSC; ações mutantes por Server Actions / Route Handlers. Responsável por autenticação, resolução do tenant a partir do host, aplicação de permissões (`03-autenticacao-perfis-permissoes.md`) e enfileiramento de jobs. Não executa trabalho pesado inline.
 
 ### 3.2 API
+
 Não é um serviço separado na fase 1 — vive dentro do Next.js. Expõe as operações de `Chamado`, `Mensagem`, `Anexo` etc. e endpoints internos consumidos pelos workers (ex.: worker publica `Mensagem` da IA e grava `ExecucaoIA`). Toda escrita valida entrada (Zod) e respeita RLS.
 
 ### 3.3 Worker de IA (`agente_ia`)
+
 Processo Node separado, consumidor da fila de triagem. Executa o pipeline de `05-agente-ia.md`: `git pull` do sistema-alvo, análise com acesso a código/logs/banco somente leitura, classificação de complexidade, publicação de `Mensagem` (publica ou interna) e registro de `ExecucaoIA`. Isolado por rede/permissões (`09-seguranca-lgpd.md`). Nunca compartilha processo com o web app: cargas longas e uso de CPU/IO da IA não podem afetar latência de request.
 
 ### 3.4 Worker de notificações
+
 Consumidor da fila de notificações. Resolve `PreferenciaNotificacao` do usuário, renderiza template com branding do tenant e despacha pelo `CanalNotificacao` via o gateway adequado (adapter). Detalhes em `06-notificacoes.md`.
 
 ### 3.5 Fila (Redis + BullMQ)
+
 Filas nomeadas por domínio: `triagem-ia`, `notificacoes`, `manutencao` (ex.: job agendado de auto-fechamento de chamados `resolvido` após N dias). Retries com backoff exponencial, dead-letter para inspeção e concorrência configurável por fila (a `triagem-ia` roda com concorrência baixa por ser cara).
 
 ### 3.6 Banco de dados (PostgreSQL)
+
 Fonte de verdade de todas as entidades canônicas. Isolamento por `tenant_id` + RLS. Full-text search para busca de chamados. Schema em `02-modelo-de-dados.md`.
 
 ### 3.7 Storage de anexos
+
 Guarda `Anexo` e imagens inline do rich text. Acesso por URLs pré-assinadas de curta duração; o banco guarda apenas metadados e chaves de objeto.
 
 ### 3.8 Gateways de notificação
+
 Camada de adapters plugáveis. Fase 1: e-mail (SMTP). Fase 2: WhatsApp e outros. Contrato e catálogo em `06-notificacoes.md`.
 
 ---
@@ -157,8 +169,8 @@ O contrato do `AIProvider` é definido **canonicamente aqui** (§4.1) — este �
 
 ```typescript
 interface AIProvider {
-  nome: string;    // ex.: "claude-agent-sdk"
-  modelo: string;  // ex.: "opus-4.8"
+  nome: string; // ex.: "claude-agent-sdk"
+  modelo: string; // ex.: "opus-4.8"
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;
 }
@@ -168,8 +180,8 @@ interface AIProviderInput {
   contexto: {
     titulo: string;
     naturezaDeclarada: 'problema' | 'alteracao';
-    timeline: MensagemPublica[];        // apenas mensagens públicas, já sanitizadas
-    sistemaAlvo: MetadadosSistemaAlvo;  // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
+    timeline: MensagemPublica[]; // apenas mensagens públicas, já sanitizadas
+    sistemaAlvo: MetadadosSistemaAlvo; // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
   };
 
   // Handles de ferramentas JÁ escopadas, injetados pelo worker (nunca conexões/credenciais cruas).
@@ -177,7 +189,7 @@ interface AIProviderInput {
     repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
     repo_ler_arquivo(caminho: string): Promise<string>;
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
-    bd_consultar(sql: string): Promise<Linha[]>;   // SELECT-only, com timeout imposto pelo worker
+    bd_consultar(sql: string): Promise<Linha[]>; // SELECT-only, com timeout imposto pelo worker
   };
 
   limites: {
@@ -189,15 +201,16 @@ interface AIProviderInput {
 
 interface AIProviderResult {
   compreendido: boolean;
-  confianca: number;                                             // 0..1
+  confianca: number; // 0..1
   perguntasAoCliente: string[] | null;
   complexidade: 'facil' | 'medio' | 'dificil' | null;
   naturezaAjustada: 'problema' | 'alteracao' | null;
   prioridadeSugerida: 'baixa' | 'media' | 'alta' | 'urgente' | null;
   diagnostico: string | null;
-  spec: string | null;                                           // preenchido quando naturezaAjustada = 'alteracao'
+  spec: string | null; // preenchido quando naturezaAjustada = 'alteracao'
   tentativaResolucao: { branch: string; prUrl: string; resumo: string } | null;
-  telemetria: {                                                  // obrigatória em toda resposta
+  telemetria: {
+    // obrigatória em toda resposta
     custoUsd: number;
     duracaoMs: number;
     tokensEntrada: number;
@@ -209,6 +222,7 @@ interface AIProviderResult {
 O worker preenche `AIProviderInput` a partir do chamado e das ferramentas read-only já escopadas; `05-agente-ia.md` §10 descreve como cada campo de `AIProviderResult` (`perguntasAoCliente`, `complexidade`/`naturezaAjustada`/`prioridadeSugerida`, `diagnostico`, `spec`, `tentativaResolucao`) é traduzido em ações de domínio. Nenhuma redefinição do contrato vive em `05` — apenas o consumo.
 
 Notas de contrato (perspectiva arquitetural):
+
 - **Nunca credenciais cruas no provider.** O worker injeta **handles de ferramentas já escopadas** (`repo_buscar`, `repo_ler_arquivo`, `logs_consultar`, `bd_consultar` SELECT-only com timeout) — jamais o caminho do repositório, a DSN read-only ou qualquer credencial do sistema-alvo no input. A conexão real ao banco e o acesso ao filesystem vivem **apenas no worker**; assim um provider trocável, bugado ou comprometido não tem conectividade direta ao BD nem ao repositório, e a mediação do `bd_consultar` (SELECT-only + timeout) e das ferramentas read-only nunca é contornada (menor privilégio — `05-agente-ia.md` §4.2/§10 e `09-seguranca-lgpd.md` §4.2).
 - **O provider decide, o pipeline age.** O provider retorna uma decisão estruturada; a máquina de estados (mudar status para `aguardando_cliente`, publicar `Mensagem`, criar branch/PR, gravar `ExecucaoIA`) é responsabilidade do pipeline. Isso mantém o provider substituível.
 - **Telemetria obrigatória** em toda resposta, via `AIProviderResult.telemetria` (`custoUsd`/`duracaoMs`/`tokensEntrada`/`tokensSaida`), alimentando `ExecucaoIA`.
@@ -222,9 +236,11 @@ Notas de contrato (perspectiva arquitetural):
 ```typescript
 function resolverProvider(cfg: TenantAIConfig): AIProvider {
   switch (cfg.engine) {
-    case 'claude-agent-sdk': return new ClaudeAgentProvider(cfg);
+    case 'claude-agent-sdk':
+      return new ClaudeAgentProvider(cfg);
     // case 'outro-engine': return new OutroProvider(cfg);
-    default: throw new Error(`engine de IA nao suportado: ${cfg.engine}`);
+    default:
+      throw new Error(`engine de IA nao suportado: ${cfg.engine}`);
   }
 }
 ```
@@ -261,6 +277,7 @@ sequenceDiagram
 ```
 
 Pontos-chave:
+
 1. **Resolução do tenant pelo host.** Subdomínio (`acme.chamados.app`) ou domínio próprio (`suporte.acme.com`) → `tenant_id`. Mapa host→tenant em cache (Redis) com TTL curto. Detalhes de provisionamento e domínios em `07-multitenancy-whitelabel.md`.
 2. **Contexto propagado.** `{ tenantId, userId, role }` viaja explicitamente até a camada de dados; nada de estado global implícito.
 3. **RLS por transação.** Cada transação executa `SET LOCAL app.current_tenant` antes das queries; as políticas RLS restringem as linhas ao tenant. Erro de aplicação que "esqueça" o filtro ainda é barrado pelo banco.
@@ -274,11 +291,11 @@ Pontos-chave:
 
 ### 6.1 Ambientes
 
-| Ambiente | Objetivo | Infra |
-|---|---|---|
-| **dev** | Desenvolvimento local | Docker Compose: Postgres, Redis, MinIO, MailHog (SMTP fake); web e worker via hot reload |
-| **staging** | Homologação, paridade com prod | Mesma imagem de prod, dados sintéticos, gateways em modo sandbox |
-| **prod** | Produção | Imagens versionadas, storage S3/R2, SMTP real, backups e monitoramento |
+| Ambiente    | Objetivo                       | Infra                                                                                    |
+| ----------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| **dev**     | Desenvolvimento local          | Docker Compose: Postgres, Redis, MinIO, MailHog (SMTP fake); web e worker via hot reload |
+| **staging** | Homologação, paridade com prod | Mesma imagem de prod, dados sintéticos, gateways em modo sandbox                         |
+| **prod**    | Produção                       | Imagens versionadas, storage S3/R2, SMTP real, backups e monitoramento                   |
 
 Paridade dev↔prod garantida por serviços S3-compatíveis (MinIO/S3) e mesmas imagens Docker.
 
@@ -311,6 +328,7 @@ Mínimo para operar e depurar a fase 1; ampliado conforme o roadmap.
 **Logs estruturados (JSON).** Biblioteca única (ex.: pino) em web e workers. Todo log carrega `tenantId`, `requestId`/`jobId` e, quando aplicável, `chamadoId`. Correlação request→job→ação da IA pelo `requestId`/`jobId`. Nunca logar segredos dos sistemas-alvo (credenciais git, URL do banco somente leitura) nem conteúdo sensível de chamados — ver `09-seguranca-lgpd.md`.
 
 **Health checks.**
+
 - `GET /health/live` — o processo está de pé (liveness).
 - `GET /health/ready` — dependências acessíveis: Postgres, Redis, storage (readiness). O proxy só roteia para instâncias `ready`.
 - Workers expõem heartbeat/health próprio (BullMQ + endpoint leve) para o orquestrador detectar travamento.
@@ -325,14 +343,14 @@ Mínimo para operar e depurar a fase 1; ampliado conforme o roadmap.
 
 ## 8. Resumo das dependências entre documentos
 
-| Tema | Documento responsável |
-|---|---|
-| Schema, entidades, enums no BD, RLS detalhada | `02-modelo-de-dados.md` |
+| Tema                                                                  | Documento responsável                  |
+| --------------------------------------------------------------------- | -------------------------------------- |
+| Schema, entidades, enums no BD, RLS detalhada                         | `02-modelo-de-dados.md`                |
 | Auth, resolução de tenant, permissões, service account do `agente_ia` | `03-autenticacao-perfis-permissoes.md` |
-| Ciclo de vida do chamado, rich text, anexos, busca | `04-chamados.md` |
-| Pipeline de negócio da IA, guardrails, geração de SPEC | `05-agente-ia.md` |
-| Adapters de e-mail/WhatsApp, templates, preferências | `06-notificacoes.md` |
-| Provisionamento, branding, domínios, sistemas-alvo | `07-multitenancy-whitelabel.md` |
-| Telas e fluxos | `08-ui-ux.md` |
-| Ameaças, uploads, XSS, prompt injection, LGPD | `09-seguranca-lgpd.md` |
-| Fases de entrega e escopo do MVP | `10-roadmap-mvp.md` |
+| Ciclo de vida do chamado, rich text, anexos, busca                    | `04-chamados.md`                       |
+| Pipeline de negócio da IA, guardrails, geração de SPEC                | `05-agente-ia.md`                      |
+| Adapters de e-mail/WhatsApp, templates, preferências                  | `06-notificacoes.md`                   |
+| Provisionamento, branding, domínios, sistemas-alvo                    | `07-multitenancy-whitelabel.md`        |
+| Telas e fluxos                                                        | `08-ui-ux.md`                          |
+| Ameaças, uploads, XSS, prompt injection, LGPD                         | `09-seguranca-lgpd.md`                 |
+| Fases de entrega e escopo do MVP                                      | `10-roadmap-mvp.md`                    |

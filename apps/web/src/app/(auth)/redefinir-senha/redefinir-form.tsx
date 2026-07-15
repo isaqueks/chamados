@@ -1,32 +1,31 @@
-"use client"
+'use client';
 
-import { useActionState } from "react"
-import Link from "next/link"
-import { Button, buttonVariants } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { acaoRedefinir, type EstadoRedefinir } from "./actions"
+import { useActionState } from 'react';
+import Link from 'next/link';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoRedefinir, type EstadoRedefinir } from './actions';
 
-const INICIAL: EstadoRedefinir = {}
+const INICIAL: EstadoRedefinir = {};
 
 export function RedefinirForm({ token }: { token: string }) {
-  const [estado, acao, pendente] = useActionState(acaoRedefinir, INICIAL)
+  const [estado, acao, pendente] = useActionState(acaoRedefinir, INICIAL);
 
   if (estado.ok) {
     return (
       <div className="flex flex-col gap-4">
         <Alert variant="success">
           <AlertDescription>
-            Senha redefinida com sucesso. Todas as sessões anteriores foram
-            encerradas.
+            Senha redefinida com sucesso. Todas as sessões anteriores foram encerradas.
           </AlertDescription>
         </Alert>
-        <Link href="/login" className={buttonVariants({ size: "lg", className: "w-full" })}>
+        <Link href="/login" className={buttonVariants({ size: 'lg', className: 'w-full' })}>
           Ir para o login
         </Link>
       </div>
-    )
+    );
   }
 
   return (
@@ -61,8 +60,8 @@ export function RedefinirForm({ token }: { token: string }) {
         />
       </div>
       <Button type="submit" size="lg" disabled={pendente} className="w-full">
-        {pendente ? "Salvando…" : "Redefinir senha"}
+        {pendente ? 'Salvando…' : 'Redefinir senha'}
       </Button>
     </form>
-  )
+  );
 }

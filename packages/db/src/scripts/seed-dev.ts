@@ -11,24 +11,22 @@ carregarEnvRaiz();
 
 const { criarAppDataSource } = await import('../data-source');
 const { runInTenantContext } = await import('../rls');
-const {
-  provisionarTenant,
-  atualizarStatusTenant,
-  criarUsuarioAtivoComSenha,
-  existeContaPorEmail,
-} = await import('../auth');
+const { provisionarTenant, atualizarStatusTenant, criarUsuarioAtivoComSenha, existeContaPorEmail } =
+  await import('../auth');
 const { UsuarioSchema } = await import('../entities/usuario');
 const { ChamadoSchema } = await import('../entities/chamado');
-const {
-  criarChamado,
-  transicionarStatus,
-  atribuirOperador,
-  definirComplexidade,
-  atorSistema,
-} = await import('../chamados/chamado-service');
+const { criarChamado, transicionarStatus, atribuirOperador, definirComplexidade, atorSistema } =
+  await import('../chamados/chamado-service');
 const { criarMensagem } = await import('../chamados/mensagem-service');
-const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade, VisibilidadeMensagem } =
-  await import('@chamados/shared');
+const {
+  Papel,
+  StatusTenant,
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  VisibilidadeMensagem,
+} = await import('@chamados/shared');
 
 const SLUG = 'acme';
 const SENHA_DEV = 'Dev@12345';
@@ -126,7 +124,12 @@ async function main(): Promise<void> {
         Natureza.problema,
         Prioridade.alta,
       );
-      await msg(c1, atorCliente, VisibilidadeMensagem.publica, 'Consigo reproduzir sempre no Chrome.');
+      await msg(
+        c1,
+        atorCliente,
+        VisibilidadeMensagem.publica,
+        'Consigo reproduzir sempre no Chrome.',
+      );
 
       // #2 em_atendimento (problema/media) — operador assumiu; complexidade média.
       const c2 = await abrir(
@@ -139,8 +142,18 @@ async function main(): Promise<void> {
       await transicionarStatus(em, atorOperador, c2, StatusChamado.em_atendimento);
       await atribuirOperador(em, atorOperador, c2, operadorU.id);
       await definirComplexidade(em, atorOperador, c2, Complexidade.medio);
-      await msg(c2, atorOperador, VisibilidadeMensagem.publica, 'Olá! Já estamos investigando o problema do CSV.');
-      await msg(c2, atorOperador, VisibilidadeMensagem.interna, 'Nota interna: parece erro de encoding ao gerar o arquivo. Verificar o serviço de exportação.');
+      await msg(
+        c2,
+        atorOperador,
+        VisibilidadeMensagem.publica,
+        'Olá! Já estamos investigando o problema do CSV.',
+      );
+      await msg(
+        c2,
+        atorOperador,
+        VisibilidadeMensagem.interna,
+        'Nota interna: parece erro de encoding ao gerar o arquivo. Verificar o serviço de exportação.',
+      );
 
       // #3 aguardando_cliente (alteracao/baixa) — a IA pediu mais informações.
       const c3 = await abrir(
@@ -150,9 +163,19 @@ async function main(): Promise<void> {
         Prioridade.baixa,
       );
       await transicionarStatus(em, sistema, c3, StatusChamado.em_triagem);
-      await msg(c3, atorOperador, VisibilidadeMensagem.publica, 'Você prefere filtrar por data de criação ou por data de fechamento?');
+      await msg(
+        c3,
+        atorOperador,
+        VisibilidadeMensagem.publica,
+        'Você prefere filtrar por data de criação ou por data de fechamento?',
+      );
       await transicionarStatus(em, atorIA, c3, StatusChamado.aguardando_cliente);
-      await msg(c3, atorOperador, VisibilidadeMensagem.interna, 'Nota interna: aguardando cliente definir o critério de data antes de gerar a SPEC.');
+      await msg(
+        c3,
+        atorOperador,
+        VisibilidadeMensagem.interna,
+        'Nota interna: aguardando cliente definir o critério de data antes de gerar a SPEC.',
+      );
 
       // #4 resolvido (problema/urgente) — ciclo completo até resolvido.
       const c4 = await abrir(
@@ -165,10 +188,17 @@ async function main(): Promise<void> {
       await transicionarStatus(em, atorOperador, c4, StatusChamado.em_atendimento);
       await atribuirOperador(em, atorOperador, c4, operadorU.id);
       await definirComplexidade(em, atorOperador, c4, Complexidade.facil);
-      await msg(c4, atorOperador, VisibilidadeMensagem.publica, 'Aumentamos o pool de conexões; pode testar novamente?');
+      await msg(
+        c4,
+        atorOperador,
+        VisibilidadeMensagem.publica,
+        'Aumentamos o pool de conexões; pode testar novamente?',
+      );
       await transicionarStatus(em, atorOperador, c4, StatusChamado.resolvido);
 
-      console.log('[seed-dev]   • 4 chamados de exemplo criados com mensagens (públicas e internas).');
+      console.log(
+        '[seed-dev]   • 4 chamados de exemplo criados com mensagens (públicas e internas).',
+      );
     });
 
     console.log('\n[seed-dev] PRONTO. Acesse: http://acme.localhost:3000/login');

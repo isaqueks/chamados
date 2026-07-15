@@ -52,10 +52,7 @@ export async function garantirBucket(): Promise<void> {
     } catch (e: unknown) {
       // Corrida: outro processo pode ter criado entre o head e o create.
       const nome = (e as { name?: string })?.name ?? '';
-      if (
-        nome !== 'BucketAlreadyOwnedByYou' &&
-        nome !== 'BucketAlreadyExists'
-      ) {
+      if (nome !== 'BucketAlreadyOwnedByYou' && nome !== 'BucketAlreadyExists') {
         throw e;
       }
     }
@@ -75,11 +72,7 @@ export function chaveBranding(tenantId: string, arquivo: string): string {
 }
 
 /** Chave de um anexo de chamado (base para o M4). */
-export function chaveAnexo(
-  tenantId: string,
-  chamadoId: string,
-  anexoId: string,
-): string {
+export function chaveAnexo(tenantId: string, chamadoId: string, anexoId: string): string {
   return `${prefixoTenant(tenantId)}/anexos/${chamadoId}/${anexoId}`;
 }
 
@@ -112,9 +105,7 @@ export interface ObjetoBaixado {
 export async function obterObjeto(key: string): Promise<ObjetoBaixado | null> {
   const s3 = obterS3();
   try {
-    const res = await s3.send(
-      new GetObjectCommand({ Bucket: cfg().bucket, Key: key }),
-    );
+    const res = await s3.send(new GetObjectCommand({ Bucket: cfg().bucket, Key: key }));
     const bytes = await res.Body!.transformToByteArray();
     return {
       corpo: Buffer.from(bytes),
@@ -137,14 +128,9 @@ export async function removerObjeto(key: string): Promise<void> {
  * URL pré-assinada de GET, com TTL curto (default 5 min). Base para servir
  * anexos no M4 (specs/09 §5). Emitida apenas após checagem de autorização.
  */
-export async function urlAssinadaGet(
-  key: string,
-  ttlSegundos = 300,
-): Promise<string> {
+export async function urlAssinadaGet(key: string, ttlSegundos = 300): Promise<string> {
   const s3 = obterS3();
-  return getSignedUrl(
-    s3,
-    new GetObjectCommand({ Bucket: cfg().bucket, Key: key }),
-    { expiresIn: ttlSegundos },
-  );
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: cfg().bucket, Key: key }), {
+    expiresIn: ttlSegundos,
+  });
 }

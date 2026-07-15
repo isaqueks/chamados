@@ -40,10 +40,10 @@ export async function resolverTenantPorSlug(
   ds: DataSource,
   slug: string,
 ): Promise<TenantResolvido | null> {
-  const linhas: LinhaResolver[] = await ds.query(
-    'SELECT * FROM chamados_resolver_tenant($1, $2)',
-    [slug.trim().toLowerCase(), null],
-  );
+  const linhas: LinhaResolver[] = await ds.query('SELECT * FROM chamados_resolver_tenant($1, $2)', [
+    slug.trim().toLowerCase(),
+    null,
+  ]);
   return linhas[0] ?? null;
 }
 
@@ -52,10 +52,10 @@ export async function resolverTenantPorDominio(
   ds: DataSource,
   dominio: string,
 ): Promise<TenantResolvido | null> {
-  const linhas: LinhaResolver[] = await ds.query(
-    'SELECT * FROM chamados_resolver_tenant($1, $2)',
-    [null, dominio.trim().toLowerCase()],
-  );
+  const linhas: LinhaResolver[] = await ds.query('SELECT * FROM chamados_resolver_tenant($1, $2)', [
+    null,
+    dominio.trim().toLowerCase(),
+  ]);
   return linhas[0] ?? null;
 }
 

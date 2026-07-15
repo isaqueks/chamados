@@ -156,8 +156,7 @@ const MATRIZ: Matriz = {
     convidar: {
       [admin]: true,
       [operador]: (_ator, alvo) =>
-        alvo.papel_convidado === cliente &&
-        alvo.operador_pode_convidar_cliente === true,
+        alvo.papel_convidado === cliente && alvo.operador_pode_convidar_cliente === true,
       [cliente]: false,
       [agente_ia]: false,
     },
@@ -205,10 +204,7 @@ const MATRIZ: Matriz = {
 };
 
 /** Resolve a decisão bruta de um papel, aplicando a herança admin ⊇ operador. */
-function regraParaPapel(
-  regras: RegraPorPapel | undefined,
-  papel: Papel,
-): Decisao | undefined {
+function regraParaPapel(regras: RegraPorPapel | undefined, papel: Papel): Decisao | undefined {
   if (!regras) return undefined;
   if (papel === admin) {
     // admin usa a regra própria se existir; senão herda a do operador.
@@ -221,12 +217,7 @@ function regraParaPapel(
  * Decide se `ator` pode executar `acao` sobre `recurso` (opcionalmente sobre um
  * `alvo` específico). Default: NEGAR (allowlist, não denylist).
  */
-export function autorizar(
-  ator: Ator,
-  recurso: Recurso,
-  acao: Acao,
-  alvo: Alvo = {},
-): boolean {
+export function autorizar(ator: Ator, recurso: Recurso, acao: Acao, alvo: Alvo = {}): boolean {
   const decisao = regraParaPapel(MATRIZ[recurso]?.[acao], ator.papel);
   if (decisao === undefined) return false;
   if (typeof decisao === 'boolean') return decisao;

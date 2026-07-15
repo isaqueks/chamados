@@ -6,13 +6,7 @@ import {
   type MensagemInterna,
   type ChamadoInterno,
 } from './serializers';
-import {
-  VisibilidadeMensagem,
-  StatusChamado,
-  Natureza,
-  Prioridade,
-  Complexidade,
-} from './enums';
+import { VisibilidadeMensagem, StatusChamado, Natureza, Prioridade, Complexidade } from './enums';
 
 function msg(over: Partial<MensagemInterna>): MensagemInterna {
   return {

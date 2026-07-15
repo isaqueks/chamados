@@ -1,8 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 /**
  * Envelope encryption AES-256-GCM (specs/09 §7) para o cofre de segredos local.
@@ -35,7 +31,7 @@ export function carregarChaveMestra(): Buffer {
   if (!raw || raw.trim() === '') {
     throw new Error(
       'SECRET_STORE_MASTER_KEY não configurada. Gere com: ' +
-        'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
     );
   }
   let chave: Buffer;

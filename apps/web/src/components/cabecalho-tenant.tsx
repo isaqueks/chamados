@@ -1,5 +1,5 @@
-import { obterTenantAtual } from "@/lib/tenant"
-import { urlLogo } from "@/lib/branding"
+import { obterTenantAtual } from '@/lib/tenant';
+import { urlLogo } from '@/lib/branding';
 
 /**
  * Cabeçalho de marca do tenant resolvido (specs/07 §3, specs/08). Mostra o logo
@@ -7,10 +7,10 @@ import { urlLogo } from "@/lib/branding"
  * já vêm das CSS variables injetadas por BrandingVars.
  */
 export async function CabecalhoTenant() {
-  const tenant = await obterTenantAtual()
-  const nome = tenant?.nome_exibicao ?? "Chamados"
-  const inicial = nome.trim().charAt(0).toUpperCase() || "C"
-  const logo = urlLogo(tenant?.config_branding, "light")
+  const tenant = await obterTenantAtual();
+  const nome = tenant?.nome_exibicao ?? 'Chamados';
+  const inicial = nome.trim().charAt(0).toUpperCase() || 'C';
+  const logo = urlLogo(tenant?.config_branding, 'light');
 
   return (
     <div className="flex flex-col items-center gap-2 text-center">
@@ -24,5 +24,5 @@ export async function CabecalhoTenant() {
       )}
       <span className="text-base font-semibold tracking-tight">{nome}</span>
     </div>
-  )
+  );
 }

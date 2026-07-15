@@ -39,9 +39,7 @@ export class M21720000002000 implements MigrationInterface {
           REFERENCES "tenant" ("id") ON DELETE CASCADE
       )
     `);
-    await queryRunner.query(
-      `CREATE INDEX "ix_segredo_tenant" ON "segredo" ("tenant_id")`,
-    );
+    await queryRunner.query(`CREATE INDEX "ix_segredo_tenant" ON "segredo" ("tenant_id")`);
 
     // ---- Tabela sistema_alvo -----------------------------------------------
     await queryRunner.query(`
@@ -90,9 +88,7 @@ export class M21720000002000 implements MigrationInterface {
         CONSTRAINT "uq_categoria_tenant_nome" UNIQUE ("tenant_id", "nome")
       )
     `);
-    await queryRunner.query(
-      `CREATE INDEX "ix_categoria_tenant" ON "categoria" ("tenant_id")`,
-    );
+    await queryRunner.query(`CREATE INDEX "ix_categoria_tenant" ON "categoria" ("tenant_id")`);
 
     // ---- RLS (FORCE + policy por tenant_id) + grants ------------------------
     for (const tabela of ['segredo', 'sistema_alvo', 'categoria']) {

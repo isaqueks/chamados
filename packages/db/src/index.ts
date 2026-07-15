@@ -1,37 +1,19 @@
 export { conexaoBase, credenciaisAdmin, credenciaisApp } from './config';
-export {
-  criarAppDataSource,
-  criarAdminDataSource,
-  obterAppDataSource,
-} from './data-source';
+export { criarAppDataSource, criarAdminDataSource, obterAppDataSource } from './data-source';
 export { runInTenantContext } from './rls';
 export { verificarPostgres } from './health';
 export { TenantSchema, type Tenant, type ConfigBranding } from './entities/tenant';
 export { UsuarioSchema, type Usuario } from './entities/usuario';
 export { SessaoSchema, type Sessao } from './entities/sessao';
 export { ConviteSchema, type Convite } from './entities/convite';
-export {
-  RedefinicaoSenhaSchema,
-  type RedefinicaoSenha,
-} from './entities/redefinicao-senha';
+export { RedefinicaoSenhaSchema, type RedefinicaoSenha } from './entities/redefinicao-senha';
 export { SegredoSchema, type Segredo } from './entities/segredo';
-export {
-  SistemaAlvoSchema,
-  type SistemaAlvo,
-  type LogsConfig,
-} from './entities/sistema-alvo';
+export { SistemaAlvoSchema, type SistemaAlvo, type LogsConfig } from './entities/sistema-alvo';
 export { CategoriaSchema, type Categoria } from './entities/categoria';
-export {
-  ChamadoSchema,
-  type Chamado,
-  type DocRichText,
-} from './entities/chamado';
+export { ChamadoSchema, type Chamado, type DocRichText } from './entities/chamado';
 export { MensagemSchema, type Mensagem } from './entities/mensagem';
 export { AnexoSchema, type Anexo } from './entities/anexo';
-export {
-  EventoChamadoSchema,
-  type EventoChamado,
-} from './entities/evento-chamado';
+export { EventoChamadoSchema, type EventoChamado } from './entities/evento-chamado';
 export * from './auth';
 
 // ---- M2: cofre de segredos, sistemas-alvo, categorias, config do tenant ----
@@ -165,7 +147,4 @@ export {
   type ResultadoDownload,
   type MotivoDownload,
 } from './chamados/anexo-service';
-export {
-  listarEventos,
-  type EventoView,
-} from './chamados/evento-service';
+export { listarEventos, type EventoView } from './chamados/evento-service';

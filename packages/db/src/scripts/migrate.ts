@@ -19,9 +19,7 @@ async function main(): Promise<void> {
       if (aplicadas.length === 0) {
         console.log('[migrate] nenhuma migration pendente.');
       } else {
-        console.log(
-          `[migrate] aplicadas: ${aplicadas.map((m) => m.name).join(', ')}`,
-        );
+        console.log(`[migrate] aplicadas: ${aplicadas.map((m) => m.name).join(', ')}`);
       }
     }
   } finally {

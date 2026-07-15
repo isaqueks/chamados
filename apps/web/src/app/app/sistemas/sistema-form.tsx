@@ -1,19 +1,15 @@
-"use client"
+'use client';
 
-import { useActionState, useState } from "react"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import type { SistemaAlvoResumo } from "@chamados/db"
-import {
-  acaoCriarSistema,
-  acaoAtualizarSistema,
-  type EstadoSistema,
-} from "./actions"
+import { useActionState, useState } from 'react';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import type { SistemaAlvoResumo } from '@chamados/db';
+import { acaoCriarSistema, acaoAtualizarSistema, type EstadoSistema } from './actions';
 
-const INICIAL: EstadoSistema = {}
+const INICIAL: EstadoSistema = {};
 
 /** Campo de segredo: mascarado quando já existe; permite definir/substituir/remover. */
 function CampoSegredo({
@@ -23,20 +19,20 @@ function CampoSegredo({
   descricao,
   edicao,
 }: {
-  name: string
-  label: string
-  temCredencial: boolean
-  descricao?: string
-  edicao: boolean
+  name: string;
+  label: string;
+  temCredencial: boolean;
+  descricao?: string;
+  edicao: boolean;
 }) {
-  const [limpar, setLimpar] = useState(false)
+  const [limpar, setLimpar] = useState(false);
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={name}>{label}</Label>
       {edicao && temCredencial && (
         <p className="text-xs text-muted-foreground">
-          Credencial salva: <span className="font-mono tracking-widest">••••••••</span>{" "}
-          — deixe em branco para manter.
+          Credencial salva: <span className="font-mono tracking-widest">••••••••</span> — deixe em
+          branco para manter.
         </p>
       )}
       <Input
@@ -44,9 +40,7 @@ function CampoSegredo({
         name={name}
         type="password"
         autoComplete="new-password"
-        placeholder={
-          edicao && temCredencial ? "Substituir credencial…" : "Definir credencial…"
-        }
+        placeholder={edicao && temCredencial ? 'Substituir credencial…' : 'Definir credencial…'}
         disabled={limpar}
       />
       {edicao && temCredencial && (
@@ -63,15 +57,15 @@ function CampoSegredo({
       )}
       {descricao && <p className="text-xs text-muted-foreground">{descricao}</p>}
     </div>
-  )
+  );
 }
 
 export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
-  const edicao = !!sistema
+  const edicao = !!sistema;
   const [estado, acao, pendente] = useActionState(
     edicao ? acaoAtualizarSistema : acaoCriarSistema,
     INICIAL,
-  )
+  );
 
   return (
     <form action={acao} className="flex flex-col gap-6">
@@ -105,7 +99,7 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
           <textarea
             id="descricao"
             name="descricao"
-            defaultValue={sistema?.descricao ?? ""}
+            defaultValue={sistema?.descricao ?? ''}
             rows={2}
             className="flex w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
           />
@@ -131,7 +125,7 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
             <Input
               id="git_branch_padrao"
               name="git_branch_padrao"
-              defaultValue={sistema?.git_branch_padrao ?? "main"}
+              defaultValue={sistema?.git_branch_padrao ?? 'main'}
               placeholder="main"
             />
           </div>
@@ -153,7 +147,7 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
           <Input
             id="logs_tipo"
             name="logs_tipo"
-            defaultValue={sistema?.logs_tipo ?? ""}
+            defaultValue={sistema?.logs_tipo ?? ''}
             placeholder="arquivo, cloudwatch, loki…"
           />
         </div>
@@ -171,8 +165,8 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
         <Alert>
           <AlertDescription>
             Use um usuário <strong>somente leitura</strong>. A plataforma só executa
-            <code> SELECT</code>, mas não impõe isso no seu banco — configure um
-            usuário read-only dedicado e revogável.
+            <code> SELECT</code>, mas não impõe isso no seu banco — configure um usuário read-only
+            dedicado e revogável.
           </AlertDescription>
         </Alert>
         <div className="grid gap-4 sm:grid-cols-4">
@@ -181,13 +175,13 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
             <Input
               id="bd_tipo"
               name="bd_tipo"
-              defaultValue={sistema?.bd_tipo ?? ""}
+              defaultValue={sistema?.bd_tipo ?? ''}
               placeholder="postgres"
             />
           </div>
           <div className="flex flex-col gap-2 sm:col-span-2">
             <Label htmlFor="bd_host">Host</Label>
-            <Input id="bd_host" name="bd_host" defaultValue={sistema?.bd_host ?? ""} />
+            <Input id="bd_host" name="bd_host" defaultValue={sistema?.bd_host ?? ''} />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="bd_porta">Porta</Label>
@@ -197,13 +191,13 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
               type="number"
               min={1}
               max={65535}
-              defaultValue={sistema?.bd_porta ?? ""}
+              defaultValue={sistema?.bd_porta ?? ''}
               placeholder="5432"
             />
           </div>
           <div className="flex flex-col gap-2 sm:col-span-2">
             <Label htmlFor="bd_nome">Nome do banco</Label>
-            <Input id="bd_nome" name="bd_nome" defaultValue={sistema?.bd_nome ?? ""} />
+            <Input id="bd_nome" name="bd_nome" defaultValue={sistema?.bd_nome ?? ''} />
           </div>
         </div>
         <CampoSegredo
@@ -217,7 +211,7 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pendente}>
-          {pendente ? "Salvando…" : edicao ? "Salvar alterações" : "Cadastrar sistema-alvo"}
+          {pendente ? 'Salvando…' : edicao ? 'Salvar alterações' : 'Cadastrar sistema-alvo'}
         </Button>
         <Link
           href="/app/sistemas"
@@ -227,5 +221,5 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
         </Link>
       </div>
     </form>
-  )
+  );
 }

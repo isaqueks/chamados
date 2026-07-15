@@ -3,6 +3,7 @@
 Este documento define o comportamento funcional da entidade central da plataforma: o **Chamado**. Cobre a máquina de estados, a criação com formulário mínimo, os atributos de classificação (natureza, prioridade, complexidade), a timeline de mensagens e notas internas, rich text e anexos, atribuição de operador, reabertura e fechamento automático, os eventos auditados (`EventoChamado`) e as regras de listagem, filtro e busca.
 
 Escopo relacionado (não duplicado aqui):
+
 - Pipeline de triagem/resolução da IA e geração de SPEC: ver `05-agente-ia.md`.
 - Schema de banco, tipos de coluna e estratégia multi-tenant no BD: ver `02-modelo-de-dados.md`.
 - Telas, wireframes e fluxos de UI: ver `08-ui-ux.md`.
@@ -21,15 +22,15 @@ O status de um chamado assume EXATAMENTE um dos valores do enum canônico:
 
 ### 1.1 Semântica de cada status
 
-| Status | Significado | Quem geralmente atua |
-| --- | --- | --- |
-| `novo` | Chamado recém-criado, ainda não enfileirado para triagem ou entre a criação e o início do job. | sistema |
-| `em_triagem` | O `agente_ia` está analisando (job na fila ou em execução). | agente_ia |
-| `aguardando_cliente` | Falta informação do cliente; a IA ou o operador pediu dados objetivos. | cliente |
-| `em_atendimento` | Compreendido e em tratamento por operador e/ou IA (diagnóstico, PR, correção). | operador / agente_ia |
-| `resolvido` | Solução entregue; aguardando confirmação/decurso de prazo. Fecha automaticamente após N dias. | sistema (auto-fecha) / cliente (reabre) |
-| `fechado` | Terminal. Encerrado por decurso de prazo ou ação manual. Não recebe novas mensagens. | — |
-| `cancelado` | Terminal. Encerrado sem solução (duplicado, engano, desistência). | — |
+| Status               | Significado                                                                                    | Quem geralmente atua                    |
+| -------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `novo`               | Chamado recém-criado, ainda não enfileirado para triagem ou entre a criação e o início do job. | sistema                                 |
+| `em_triagem`         | O `agente_ia` está analisando (job na fila ou em execução).                                    | agente_ia                               |
+| `aguardando_cliente` | Falta informação do cliente; a IA ou o operador pediu dados objetivos.                         | cliente                                 |
+| `em_atendimento`     | Compreendido e em tratamento por operador e/ou IA (diagnóstico, PR, correção).                 | operador / agente_ia                    |
+| `resolvido`          | Solução entregue; aguardando confirmação/decurso de prazo. Fecha automaticamente após N dias.  | sistema (auto-fecha) / cliente (reabre) |
+| `fechado`            | Terminal. Encerrado por decurso de prazo ou ação manual. Não recebe novas mensagens.           | —                                       |
+| `cancelado`          | Terminal. Encerrado sem solução (duplicado, engano, desistência).                              | —                                       |
 
 Estados terminais: `fechado` e `cancelado`. Nenhuma transição parte deles (exceção: nenhuma — reabertura só existe a partir de `resolvido`).
 
@@ -57,23 +58,24 @@ stateDiagram-v2
 
 ### 1.3 Tabela de transições e autorização
 
-| De | Para | Gatilho | Quem pode |
-| --- | --- | --- | --- |
-| `novo` | `em_triagem` | Job de triagem inicia | sistema |
-| `novo` | `cancelado` | Cancelamento imediato | cliente (autor), operador |
-| `em_triagem` | `aguardando_cliente` | IA pede informações objetivas | agente_ia, operador |
-| `em_triagem` | `em_atendimento` | IA compreendeu; ou operador assume | agente_ia, operador |
-| `em_triagem` | `cancelado` | Cancelamento | operador |
-| `aguardando_cliente` | `em_triagem` | Cliente responde (re-enfileira triagem) | sistema (disparado por mensagem do cliente) |
-| `aguardando_cliente` | `em_atendimento` | Operador decide assumir sem nova rodada de IA | operador |
-| `aguardando_cliente` | `cancelado` | Cliente desiste / operador cancela | cliente (autor), operador |
-| `em_atendimento` | `aguardando_cliente` | Operador ou IA solicita mais dados | operador, agente_ia |
-| `em_atendimento` | `resolvido` | Solução entregue | operador |
-| `em_atendimento` | `cancelado` | Cancelamento | operador |
-| `resolvido` | `em_atendimento` | Reabertura pelo cliente ou reabertura manual | cliente (autor), operador |
-| `resolvido` | `fechado` | Decurso de N dias (auto) ou fechamento manual | sistema, operador |
+| De                   | Para                 | Gatilho                                       | Quem pode                                   |
+| -------------------- | -------------------- | --------------------------------------------- | ------------------------------------------- |
+| `novo`               | `em_triagem`         | Job de triagem inicia                         | sistema                                     |
+| `novo`               | `cancelado`          | Cancelamento imediato                         | cliente (autor), operador                   |
+| `em_triagem`         | `aguardando_cliente` | IA pede informações objetivas                 | agente_ia, operador                         |
+| `em_triagem`         | `em_atendimento`     | IA compreendeu; ou operador assume            | agente_ia, operador                         |
+| `em_triagem`         | `cancelado`          | Cancelamento                                  | operador                                    |
+| `aguardando_cliente` | `em_triagem`         | Cliente responde (re-enfileira triagem)       | sistema (disparado por mensagem do cliente) |
+| `aguardando_cliente` | `em_atendimento`     | Operador decide assumir sem nova rodada de IA | operador                                    |
+| `aguardando_cliente` | `cancelado`          | Cliente desiste / operador cancela            | cliente (autor), operador                   |
+| `em_atendimento`     | `aguardando_cliente` | Operador ou IA solicita mais dados            | operador, agente_ia                         |
+| `em_atendimento`     | `resolvido`          | Solução entregue                              | operador                                    |
+| `em_atendimento`     | `cancelado`          | Cancelamento                                  | operador                                    |
+| `resolvido`          | `em_atendimento`     | Reabertura pelo cliente ou reabertura manual  | cliente (autor), operador                   |
+| `resolvido`          | `fechado`            | Decurso de N dias (auto) ou fechamento manual | sistema, operador                           |
 
 Regras invariantes:
+
 - O `cliente` só pode cancelar/reabrir/responder **seus próprios** chamados (do seu tenant).
 - Toda transição gera um `EventoChamado` (ver seção 8). Transições inválidas (fora desta tabela) são rejeitadas pela camada de serviço com erro de domínio, sem tocar no banco.
 - `fechado` e `cancelado` não aceitam novas mensagens, transições ou atribuições.
@@ -92,15 +94,16 @@ Princípio de produto (RNF-01/RNF-02): o oposto do osTicket. O formulário de ab
 
 Campos do formulário do cliente:
 
-| Campo | Obrigatório | Regra |
-| --- | --- | --- |
+| Campo                        | Obrigatório | Regra                                                                                                                                                                  |
+| ---------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sistema-alvo (`SistemaAlvo`) | Condicional | Exibido e obrigatório **apenas** se o tenant tiver mais de um sistema-alvo. Com um único, é preenchido automaticamente. Alternativamente, a categoria geral do tenant. |
-| Natureza | Sim | `problema` ou `alteracao`. Default sugerido na UI: `problema`. |
-| Título | Sim | Texto curto (ver limites na seção 4). |
-| Descrição | Sim | Rich text com imagens/anexos inline (seção 4). |
-| Prioridade | Não | Se omitida, entra como `media` (default) e pode ser ajustada pela IA/operador. |
+| Natureza                     | Sim         | `problema` ou `alteracao`. Default sugerido na UI: `problema`.                                                                                                         |
+| Título                       | Sim         | Texto curto (ver limites na seção 4).                                                                                                                                  |
+| Descrição                    | Sim         | Rich text com imagens/anexos inline (seção 4).                                                                                                                         |
+| Prioridade                   | Não         | Se omitida, entra como `media` (default) e pode ser ajustada pela IA/operador.                                                                                         |
 
 Ao criar:
+
 1. Status inicial = `novo`; `tenant_id` derivado do contexto autenticado; autor = usuário logado.
 2. Um `EventoChamado` de criação é registrado.
 3. Um job de triagem é enfileirado (BullMQ) — ver `05-agente-ia.md`. A transição `novo` → `em_triagem` ocorre quando o worker inicia.
@@ -145,10 +148,10 @@ Cada chamado possui uma sequência ordenada de `Mensagem` (timeline). Cada mensa
 
 ### 4.1 Regras de visibilidade
 
-| Visibilidade | Quem vê | Quem pode escrever |
-| --- | --- | --- |
-| `publica` | cliente, operador, admin, agente_ia | cliente, operador, admin, agente_ia |
-| `interna` (nota interna) | operador, admin, agente_ia | operador, admin, agente_ia |
+| Visibilidade             | Quem vê                             | Quem pode escrever                  |
+| ------------------------ | ----------------------------------- | ----------------------------------- |
+| `publica`                | cliente, operador, admin, agente_ia | cliente, operador, admin, agente_ia |
+| `interna` (nota interna) | operador, admin, agente_ia          | operador, admin, agente_ia          |
 
 - O `cliente` **nunca** vê mensagens `interna`, nem recebe notificação sobre elas. A API filtra por visibilidade no servidor com base no papel; nunca confia no cliente para ocultar.
 - Notas internas são o canal da IA para diagnóstico, plano de resolução, link de PR e SPEC de alteração.
@@ -177,11 +180,11 @@ Formato e sanitização (detalhes de storage em `02-modelo-de-dados.md`; seguran
 
 Limites:
 
-| Item | Limite (sugerido) |
-| --- | --- |
-| Título | 3–160 caracteres (alinhado ao `CHECK length 3..160` de `02-modelo-de-dados.md`) |
-| Corpo (descrição/mensagem) | até 50.000 caracteres de texto renderizado |
-| Imagens inline por mensagem | até 20 |
+| Item                        | Limite (sugerido)                                                               |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| Título                      | 3–160 caracteres (alinhado ao `CHECK length 3..160` de `02-modelo-de-dados.md`) |
+| Corpo (descrição/mensagem)  | até 50.000 caracteres de texto renderizado                                      |
+| Imagens inline por mensagem | até 20                                                                          |
 
 > DECISÃO PENDENTE: valores exatos dos limites de título e corpo. Números acima são propostas iniciais.
 
@@ -191,12 +194,12 @@ Limites:
 
 `Anexo` cobre tanto imagens inline quanto arquivos anexados à parte, sempre vinculados a uma `Mensagem` (ou à descrição do chamado) e ao `tenant_id`.
 
-| Regra | Valor (sugerido) |
-| --- | --- |
-| Tipos permitidos | Imagens (png, jpg, webp, gif), PDF, texto/logs (txt, log, csv), documentos comuns (docx, xlsx), zip |
-| Tamanho máximo por arquivo | 25 MB |
-| Quantidade por mensagem | até 20 |
-| Quota por chamado / por tenant | Configurável por tenant (ver `07-multitenancy-whitelabel.md`) |
+| Regra                          | Valor (sugerido)                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Tipos permitidos               | Imagens (png, jpg, webp, gif), PDF, texto/logs (txt, log, csv), documentos comuns (docx, xlsx), zip |
+| Tamanho máximo por arquivo     | 25 MB                                                                                               |
+| Quantidade por mensagem        | até 20                                                                                              |
+| Quota por chamado / por tenant | Configurável por tenant (ver `07-multitenancy-whitelabel.md`)                                       |
 
 - Validação de tipo por **conteúdo** (magic bytes), não apenas extensão/MIME informado.
 - Executáveis e tipos ativos são bloqueados por allowlist. Ver `09-seguranca-lgpd.md`.
@@ -243,25 +246,25 @@ Eventos auditados (lista mínima):
 
 Os nomes de tipo abaixo correspondem EXATAMENTE ao enum `tipo_evento` de `02-modelo-de-dados.md`. Resolução (`em_atendimento` → `resolvido`) e cancelamento (`* → cancelado`) **não** têm tipo dedicado: são registrados como `status_alterado` com `{de, para}`. As ações da IA usam os tipos `ia_*` específicos, cada um referenciando a `ExecucaoIA` correspondente.
 
-| Tipo de evento | Origem típica | Payload |
-| --- | --- | --- |
-| `chamado_criado` | cliente/operador | dados iniciais |
-| `status_alterado` | qualquer transição (inclui resolução e cancelamento) | de → para (+ motivo quando cancelamento/fechamento manual) |
-| `prioridade_alterada` | IA/operador | de → para |
-| `natureza_alterada` | IA/operador | de → para |
-| `complexidade_alterada` | IA/operador | de → para (interno) |
-| `atribuicao_alterada` | operador/admin | assignee anterior → novo (`novo = NULL` na desatribuição) |
-| `mensagem_publicada` | qualquer papel | id da mensagem (visibilidade `publica`) |
-| `nota_interna_publicada` | operador/admin/agente_ia | id da mensagem (visibilidade `interna`) |
-| `anexo_adicionado` | qualquer papel | id do anexo, `mensagem_id`/`chamado_id` |
-| `chamado_reaberto` | cliente/operador | — |
-| `chamado_fechado_auto` | sistema | motivo (decurso de N dias). Fechamento manual é `status_alterado` |
-| `ia_iniciou` | agente_ia | referência a `ExecucaoIA` (início da triagem) |
-| `ia_pediu_info` | agente_ia | referência a `ExecucaoIA` (pedido de dados; acompanha `status_alterado` → `aguardando_cliente`) |
-| `ia_diagnosticou` | agente_ia | referência a `ExecucaoIA` (nota interna de diagnóstico) |
-| `ia_abriu_pr` | agente_ia | referência a `ExecucaoIA` (branch/PR de correção) |
-| `ia_gerou_spec` | agente_ia | referência a `ExecucaoIA` (SPEC de alteração) |
-| `ia_falhou` | agente_ia | referência a `ExecucaoIA` (erro/timeout) |
+| Tipo de evento           | Origem típica                                        | Payload                                                                                         |
+| ------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `chamado_criado`         | cliente/operador                                     | dados iniciais                                                                                  |
+| `status_alterado`        | qualquer transição (inclui resolução e cancelamento) | de → para (+ motivo quando cancelamento/fechamento manual)                                      |
+| `prioridade_alterada`    | IA/operador                                          | de → para                                                                                       |
+| `natureza_alterada`      | IA/operador                                          | de → para                                                                                       |
+| `complexidade_alterada`  | IA/operador                                          | de → para (interno)                                                                             |
+| `atribuicao_alterada`    | operador/admin                                       | assignee anterior → novo (`novo = NULL` na desatribuição)                                       |
+| `mensagem_publicada`     | qualquer papel                                       | id da mensagem (visibilidade `publica`)                                                         |
+| `nota_interna_publicada` | operador/admin/agente_ia                             | id da mensagem (visibilidade `interna`)                                                         |
+| `anexo_adicionado`       | qualquer papel                                       | id do anexo, `mensagem_id`/`chamado_id`                                                         |
+| `chamado_reaberto`       | cliente/operador                                     | —                                                                                               |
+| `chamado_fechado_auto`   | sistema                                              | motivo (decurso de N dias). Fechamento manual é `status_alterado`                               |
+| `ia_iniciou`             | agente_ia                                            | referência a `ExecucaoIA` (início da triagem)                                                   |
+| `ia_pediu_info`          | agente_ia                                            | referência a `ExecucaoIA` (pedido de dados; acompanha `status_alterado` → `aguardando_cliente`) |
+| `ia_diagnosticou`        | agente_ia                                            | referência a `ExecucaoIA` (nota interna de diagnóstico)                                         |
+| `ia_abriu_pr`            | agente_ia                                            | referência a `ExecucaoIA` (branch/PR de correção)                                               |
+| `ia_gerou_spec`          | agente_ia                                            | referência a `ExecucaoIA` (SPEC de alteração)                                                   |
+| `ia_falhou`              | agente_ia                                            | referência a `ExecucaoIA` (erro/timeout)                                                        |
 
 - Eventos de atributos internos (ex.: `complexidade_alterada`) e notas internas (`nota_interna_publicada`) herdam a visibilidade interna: não aparecem no histórico do cliente.
 - Detalhamento das ações da IA e da entidade `ExecucaoIA`: ver `05-agente-ia.md`.

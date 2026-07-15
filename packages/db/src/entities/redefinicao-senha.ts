@@ -33,7 +33,5 @@ export const RedefinicaoSenhaSchema = new EntitySchema<RedefinicaoSenha>({
     created_at: { type: 'timestamptz', createDate: true },
   },
   uniques: [{ name: 'uq_redefinicao_token_hash', columns: ['token_hash'] }],
-  indices: [
-    { name: 'ix_redefinicao_tenant_usuario', columns: ['tenant_id', 'usuario_id'] },
-  ],
+  indices: [{ name: 'ix_redefinicao_tenant_usuario', columns: ['tenant_id', 'usuario_id'] }],
 });

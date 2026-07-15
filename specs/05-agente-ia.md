@@ -3,6 +3,7 @@
 Este documento especifica o `agente_ia`: o usuário de serviço que executa a triagem automática, o diagnóstico, a resolução assistida e a geração de SPECs de todo chamado da plataforma. É o componente mais crítico do produto (IA-first) e a principal diferença competitiva em relação ao osTicket.
 
 Cobre RF-10 a RF-17. Fora de escopo aqui (referenciar o doc responsável):
+
 - Infra e isolamento do worker, filas, storage → `01-arquitetura.md`.
 - Schema da entidade `ExecucaoIA` e demais entidades → `02-modelo-de-dados.md`.
 - `agente_ia` como service account e permissões → `03-autenticacao-perfis-permissoes.md`.
@@ -16,6 +17,7 @@ Cobre RF-10 a RF-17. Fora de escopo aqui (referenciar o doc responsável):
 O `agente_ia` é um `Usuario` real (role `agente_ia`), um por tenant, que participa dos chamados como um operador automatizado: publica `Mensagem` (públicas e internas), gera `EventoChamado` e muda status/prioridade dentro dos limites da máquina de estados. Toda ação sua é atribuível e auditável.
 
 Princípios inegociáveis:
+
 - **Guardrail de produção**: a IA NUNCA altera produção. Todo código gerado vive em branch + Pull Request; merge/deploy exige aprovação humana.
 - **Conhecimento sempre atualizado**: antes de cada análise, `git pull` do repositório do `SistemaAlvo`.
 - **Acesso somente leitura** a logs e banco de dados do `SistemaAlvo`.
@@ -29,15 +31,16 @@ Princípios inegociáveis:
 
 Um job de triagem (`triagem_ia`) entra na fila (Redis + BullMQ, ver `01-arquitetura.md`) nos seguintes eventos:
 
-| Gatilho | Condição | Ação |
-|---|---|---|
-| Chamado criado | sempre | enfileira triagem, status `novo` → `em_triagem` |
-| Resposta do cliente | chamado em `aguardando_cliente` ou `em_triagem` | reenfileira triagem |
-| Reprocessamento manual | operador/admin aciona "reanalisar" | enfileira triagem |
+| Gatilho                | Condição                                        | Ação                                            |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| Chamado criado         | sempre                                          | enfileira triagem, status `novo` → `em_triagem` |
+| Resposta do cliente    | chamado em `aguardando_cliente` ou `em_triagem` | reenfileira triagem                             |
+| Reprocessamento manual | operador/admin aciona "reanalisar"              | enfileira triagem                               |
 
 Não dispara triagem: resposta do cliente em chamado `em_atendimento`, `resolvido`, `fechado` ou `cancelado` (nesses o fluxo é humano; a IA só age se um operador pedir reanálise).
 
 Regras de fila:
+
 - **Deduplicação**: no máximo um job de triagem ativo por `Chamado`. Nova mensagem enquanto um job roda marca o chamado como "sujo"; ao terminar, se sujo, reenfileira uma vez.
 - **Chave de concorrência**: por tenant, limite configurável de jobs simultâneos (evita um tenant esgotar o worker e o budget).
 - **Idempotência**: cada job carrega `chamado_id` + `ultima_mensagem_id`; se já existir `ExecucaoIA` concluída para esse par, descarta.
@@ -103,6 +106,7 @@ O passo 2 depende de uma distinção que precisa ficar explícita (e é reconcil
 - **Filesystem de execução efêmero** (o sandbox de `09` §4.4): destruído ao fim de cada job. É onde o provider e as ferramentas read-only operam.
 
 Fluxo por job:
+
 1. **Primeira triagem de um `SistemaAlvo`** (cache ausente): `git clone` do repositório para o cache persistente. Este é o provisionamento inicial — antes só se falava em "pull"; o clone inicial acontece aqui.
 2. **Triagens seguintes**: `git pull --ff-only` no cache persistente para trazer o conhecimento atualizado (RF-14).
 3. **Checkout descartável por job**: um snapshot/checkout do cache é disponibilizado ao sandbox efêmero **read-only** (montagem read-only ou cópia). O sandbox nunca escreve de volta no cache; qualquer branch/PR de resolução (§6) é criado via push direto ao remoto git a partir do checkout do job, não persistido localmente.
@@ -122,15 +126,15 @@ Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efême
 
 ### 4.2 Ferramentas (todas read-only sobre o SistemaAlvo)
 
-| Ferramenta | Descrição | Restrições |
-|---|---|---|
-| `repo_buscar` | grep/semantic search no código sincronizado | apenas working copy do tenant |
-| `repo_ler_arquivo` | lê arquivo por caminho | dentro do repo; sem symlink para fora |
-| `logs_consultar` | consulta fontes/caminhos de log configurados | janela temporal limitada; read-only |
-| `bd_consultar` | executa SELECT na conexão read-only | somente `SELECT`; timeout curto; sem DDL/DML |
-| `chamado_publicar_mensagem` | publica mensagem `publica` ou `interna` | visibilidade obrigatória |
-| `chamado_classificar` | grava complexidade/natureza/prioridade sugeridas | valores dos enums canônicos |
-| `codigo_propor_pr` | cria branch, aplica patch, abre PR | só se autorizado pelo fluxo §6; nunca merge |
+| Ferramenta                  | Descrição                                        | Restrições                                   |
+| --------------------------- | ------------------------------------------------ | -------------------------------------------- |
+| `repo_buscar`               | grep/semantic search no código sincronizado      | apenas working copy do tenant                |
+| `repo_ler_arquivo`          | lê arquivo por caminho                           | dentro do repo; sem symlink para fora        |
+| `logs_consultar`            | consulta fontes/caminhos de log configurados     | janela temporal limitada; read-only          |
+| `bd_consultar`              | executa SELECT na conexão read-only              | somente `SELECT`; timeout curto; sem DDL/DML |
+| `chamado_publicar_mensagem` | publica mensagem `publica` ou `interna`          | visibilidade obrigatória                     |
+| `chamado_classificar`       | grava complexidade/natureza/prioridade sugeridas | valores dos enums canônicos                  |
+| `codigo_propor_pr`          | cria branch, aplica patch, abre PR               | só se autorizado pelo fluxo §6; nunca merge  |
 
 A conexão `bd_consultar` usa a credencial SOMENTE LEITURA do `SistemaAlvo` (ver `07-multitenancy-whitelabel.md`). Nenhuma ferramenta permite escrita em produção; a única escrita possível é criar branch/PR em repositório git, jamais deploy.
 
@@ -152,6 +156,7 @@ A saída do modelo deve incluir um objeto de avaliação; o worker aplica os lim
 ```
 
 Considera-se **entendido** quando TODAS as condições valem:
+
 - `confianca >= LIMIAR_TENANT` (default `0.7`, configurável por tenant);
 - há ao menos uma `evidencia` concreta ancorada em código, log ou BD (não só no texto do cliente);
 - `lacunas` vazio OU preenchível por inferência, sem depender de informação que só o cliente possui.
@@ -172,6 +177,7 @@ Caso contrário → **não entendeu** → fluxo de perguntas (§5.3).
 ### 5.3 Formato das perguntas ao cliente
 
 Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e move status → `aguardando_cliente`. Regras da mensagem:
+
 - Objetiva, em linguagem do cliente (sem jargão interno, sem citar caminhos de código nem dados sensíveis do BD).
 - No máximo 3–5 perguntas, cada uma acionável e específica (o que, onde, quando, print/erro exato).
 - Nunca revela credenciais, queries, trechos de log crus ou nomes de tabela.
@@ -183,6 +189,7 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 ## 6. Resolução automática (problema + fácil)
 
 Condições cumulativas para a IA **tentar** resolver:
+
 - `natureza = problema`;
 - `complexidade = facil`;
 - `compreendido = true` acima do limiar;
@@ -206,6 +213,7 @@ flowchart TD
 ```
 
 Regras:
+
 - Branch nomeada de forma rastreável, ex.: `ia/chamado-<id>-<slug>`.
 - O PR referencia o `Chamado` e o `ExecucaoIA`; a nota interna traz link do PR, resumo da mudança, arquivos tocados, testes adicionados e riscos.
 - **A IA nunca faz merge nem deploy.** Merge/deploy é ação manual do humano. Este guardrail é relaxável por configuração do tenant no futuro, mas o default é sempre exigir aprovação.
@@ -223,36 +231,45 @@ Template obrigatório da SPEC:
 # SPEC — <título curto da alteração>
 
 ## Contexto
+
 Sistema-alvo: <nome> (<stack/repo>)
 Chamado: #<id> | Natureza: alteracao | Complexidade: <facil|medio|dificil>
 Pedido do cliente (resumo neutro): <o que foi pedido, sem texto cru não confiável>
 
 ## Objetivo
+
 <resultado esperado em 1-3 frases>
 
 ## Escopo
+
 - Incluído: <itens>
 - Fora de escopo: <itens>
 
 ## Estado atual
+
 <como o sistema se comporta hoje; arquivos/módulos envolvidos com caminhos>
 
 ## Comportamento desejado
+
 <regras funcionais detalhadas; casos de borda>
 
 ## Mudanças propostas
+
 - <arquivo/módulo>: <o que muda>
 - Contratos/API afetados: <endpoints, payloads>
 - Migração de dados: <sim/não; descrição>
 
 ## Critérios de aceite
+
 - [ ] <critério verificável 1>
 - [ ] <critério verificável 2>
 
 ## Riscos e considerações
+
 <compatibilidade, performance, segurança, rollback>
 
 ## Estimativa
+
 Complexidade: <facil|medio|dificil> | Esforço aproximado: <faixa>
 ```
 
@@ -266,20 +283,21 @@ Todos os limites abaixo são configuráveis por tenant e auditados em `ExecucaoI
 
 Os motivos de encerramento (timeout, budget excedido, erro de git/provider) **não** são valores de status: o status de `ExecucaoIA` usa sempre o enum canônico `status_execucao_ia` (`na_fila`, `executando`, `concluido`, `falhou`, `cancelado`, ver `02-modelo-de-dados.md`). O motivo detalhado vai nos campos `erro`/`resultado`.
 
-| Guardrail | Default | Comportamento ao exceder |
-|---|---|---|
-| Timeout por execução | 10 min | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador |
-| Budget de tokens/execução | ex.: 200k in / 50k out | corta a execução, `status = falhou` com `erro = "budget_excedido"`, escalona |
-| Budget de custo/execução | teto em USD por tenant | idem acima |
-| Budget diário/tenant | teto configurável | novos jobs pausados; alerta admin |
-| Máx. tentativas do job | 3 (backoff exponencial) | após esgotar → `status = falhou`, escalona |
-| Rounds de perguntas ao cliente | 3 | escalona a operador em vez de reperguntar |
-| Tentativas de resolução (PR) | 1 | falhou → nota interna + escalona |
-| Chamadas de ferramenta/execução | limite configurável | corta e conclui com o que tem |
+| Guardrail                       | Default                 | Comportamento ao exceder                                                         |
+| ------------------------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| Timeout por execução            | 10 min                  | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador |
+| Budget de tokens/execução       | ex.: 200k in / 50k out  | corta a execução, `status = falhou` com `erro = "budget_excedido"`, escalona     |
+| Budget de custo/execução        | teto em USD por tenant  | idem acima                                                                       |
+| Budget diário/tenant            | teto configurável       | novos jobs pausados; alerta admin                                                |
+| Máx. tentativas do job          | 3 (backoff exponencial) | após esgotar → `status = falhou`, escalona                                       |
+| Rounds de perguntas ao cliente  | 3                       | escalona a operador em vez de reperguntar                                        |
+| Tentativas de resolução (PR)    | 1                       | falhou → nota interna + escalona                                                 |
+| Chamadas de ferramenta/execução | limite configurável     | corta e conclui com o que tem                                                    |
 
 **Escalonamento a operador humano**: publica nota interna explicando o motivo (timeout/budget/baixa confiança/falha de git/erro do provider), mantém o chamado em `em_triagem` ou move para `em_atendimento` conforme o caso, e gera `EventoChamado`. O chamado nunca fica "preso" sem responsável: se a IA não resolve, o humano assume.
 
 **Tratamento de falhas**:
+
 - **Falha de `git pull`** (repo indisponível, credencial inválida): não analisa com código velho; escalona e alerta admin do tenant.
 - **Falha do provider** (rede, 5xx, rate limit): retry com backoff dentro do limite de tentativas; persistindo, escalona.
 - **Saída malformada**: 1 retry de reformatação; depois escalona.
@@ -308,6 +326,7 @@ Fase 1 (RF-17, D-006): **Claude Agent SDK** (programático — controle de ferra
 **Fonte da verdade do contrato**: a interface `AIProvider` e seus tipos `AIProviderInput`/`AIProviderResult` são definidos canonicamente em `01-arquitetura.md` §4.1. Este documento **não redefine** o contrato — apenas descreve como o pipeline de triagem o consome. Qualquer mudança de campo (nome, tipo, semântica) é feita em `01-arquitetura.md` e vale aqui sem duplicação.
 
 Resumo do consumo pelo pipeline (campos conforme `01-arquitetura.md` §4.1):
+
 - O worker monta `AIProviderInput` (metadados do chamado, timeline sanitizada, `sistemaAlvo` com o `repoPath` já sincronizado por §3.2, limites de duração/custo) e chama `executarTriagem`.
 - Recebe `AIProviderResult` e o traduz em ações de domínio (§3.1 passo 6): `compreendido`/`perguntasAoCliente` → fluxo de perguntas (§5.3); `complexidade`/`naturezaAjustada`/`prioridadeSugerida` → `chamado_classificar` (§5.2); `diagnostico` → nota interna; `spec` → SPEC de alteração (§7); `tentativaResolucao` → branch/PR (§6).
 - O campo de telemetria de `AIProviderResult` (`telemetria`: `custoUsd`, `duracaoMs`, `tokensEntrada`, `tokensSaida`) é gravado em `ExecucaoIA` com **exatamente** esses nomes — mesma nomenclatura em `01` e `05`, sem "uso"/"telemetria" divergentes.
@@ -315,6 +334,7 @@ Resumo do consumo pelo pipeline (campos conforme `01-arquitetura.md` §4.1):
 O objeto de auto-avaliação de §5.1 (`compreendido`/`confianca`/`evidencias`/`lacunas`) é a **saída interna do modelo** que o provider usa para preencher `AIProviderResult.compreendido` e as perguntas; não é um tipo de retorno paralelo do contrato.
 
 Requisitos da abstração (complementam as "Notas de contrato" de `01-arquitetura.md` §4.1):
+
 - **Determinística na interface**: o worker consome sempre `AIProviderResult`, independente do provider.
 - **Telemetria padronizada**: todo provider reporta `custoUsd`, `duracaoMs`, `tokensEntrada`, `tokensSaida` para gravar em `ExecucaoIA`.
 - **Ferramentas injetadas**: as ferramentas read-only (§4.2) são passadas/controladas pelo worker, nunca definidas dentro do provider — garante o guardrail mesmo trocando de engine.
@@ -328,14 +348,15 @@ Requisitos da abstração (complementam as "Notas de contrato" de `01-arquitetur
 
 Estimativas de ordem de grandeza para dimensionar budget (valores reais dependem do tenant e do tamanho do repo; revisar com `claude-api` na implementação):
 
-| Cenário | Tokens aprox. (in/out) | Observação |
-|---|---|---|
-| Triagem simples (pergunta ao cliente) | 20k–60k / 2k–8k | pouca leitura de código |
-| Diagnóstico com leitura de código/logs/BD | 60k–200k / 5k–20k | várias chamadas de ferramenta |
-| Resolução automática (branch + PR) | 100k–300k / 10k–40k | implementação + teste |
-| Geração de SPEC de alteração | 40k–150k / 5k–20k | análise + redação da SPEC |
+| Cenário                                   | Tokens aprox. (in/out) | Observação                    |
+| ----------------------------------------- | ---------------------- | ----------------------------- |
+| Triagem simples (pergunta ao cliente)     | 20k–60k / 2k–8k        | pouca leitura de código       |
+| Diagnóstico com leitura de código/logs/BD | 60k–200k / 5k–20k      | várias chamadas de ferramenta |
+| Resolução automática (branch + PR)        | 100k–300k / 10k–40k    | implementação + teste         |
+| Geração de SPEC de alteração              | 40k–150k / 5k–20k      | análise + redação da SPEC     |
 
 Controle de custo:
+
 - Budget por execução, diário por tenant e alerta ao admin ao aproximar do teto (§8).
 - Prompt caching do contexto de repositório entre chamadas de ferramenta reduz custo em execuções longas.
 - Não despejar o repo inteiro no prompt: leitura sob demanda via ferramentas.

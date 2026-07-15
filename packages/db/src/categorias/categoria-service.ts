@@ -20,10 +20,7 @@ export function ehCategoriaGeral(c: Pick<Categoria, 'nome'>): boolean {
  * Garante a categoria geral do tenant (idempotente). Chamada no provisionamento
  * e no seed. Retorna o id da categoria geral.
  */
-export async function garantirCategoriaGeral(
-  em: EntityManager,
-  tenantId: string,
-): Promise<string> {
+export async function garantirCategoriaGeral(em: EntityManager, tenantId: string): Promise<string> {
   const existente = await em.findOne(CategoriaSchema, {
     where: { nome: NOME_CATEGORIA_GERAL },
   });
@@ -58,10 +55,7 @@ export async function listarCategorias(
 }
 
 /** Busca uma categoria por id. `null` se não existir. */
-export async function buscarCategoria(
-  em: EntityManager,
-  id: string,
-): Promise<Categoria | null> {
+export async function buscarCategoria(em: EntityManager, id: string): Promise<Categoria | null> {
   return em.findOne(CategoriaSchema, { where: { id, deleted_at: IsNull() } });
 }
 
@@ -112,8 +106,7 @@ export async function editarCategoria(
     { id },
     {
       nome,
-      descricao:
-        dados.descricao === undefined ? atual.descricao : dados.descricao?.trim() || null,
+      descricao: dados.descricao === undefined ? atual.descricao : dados.descricao?.trim() || null,
       ativo: dados.ativo ?? atual.ativo,
     },
   );
@@ -121,10 +114,7 @@ export async function editarCategoria(
 }
 
 /** Remove (soft delete) uma categoria. A geral é protegida. */
-export async function removerCategoria(
-  em: EntityManager,
-  id: string,
-): Promise<ResultadoCategoria> {
+export async function removerCategoria(em: EntityManager, id: string): Promise<ResultadoCategoria> {
   const atual = await buscarCategoria(em, id);
   if (!atual) return { ok: false, motivo: 'inexistente' };
   if (ehCategoriaGeral(atual)) return { ok: false, motivo: 'protegida' };

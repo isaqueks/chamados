@@ -15,15 +15,11 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
     });
 
     it('cliente não escreve nota interna', () => {
-      expect(autorizar(ator(Papel.cliente), 'mensagem_interna', 'escrever')).toBe(
-        false,
-      );
+      expect(autorizar(ator(Papel.cliente), 'mensagem_interna', 'escrever')).toBe(false);
     });
 
     it('cliente não classifica complexidade', () => {
-      expect(
-        autorizar(ator(Papel.cliente), 'chamado', 'classificar_complexidade'),
-      ).toBe(false);
+      expect(autorizar(ator(Papel.cliente), 'chamado', 'classificar_complexidade')).toBe(false);
     });
 
     it('cliente não lê ExecucaoIA', () => {
@@ -32,12 +28,8 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
 
     it('cliente lê mensagem pública do próprio chamado (ownership)', () => {
       const c = ator(Papel.cliente, 'cli-1');
-      expect(
-        autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'cli-1' }),
-      ).toBe(true);
-      expect(
-        autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'outro' }),
-      ).toBe(false);
+      expect(autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'cli-1' })).toBe(true);
+      expect(autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'outro' })).toBe(false);
     });
 
     it('cliente lê o próprio chamado, não o de outro', () => {
@@ -138,12 +130,8 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
 
     it('admin convida qualquer papel', () => {
       const a = ator(Papel.admin);
-      expect(
-        autorizar(a, 'usuario', 'convidar', { papel_convidado: Papel.operador }),
-      ).toBe(true);
-      expect(
-        autorizar(a, 'usuario', 'convidar', { papel_convidado: Papel.admin }),
-      ).toBe(true);
+      expect(autorizar(a, 'usuario', 'convidar', { papel_convidado: Papel.operador })).toBe(true);
+      expect(autorizar(a, 'usuario', 'convidar', { papel_convidado: Papel.admin })).toBe(true);
     });
   });
 
@@ -168,9 +156,7 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
 
     it('NÃO administra o tenant (usuários, sistemas-alvo, branding)', () => {
       const ia = ator(Papel.agente_ia);
-      expect(autorizar(ia, 'usuario', 'convidar', { papel_convidado: Papel.cliente })).toBe(
-        false,
-      );
+      expect(autorizar(ia, 'usuario', 'convidar', { papel_convidado: Papel.cliente })).toBe(false);
       expect(autorizar(ia, 'sistema_alvo', 'ler')).toBe(false);
       expect(autorizar(ia, 'sistema_alvo', 'editar')).toBe(false);
       expect(autorizar(ia, 'branding', 'gerenciar')).toBe(false);

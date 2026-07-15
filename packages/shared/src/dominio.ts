@@ -62,9 +62,7 @@ export function repoUrlValida(url: string): boolean {
   try {
     const parsed = new URL(u);
     return (
-      parsed.protocol === 'https:' ||
-      parsed.protocol === 'http:' ||
-      parsed.protocol === 'ssh:'
+      parsed.protocol === 'https:' || parsed.protocol === 'http:' || parsed.protocol === 'ssh:'
     );
   } catch {
     return false;

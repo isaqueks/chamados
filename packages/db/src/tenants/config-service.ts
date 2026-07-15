@@ -9,10 +9,7 @@ import { TenantSchema, type Tenant, type ConfigBranding } from '../entities/tena
  */
 
 /** Carrega o registro completo do tenant corrente (para a tela de config). */
-export async function carregarTenant(
-  em: EntityManager,
-  tenantId: string,
-): Promise<Tenant | null> {
+export async function carregarTenant(em: EntityManager, tenantId: string): Promise<Tenant | null> {
   return em.findOne(TenantSchema, { where: { id: tenantId, deleted_at: IsNull() } });
 }
 
@@ -69,9 +66,7 @@ export async function atualizarConfigGeral(
   );
 }
 
-export type ResultadoDominio =
-  | { ok: true }
-  | { ok: false; motivo: 'em_uso' };
+export type ResultadoDominio = { ok: true } | { ok: false; motivo: 'em_uso' };
 
 /**
  * Define/limpa o domínio próprio do tenant (specs/07 §3.4). Unicidade GLOBAL é
@@ -84,11 +79,7 @@ export async function definirDominioProprio(
   dominio: string | null,
 ): Promise<ResultadoDominio> {
   try {
-    await em.update(
-      TenantSchema,
-      { id: tenantId },
-      { dominio_proprio: dominio },
-    );
+    await em.update(TenantSchema, { id: tenantId }, { dominio_proprio: dominio });
     return { ok: true };
   } catch (e: unknown) {
     // 23505 = unique_violation (uq_tenant_dominio_proprio)

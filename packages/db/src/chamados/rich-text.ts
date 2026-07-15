@@ -4,10 +4,7 @@ import { enviarObjeto, chaveAnexo } from '@chamados/storage';
 import type { DocRichText } from '../entities/chamado';
 import { AnexoSchema } from '../entities/anexo';
 import { auditorDe, type HooksChamado } from './auditoria';
-import {
-  detectarImagemInline,
-  MAX_IMAGENS_INLINE,
-} from './validacao-arquivo';
+import { detectarImagemInline, MAX_IMAGENS_INLINE } from './validacao-arquivo';
 
 /**
  * Pipeline REAL de rich text (specs/04 §5, specs/09 §6). Substitui o utilitário
@@ -57,11 +54,7 @@ export const LIMITE_CORPO_MAX = 50_000;
 export const PREFIXO_REF_ANEXO = '/api/anexos/';
 
 export type MotivoRichText =
-  | 'doc_invalido'
-  | 'corpo_vazio'
-  | 'corpo_muito_longo'
-  | 'imagem_invalida'
-  | 'imagens_demais';
+  'doc_invalido' | 'corpo_vazio' | 'corpo_muito_longo' | 'imagem_invalida' | 'imagens_demais';
 
 // ---------------------------------------------------------------------------
 // Allowlist de nós e marcas
@@ -209,7 +202,11 @@ function filtrarNo(bruto: unknown, ctx: CtxValidacao): NoRichText | null {
 }
 
 /** Regras da imagem: data: → extrai/valida; ref interna → mantém; resto → descarta. */
-function tratarImagem(no: NoRichText, bruto: Record<string, unknown>, ctx: CtxValidacao): NoRichText | null {
+function tratarImagem(
+  no: NoRichText,
+  bruto: Record<string, unknown>,
+  ctx: CtxValidacao,
+): NoRichText | null {
   const attrs = ehObjeto(bruto.attrs) ? bruto.attrs : {};
   const src = typeof attrs.src === 'string' ? attrs.src : '';
 
@@ -334,7 +331,11 @@ export async function materializarDoc(alvo: AlvoMaterializacao): Promise<Resulta
       inline: true,
     });
     await enviarObjeto(storageKey, img.buffer, img.contentType);
-    img.no.attrs = { ...(img.no.attrs ?? {}), src: `${PREFIXO_REF_ANEXO}${anexoId}`, 'data-anexo-id': anexoId };
+    img.no.attrs = {
+      ...(img.no.attrs ?? {}),
+      src: `${PREFIXO_REF_ANEXO}${anexoId}`,
+      'data-anexo-id': anexoId,
+    };
     anexosInline.push(anexoId);
     await auditar(em, {
       tipo: 'anexo_adicionado',
@@ -368,7 +369,8 @@ const ABRE_MARCA: Record<string, (m: MarcaRichText) => string> = {
   underline: () => '<u>',
   strike: () => '<s>',
   code: () => '<code>',
-  link: (m) => `<a href="${escaparHtml(String(m.attrs?.href ?? ''))}" rel="noopener noreferrer nofollow" target="_blank">`,
+  link: (m) =>
+    `<a href="${escaparHtml(String(m.attrs?.href ?? ''))}" rel="noopener noreferrer nofollow" target="_blank">`,
 };
 const FECHA_MARCA: Record<string, string> = {
   bold: '</strong>',

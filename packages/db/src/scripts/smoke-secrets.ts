@@ -61,9 +61,7 @@ async function main(): Promise<void> {
     await inserirTenant(ds, tenantB, `smoke-sec-b-${sufixo}`);
 
     // 1) Roundtrip -----------------------------------------------------------
-    refA = await runInTenantContext(ds, tenantA, (em) =>
-      store.guardar(em, tenantA, SEGREDO),
-    );
+    refA = await runInTenantContext(ds, tenantA, (em) => store.guardar(em, tenantA, SEGREDO));
     ok(!!refA, 'guardar retornou uma referência (id do segredo)');
 
     const lido = await runInTenantContext(ds, tenantA, (em) => store.ler(em, refA));
@@ -84,9 +82,7 @@ async function main(): Promise<void> {
     });
 
     // 3) Rotação sob a mesma referência -------------------------------------
-    await runInTenantContext(ds, tenantA, (em) =>
-      store.substituir(em, refA, SEGREDO_NOVO),
-    );
+    await runInTenantContext(ds, tenantA, (em) => store.substituir(em, refA, SEGREDO_NOVO));
     const lido2 = await runInTenantContext(ds, tenantA, (em) => store.ler(em, refA));
     ok(lido2 === SEGREDO_NOVO, 'substituir troca o valor mantendo a mesma referência');
 

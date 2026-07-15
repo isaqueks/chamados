@@ -83,9 +83,7 @@ export interface ChamadoCliente {
  * `interna` (o cliente nunca deve nem saber que ela existe). Nunca vaza
  * `visibilidade` nem `execucao_ia_id`.
  */
-export function serializarMensagemParaCliente(
-  m: MensagemInterna,
-): MensagemCliente | null {
+export function serializarMensagemParaCliente(m: MensagemInterna): MensagemCliente | null {
   if (m.visibilidade !== VisibilidadeMensagem.publica) return null;
   return {
     id: m.id,
@@ -97,9 +95,7 @@ export function serializarMensagemParaCliente(
 }
 
 /** Serializa uma timeline para o cliente, descartando notas internas. */
-export function serializarTimelineParaCliente(
-  mensagens: MensagemInterna[],
-): MensagemCliente[] {
+export function serializarTimelineParaCliente(mensagens: MensagemInterna[]): MensagemCliente[] {
   return mensagens
     .map(serializarMensagemParaCliente)
     .filter((m): m is MensagemCliente => m !== null);

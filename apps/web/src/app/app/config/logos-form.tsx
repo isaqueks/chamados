@@ -1,22 +1,22 @@
-"use client"
+'use client';
 
-import { useActionState } from "react"
-import { Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { acaoEnviarLogo, acaoRemoverLogo, type EstadoConfig } from "./actions"
+import { useActionState } from 'react';
+import { Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoEnviarLogo, acaoRemoverLogo, type EstadoConfig } from './actions';
 
-const INICIAL: EstadoConfig = {}
+const INICIAL: EstadoConfig = {};
 
 interface Props {
-  variante: "light" | "dark"
-  rotulo: string
-  urlAtual: string | null
+  variante: 'light' | 'dark';
+  rotulo: string;
+  urlAtual: string | null;
 }
 
 export function LogoForm({ variante, rotulo, urlAtual }: Props) {
-  const [estado, acao, pendente] = useActionState(acaoEnviarLogo, INICIAL)
+  const [estado, acao, pendente] = useActionState(acaoEnviarLogo, INICIAL);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4">
@@ -25,12 +25,7 @@ export function LogoForm({ variante, rotulo, urlAtual }: Props) {
         {urlAtual && (
           <form action={acaoRemoverLogo}>
             <input type="hidden" name="variante" value={variante} />
-            <Button
-              type="submit"
-              variant="ghost"
-              size="xs"
-              aria-label={`Remover logo ${rotulo}`}
-            >
+            <Button type="submit" variant="ghost" size="xs" aria-label={`Remover logo ${rotulo}`}>
               <Trash2 className="size-3.5" />
               Remover
             </Button>
@@ -40,7 +35,7 @@ export function LogoForm({ variante, rotulo, urlAtual }: Props) {
 
       <div
         className={`flex h-20 items-center justify-center rounded-md border border-dashed ${
-          variante === "dark" ? "bg-neutral-900" : "bg-neutral-50"
+          variante === 'dark' ? 'bg-neutral-900' : 'bg-neutral-50'
         }`}
       >
         {urlAtual ? (
@@ -77,11 +72,11 @@ export function LogoForm({ variante, rotulo, urlAtual }: Props) {
         />
         <div>
           <Button type="submit" variant="outline" size="sm" disabled={pendente}>
-            {pendente ? "Enviando…" : "Enviar imagem"}
+            {pendente ? 'Enviando…' : 'Enviar imagem'}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">PNG, JPEG ou WEBP, até 1 MB.</p>
       </form>
     </div>
-  )
+  );
 }

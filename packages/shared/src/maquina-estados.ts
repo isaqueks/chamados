@@ -75,10 +75,7 @@ function papelAutorizado(papel: PapelTransicao, papeis: readonly PapelTransicao[
 
 /** Motivo pelo qual uma transição foi negada. */
 export type MotivoNegacao =
-  | 'mesmo_status'
-  | 'estado_terminal'
-  | 'transicao_inexistente'
-  | 'papel_nao_autorizado';
+  'mesmo_status' | 'estado_terminal' | 'transicao_inexistente' | 'papel_nao_autorizado';
 
 /** Resultado de `transicaoValida`: ok ou negada com motivo. */
 export type ResultadoTransicao = { ok: true } | { ok: false; motivo: MotivoNegacao };

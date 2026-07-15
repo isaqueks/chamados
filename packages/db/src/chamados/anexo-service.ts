@@ -117,7 +117,10 @@ export async function autorizarDownloadAnexo(
   if (!chamado) return { ok: false, motivo: 'inexistente' };
 
   // Fronteira inegociável: anexo de nota interna exige papel interno.
-  if (visibilidade === VisibilidadeMensagem.interna && !autorizar(ator, 'mensagem_interna', 'ler')) {
+  if (
+    visibilidade === VisibilidadeMensagem.interna &&
+    !autorizar(ator, 'mensagem_interna', 'ler')
+  ) {
     return { ok: false, motivo: 'sem_permissao' };
   }
   if (

@@ -1,45 +1,37 @@
-import { X } from "lucide-react"
+import { X } from 'lucide-react';
 import {
   obterAppDataSource,
   runInTenantContext,
   listarUsuarios,
   listarConvitesPendentes,
-} from "@chamados/db"
-import { Papel } from "@chamados/shared"
-import { exigirPapel } from "@/lib/sessao"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { ROTULO_PAPEL, ROTULO_STATUS_USUARIO } from "@/lib/rotulos"
-import { ConviteForm } from "./convite-form"
-import { acaoRevogarConvite } from "./actions"
+} from '@chamados/db';
+import { Papel } from '@chamados/shared';
+import { exigirPapel } from '@/lib/sessao';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ROTULO_PAPEL, ROTULO_STATUS_USUARIO } from '@/lib/rotulos';
+import { ConviteForm } from './convite-form';
+import { acaoRevogarConvite } from './actions';
 
-const fmtData = new Intl.DateTimeFormat("pt-BR", {
-  dateStyle: "short",
-  timeStyle: "short",
-})
+const fmtData = new Intl.DateTimeFormat('pt-BR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
 
 export default async function UsuariosPage() {
-  const { tenant } = await exigirPapel(Papel.admin)
-  const ds = await obterAppDataSource()
+  const { tenant } = await exigirPapel(Papel.admin);
+  const ds = await obterAppDataSource();
 
   const { usuarios, convites } = await runInTenantContext(ds, tenant.id, async (em) => ({
     usuarios: await listarUsuarios(em),
     convites: await listarConvitesPendentes(em),
-  }))
+  }));
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">
-          Usuários
-        </h1>
+        <h1 className="font-heading text-2xl font-semibold tracking-tight">Usuários</h1>
         <p className="text-sm text-muted-foreground">
           Convide pessoas e gerencie o acesso da equipe deste tenant.
         </p>
@@ -88,9 +80,7 @@ export default async function UsuariosPage() {
                       <Badge variant="secondary">{ROTULO_PAPEL[u.papel]}</Badge>
                     </td>
                     <td className="py-2.5">
-                      <Badge variant="muted">
-                        {ROTULO_STATUS_USUARIO[u.status]}
-                      </Badge>
+                      <Badge variant="muted">{ROTULO_STATUS_USUARIO[u.status]}</Badge>
                     </td>
                   </tr>
                 ))}
@@ -107,9 +97,7 @@ export default async function UsuariosPage() {
         </CardHeader>
         <CardContent>
           {convites.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nenhum convite pendente.
-            </p>
+            <p className="text-sm text-muted-foreground">Nenhum convite pendente.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -154,5 +142,5 @@ export default async function UsuariosPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

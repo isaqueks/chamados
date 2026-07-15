@@ -54,8 +54,7 @@ export type MotivoMensagem =
   | 'anexo_invalido';
 
 export type ResultadoMensagem =
-  | { ok: true; id: string }
-  | { ok: false; motivo: MotivoMensagem; indice?: number };
+  { ok: true; id: string } | { ok: false; motivo: MotivoMensagem; indice?: number };
 
 function motivoRich(m: MotivoRichText): MotivoMensagem {
   switch (m) {
@@ -156,7 +155,14 @@ export async function criarMensagem(
 
   // Anexos à parte (não-inline).
   for (const arq of anexosValidados) {
-    await gravarAnexo(em, { chamado_id: chamado.id, mensagem_id: id }, arq, ator.id, chamado.tenant_id, hooks);
+    await gravarAnexo(
+      em,
+      { chamado_id: chamado.id, mensagem_id: id },
+      arq,
+      ator.id,
+      chamado.tenant_id,
+      hooks,
+    );
   }
 
   // Evento da timeline (publica vs. interna).

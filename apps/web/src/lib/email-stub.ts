@@ -1,4 +1,4 @@
-import "server-only"
+import 'server-only';
 
 /**
  * Stub de envio de e-mail (specs/03): o envio real (SMTP/webhook) é o M9. Até lá,
@@ -6,15 +6,15 @@ import "server-only"
  * para o fluxo ser testável em dev.
  */
 export function logarEmailStub(dados: {
-  tipo: "convite" | "reset_senha"
-  destinatario: string
-  url: string
+  tipo: 'convite' | 'reset_senha';
+  destinatario: string;
+  url: string;
 }): void {
   console.info(
     JSON.stringify({
-      evt: "email_stub",
+      evt: 'email_stub',
       ...dados,
       ts: new Date().toISOString(),
-    })
-  )
+    }),
+  );
 }

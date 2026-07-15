@@ -1,30 +1,26 @@
-"use client"
+'use client';
 
-import { useActionState, useState } from "react"
-import { Pencil, Trash2, Lock } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import {
-  acaoEditarCategoria,
-  acaoRemoverCategoria,
-  type EstadoCategoria,
-} from "./actions"
+import { useActionState, useState } from 'react';
+import { Pencil, Trash2, Lock } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoEditarCategoria, acaoRemoverCategoria, type EstadoCategoria } from './actions';
 
-const INICIAL: EstadoCategoria = {}
+const INICIAL: EstadoCategoria = {};
 
 export interface CategoriaView {
-  id: string
-  nome: string
-  descricao: string | null
-  ativo: boolean
-  geral: boolean
+  id: string;
+  nome: string;
+  descricao: string | null;
+  ativo: boolean;
+  geral: boolean;
 }
 
 export function CategoriaLinha({ categoria }: { categoria: CategoriaView }) {
-  const [editando, setEditando] = useState(false)
-  const [estado, acao, pendente] = useActionState(acaoEditarCategoria, INICIAL)
+  const [editando, setEditando] = useState(false);
+  const [estado, acao, pendente] = useActionState(acaoEditarCategoria, INICIAL);
 
   if (categoria.geral) {
     return (
@@ -42,7 +38,7 @@ export function CategoriaLinha({ categoria }: { categoria: CategoriaView }) {
           )}
         </div>
       </div>
-    )
+    );
   }
 
   if (editando) {
@@ -58,7 +54,7 @@ export function CategoriaLinha({ categoria }: { categoria: CategoriaView }) {
           <Input name="nome" defaultValue={categoria.nome} required minLength={2} />
           <Input
             name="descricao"
-            defaultValue={categoria.descricao ?? ""}
+            defaultValue={categoria.descricao ?? ''}
             placeholder="Descrição"
           />
           <label className="flex items-center gap-2 whitespace-nowrap text-sm">
@@ -72,20 +68,15 @@ export function CategoriaLinha({ categoria }: { categoria: CategoriaView }) {
           </label>
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={pendente}>
-              {pendente ? "…" : "Salvar"}
+              {pendente ? '…' : 'Salvar'}
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditando(false)}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditando(false)}>
               Cancelar
             </Button>
           </div>
         </div>
       </form>
-    )
+    );
   }
 
   return (
@@ -115,5 +106,5 @@ export function CategoriaLinha({ categoria }: { categoria: CategoriaView }) {
         </Button>
       </form>
     </div>
-  )
+  );
 }

@@ -1,11 +1,5 @@
 import { EntitySchema } from 'typeorm';
-import {
-  StatusChamado,
-  Natureza,
-  Prioridade,
-  Complexidade,
-  valoresEnum,
-} from '@chamados/shared';
+import { StatusChamado, Natureza, Prioridade, Complexidade, valoresEnum } from '@chamados/shared';
 
 /**
  * Documento rich text (ProseMirror/TipTap) armazenado em `*_json`. Tipado como
@@ -106,7 +100,10 @@ export const ChamadoSchema = new EntitySchema<Chamado>({
   uniques: [{ name: 'uq_chamado_tenant_numero', columns: ['tenant_id', 'numero'] }],
   indices: [
     { name: 'ix_chamado_tenant_status_updated', columns: ['tenant_id', 'status', 'updated_at'] },
-    { name: 'ix_chamado_tenant_cliente_created', columns: ['tenant_id', 'cliente_id', 'created_at'] },
+    {
+      name: 'ix_chamado_tenant_cliente_created',
+      columns: ['tenant_id', 'cliente_id', 'created_at'],
+    },
     { name: 'ix_chamado_tenant_operador_status', columns: ['tenant_id', 'operador_id', 'status'] },
   ],
 });

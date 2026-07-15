@@ -3,6 +3,7 @@
 Este documento especifica a camada de notificações da plataforma **Chamados**: a arquitetura de gateways plugáveis (adapter pattern), os adapters de fase 1 (e-mail SMTP e webhook genérico) e os canais futuros (WhatsApp e outros), a matriz de eventos notificáveis × destinatários, os templates com branding por tenant, as preferências por usuário, e o tratamento de fila, retries e idempotência. Cobre também o canal inbound (responder chamado por e-mail/WhatsApp) como item de fase futura.
 
 Escopo relacionado tratado em outros documentos (não duplicar aqui):
+
 - Configuração de canais por tenant e branding assets: `07-multitenancy-whitelabel.md`.
 - Schema físico das entidades `CanalNotificacao` e `PreferenciaNotificacao`: `02-modelo-de-dados.md`.
 - Eventos de domínio (`EventoChamado`) e máquina de estados que dispara as notificações: `04-chamados.md`.
@@ -44,7 +45,7 @@ Componentes:
 
 - **NotificationDispatcher**: recebe o evento, resolve destinatários (§6), aplica preferências (§7), monta um `NotificationJob` por (destinatário × canal) e enfileira. É a única peça que conhece a regra de "quem recebe o quê".
 - **Fila `notification.send`** (BullMQ, ver `01-arquitetura.md`): desacopla o disparo do envio e provê retry/backoff.
-- **Adapters**: um worker por tipo de canal, cada um implementando `NotificationGateway`. O adapter só sabe *entregar uma mensagem já renderizada* por um transporte específico. Não conhece regra de negócio.
+- **Adapters**: um worker por tipo de canal, cada um implementando `NotificationGateway`. O adapter só sabe _entregar uma mensagem já renderizada_ por um transporte específico. Não conhece regra de negócio.
 - **TemplateRenderer**: transforma `(evento, dados, brandingDoTenant, locale)` em payload por canal (§5).
 - **NotificationLog**: registro de cada tentativa de entrega — base da idempotência e do status observável.
 
@@ -57,14 +58,14 @@ type CanalTipo = 'email' | 'whatsapp' | 'sms' | 'push' | 'webhook';
 // Payload já renderizado e pronto para transporte.
 interface NotificationPayload {
   canal: CanalTipo;
-  destino: string;            // e-mail, telefone E.164, device token, URL...
-  assunto?: string;           // usado por e-mail
-  corpoTexto: string;         // fallback text/plain
-  corpoHtml?: string;         // e-mail
+  destino: string; // e-mail, telefone E.164, device token, URL...
+  assunto?: string; // usado por e-mail
+  corpoTexto: string; // fallback text/plain
+  corpoHtml?: string; // e-mail
   // Para canais estruturados (WhatsApp templates aprovados):
   templateExterno?: {
-    nome: string;             // nome do template aprovado no provider
-    idioma: string;           // ex.: pt_BR
+    nome: string; // nome do template aprovado no provider
+    idioma: string; // ex.: pt_BR
     variaveis: Record<string, string>;
   };
   anexos?: Array<{ nome: string; contentType: string; url: string }>;
@@ -72,9 +73,9 @@ interface NotificationPayload {
 
 interface EnvioResultado {
   status: 'entregue' | 'aceito' | 'falha_temporaria' | 'falha_permanente';
-  idExterno?: string;         // message id do provider (para conciliação/webhook)
+  idExterno?: string; // message id do provider (para conciliação/webhook)
   erro?: string;
-  custoEstimado?: number;     // em centavos, quando o provider expõe
+  custoEstimado?: number; // em centavos, quando o provider expõe
 }
 
 interface NotificationGateway {
@@ -95,12 +96,13 @@ interface CanalConfig {
   tenantId: string;
   tipo: CanalTipo;
   segredos: Record<string, string>; // credenciais cifradas em repouso
-  remetente?: string;               // "Suporte ACME <suporte@acme.com>"
+  remetente?: string; // "Suporte ACME <suporte@acme.com>"
   ativo: boolean;
 }
 ```
 
 Regras do contrato:
+
 - `enviar` **não** implementa retry — o retry é responsabilidade da fila. O adapter apenas classifica o resultado (`falha_temporaria` → BullMQ re-tenta; `falha_permanente` → descarta e loga).
 - O adapter **nunca** monta template de negócio; recebe `NotificationPayload` já renderizado.
 - Registro/seleção de adapters via um `GatewayRegistry` (map `CanalTipo → NotificationGateway`), populado no boot do worker.
@@ -129,6 +131,7 @@ Gateway de saída de **fase 1** (D-003), ao lado do SMTP. O tenant já possui um
 **Natureza do canal.** Diferente do e-mail, o webhook é um canal **por tenant** (não por usuário): dispara **uma vez** por evento qualificável, independentemente de `PreferenciaNotificacao` individual. É configurado e ativado no nível do `CanalNotificacao` do tenant.
 
 **Configuração por tenant** (`CanalConfig.segredos`):
+
 - `url` — endpoint HTTPS que recebe o `POST`.
 - `segredo` — chave usada para assinar o corpo (HMAC).
 
@@ -152,16 +155,16 @@ WhatsApp exige **template pré-aprovado** para mensagens iniciadas pela empresa 
 
 ### 4.1 Comparação de providers
 
-| Critério | Meta WhatsApp Cloud API (oficial) | Evolution API (não oficial) | Twilio (BSP oficial) |
-|---|---|---|---|
-| **Oficialidade** | Oficial, direto da Meta | **Não oficial** — automação sobre WhatsApp Web/multi-device | Oficial, Meta Business Solution Provider |
-| **Custo** | Preço por conversa da Meta; sem markup de BSP; hosting próprio | Sem custo de licença (open source); custo só de infra/VPS | Preço da Meta **+ markup por mensagem** da Twilio |
-| **Risco de bloqueio** | Baixo (dentro dos ToS) | **Alto** — viola ToS; número pode ser banido a qualquer momento | Baixo (dentro dos ToS) |
-| **Templates aprovados** | Sim, fluxo oficial de aprovação | Não se aplica (texto livre, mas sob risco) | Sim, via console Twilio |
-| **Webhooks de status** | Nativos (sent/delivered/read) | Depende da lib/eventos internos | Nativos, normalizados |
-| **Esforço de integração** | Médio (registrar app, número, verificação) | Baixo para PoC, alto para produção estável | Baixo (SDK maduro) |
-| **Escala multi-tenant** | Um WABA por tenant, ou números sob um WABA | Um número/instância por tenant (frágil) | Subcontas Twilio por tenant |
-| **Recomendação** | **Padrão para produção** | Só dev/PoC interno, nunca produção | Alternativa se o tenant já usa Twilio ou quer terceirizar compliance |
+| Critério                  | Meta WhatsApp Cloud API (oficial)                              | Evolution API (não oficial)                                     | Twilio (BSP oficial)                                                 |
+| ------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **Oficialidade**          | Oficial, direto da Meta                                        | **Não oficial** — automação sobre WhatsApp Web/multi-device     | Oficial, Meta Business Solution Provider                             |
+| **Custo**                 | Preço por conversa da Meta; sem markup de BSP; hosting próprio | Sem custo de licença (open source); custo só de infra/VPS       | Preço da Meta **+ markup por mensagem** da Twilio                    |
+| **Risco de bloqueio**     | Baixo (dentro dos ToS)                                         | **Alto** — viola ToS; número pode ser banido a qualquer momento | Baixo (dentro dos ToS)                                               |
+| **Templates aprovados**   | Sim, fluxo oficial de aprovação                                | Não se aplica (texto livre, mas sob risco)                      | Sim, via console Twilio                                              |
+| **Webhooks de status**    | Nativos (sent/delivered/read)                                  | Depende da lib/eventos internos                                 | Nativos, normalizados                                                |
+| **Esforço de integração** | Médio (registrar app, número, verificação)                     | Baixo para PoC, alto para produção estável                      | Baixo (SDK maduro)                                                   |
+| **Escala multi-tenant**   | Um WABA por tenant, ou números sob um WABA                     | Um número/instância por tenant (frágil)                         | Subcontas Twilio por tenant                                          |
+| **Recomendação**          | **Padrão para produção**                                       | Só dev/PoC interno, nunca produção                              | Alternativa se o tenant já usa Twilio ou quer terceirizar compliance |
 
 Leitura: **Meta Cloud API** como implementação de referência do `WhatsAppAdapter`; **Twilio** como segundo adapter opcional (mesma interface `NotificationGateway`, `segredos` diferentes); **Evolution API** desaconselhada para produção pelo risco de banimento do número — aceitável apenas em ambiente de desenvolvimento.
 
@@ -195,23 +198,24 @@ Renderização produz `NotificationPayload` (assunto + HTML + texto para e-mail;
 
 Eventos de domínio que disparam notificação. O autor da ação **não** é notificado da própria ação (regra do dispatcher). Papéis conforme brief: `admin`, `operador`, `cliente`, `agente_ia`.
 
-| Evento | Gatilho | cliente (dono) | operador atribuído | admin | Obrigatório? |
-|---|---|---|---|---|---|
-| Chamado criado | cliente abre chamado (status `novo`) | Confirmação de abertura | Sim (novo na fila) | Config | Cliente: sim |
-| IA pediu informações | IA publica msg `publica` → `aguardando_cliente` | Sim | Opcional | Não | Cliente: sim |
-| Nova mensagem pública | mensagem `publica` de operador/IA | Sim (se autor ≠ cliente) | Sim (se autor ≠ operador) | Não | Preferência |
-| Nova nota interna | mensagem `interna` | **Nunca** | Sim | Opcional | Preferência |
-| Mudança de status | transição na máquina de estados | Sim | Sim | Não | Preferência |
-| Mudança de prioridade | prioridade alterada | Sim | Sim | Não | Preferência |
-| Atribuição de chamado | operador atribuído/alterado | Não | Sim (novo responsável) | Não | Operador: sim |
-| Resolvido | status → `resolvido` | Sim (com prazo de auto-fechamento) | Sim | Não | Cliente: sim |
-| Fechamento automático | `resolvido` → `fechado` após N dias | Sim | Opcional | Não | Preferência |
-| Reabertura | cliente reabre → `em_atendimento` | Confirmação | Sim | Não | Operador: sim |
-| Cancelado | status → `cancelado` | Sim | Sim | Não | Preferência |
-| PR aberto pela IA | IA cria branch/PR (nota interna) | **Nunca** | Sim | Config | Operador: sim |
-| SPEC gerada pela IA | IA publica SPEC de `alteracao` (nota interna) | **Nunca** | Sim | Config | Operador: sim |
+| Evento                | Gatilho                                         | cliente (dono)                     | operador atribuído        | admin    | Obrigatório?  |
+| --------------------- | ----------------------------------------------- | ---------------------------------- | ------------------------- | -------- | ------------- |
+| Chamado criado        | cliente abre chamado (status `novo`)            | Confirmação de abertura            | Sim (novo na fila)        | Config   | Cliente: sim  |
+| IA pediu informações  | IA publica msg `publica` → `aguardando_cliente` | Sim                                | Opcional                  | Não      | Cliente: sim  |
+| Nova mensagem pública | mensagem `publica` de operador/IA               | Sim (se autor ≠ cliente)           | Sim (se autor ≠ operador) | Não      | Preferência   |
+| Nova nota interna     | mensagem `interna`                              | **Nunca**                          | Sim                       | Opcional | Preferência   |
+| Mudança de status     | transição na máquina de estados                 | Sim                                | Sim                       | Não      | Preferência   |
+| Mudança de prioridade | prioridade alterada                             | Sim                                | Sim                       | Não      | Preferência   |
+| Atribuição de chamado | operador atribuído/alterado                     | Não                                | Sim (novo responsável)    | Não      | Operador: sim |
+| Resolvido             | status → `resolvido`                            | Sim (com prazo de auto-fechamento) | Sim                       | Não      | Cliente: sim  |
+| Fechamento automático | `resolvido` → `fechado` após N dias             | Sim                                | Opcional                  | Não      | Preferência   |
+| Reabertura            | cliente reabre → `em_atendimento`               | Confirmação                        | Sim                       | Não      | Operador: sim |
+| Cancelado             | status → `cancelado`                            | Sim                                | Sim                       | Não      | Preferência   |
+| PR aberto pela IA     | IA cria branch/PR (nota interna)                | **Nunca**                          | Sim                       | Config   | Operador: sim |
+| SPEC gerada pela IA   | IA publica SPEC de `alteracao` (nota interna)   | **Nunca**                          | Sim                       | Config   | Operador: sim |
 
 Notas:
+
 - "Config" = configurável por tenant se admins recebem cópia (padrão: não, para reduzir ruído).
 - Eventos com origem `agente_ia` seguem as mesmas regras: a IA age como operador automatizado; suas mensagens `publica` notificam o cliente, suas notas `interna` **nunca** notificam o cliente.
 - Detalhes de quais transições existem e quem pode dispará-las: `04-chamados.md`.
@@ -249,7 +253,7 @@ Persistidas em `PreferenciaNotificacao` (schema em `02-modelo-de-dados.md`). O d
 
 - Cada `NotificationJob` carrega uma **chave de idempotência** determinística:
   `idempotencyKey = hash(eventoId + destinatarioId + canal)`.
-- `NotificationLog` tem índice único sobre `idempotencyKey`. Antes de enviar, o worker faz *insert-if-not-exists*:
+- `NotificationLog` tem índice único sobre `idempotencyKey`. Antes de enviar, o worker faz _insert-if-not-exists_:
   - se já existe registro `entregue`/`aceito` → **skip** (evita duplicata em reprocessamento de fila);
   - se existe registro `falha_temporaria` → prossegue com nova tentativa, atualizando o mesmo registro.
 - `jobId` do BullMQ = `idempotencyKey` para deduplicar enfileiramentos concorrentes do mesmo evento.

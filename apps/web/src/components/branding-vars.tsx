@@ -1,5 +1,5 @@
-import { obterTenantAtual } from "@/lib/tenant"
-import { cssBranding } from "@/lib/branding"
+import { obterTenantAtual } from '@/lib/tenant';
+import { cssBranding } from '@/lib/branding';
 
 /**
  * Injeta as CSS variables de branding do tenant resolvido (specs/07 §3.2). Um
@@ -8,8 +8,8 @@ import { cssBranding } from "@/lib/branding"
  * renderiza nada (fallback neutro). Aplica-se ao login e ao app.
  */
 export async function BrandingVars() {
-  const tenant = await obterTenantAtual()
-  const css = cssBranding(tenant?.config_branding)
-  if (!css) return null
-  return <style id="tenant-branding" dangerouslySetInnerHTML={{ __html: css }} />
+  const tenant = await obterTenantAtual();
+  const css = cssBranding(tenant?.config_branding);
+  if (!css) return null;
+  return <style id="tenant-branding" dangerouslySetInnerHTML={{ __html: css }} />;
 }

@@ -1,13 +1,13 @@
-"use server"
+'use server';
 
-import { obterAppDataSource, solicitarRedefinicao } from "@chamados/db"
-import { obterTenantAtual } from "@/lib/tenant"
-import { urlAbsoluta } from "@/lib/url"
-import { logarEmailStub } from "@/lib/email-stub"
+import { obterAppDataSource, solicitarRedefinicao } from '@chamados/db';
+import { obterTenantAtual } from '@/lib/tenant';
+import { urlAbsoluta } from '@/lib/url';
+import { logarEmailStub } from '@/lib/email-stub';
 
 export interface EstadoEsqueci {
-  enviado?: boolean
-  erro?: string
+  enviado?: boolean;
+  erro?: string;
 }
 
 /**
@@ -17,23 +17,21 @@ export interface EstadoEsqueci {
  */
 export async function acaoSolicitarReset(
   _prev: EstadoEsqueci,
-  formData: FormData
+  formData: FormData,
 ): Promise<EstadoEsqueci> {
-  const email = String(formData.get("email") ?? "").trim()
-  if (!email) return { erro: "Informe seu e-mail." }
+  const email = String(formData.get('email') ?? '').trim();
+  if (!email) return { erro: 'Informe seu e-mail.' };
 
-  const tenant = await obterTenantAtual()
-  if (!tenant) return { erro: "Endereço de tenant desconhecido." }
+  const tenant = await obterTenantAtual();
+  if (!tenant) return { erro: 'Endereço de tenant desconhecido.' };
 
-  const ds = await obterAppDataSource()
-  const r = await solicitarRedefinicao(ds, tenant.id, email)
+  const ds = await obterAppDataSource();
+  const r = await solicitarRedefinicao(ds, tenant.id, email);
   if (r) {
-    const url = await urlAbsoluta(
-      `/redefinir-senha?token=${encodeURIComponent(r.token)}`
-    )
-    logarEmailStub({ tipo: "reset_senha", destinatario: r.email, url })
+    const url = await urlAbsoluta(`/redefinir-senha?token=${encodeURIComponent(r.token)}`);
+    logarEmailStub({ tipo: 'reset_senha', destinatario: r.email, url });
   }
 
   // Genérico independentemente de existir conta (anti-enumeração).
-  return { enviado: true }
+  return { enviado: true };
 }

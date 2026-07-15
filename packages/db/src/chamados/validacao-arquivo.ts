@@ -18,10 +18,7 @@ export const MAX_IMAGENS_INLINE = 20;
 export type CategoriaArquivo = 'imagem' | 'documento';
 
 export type MotivoArquivo =
-  | 'vazio'
-  | 'muito_grande'
-  | 'tipo_nao_suportado'
-  | 'conteudo_incompativel';
+  'vazio' | 'muito_grande' | 'tipo_nao_suportado' | 'conteudo_incompativel';
 
 export interface TipoDetectado {
   contentType: string;
@@ -32,8 +29,7 @@ export interface TipoDetectado {
 }
 
 export type ResultadoDeteccao =
-  | { ok: true; tipo: TipoDetectado }
-  | { ok: false; motivo: MotivoArquivo };
+  { ok: true; tipo: TipoDetectado } | { ok: false; motivo: MotivoArquivo };
 
 interface Detector {
   contentType: string;
@@ -89,7 +85,12 @@ const DETECTORES: Detector[] = [
 
 /** Família ZIP (zip, docx, xlsx — todos OOXML/ZIP): assinatura `PK\x03\x04`. */
 function ehZip(b: Buffer): boolean {
-  return b.length > 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07);
+  return (
+    b.length > 4 &&
+    b[0] === 0x50 &&
+    b[1] === 0x4b &&
+    (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07)
+  );
 }
 
 const OOXML: Record<string, string> = {
@@ -122,7 +123,10 @@ function pareceTexto(b: Buffer): boolean {
   const amostra = b.subarray(0, Math.min(b.length, 8192));
   if (amostra.includes(0x00)) return false;
   // Recusa conteúdo que se anuncia como XML/SVG (evita SVG disfarçado de texto).
-  const inicio = amostra.toString('utf8', 0, Math.min(amostra.length, 256)).trimStart().toLowerCase();
+  const inicio = amostra
+    .toString('utf8', 0, Math.min(amostra.length, 256))
+    .trimStart()
+    .toLowerCase();
   if (inicio.startsWith('<?xml') || inicio.startsWith('<svg')) return false;
   let controle = 0;
   for (const byte of amostra) {
@@ -143,7 +147,10 @@ export function detectarTipo(buffer: Buffer, nomeArquivo?: string): ResultadoDet
 
   for (const d of DETECTORES) {
     if (d.casa && d.casa(buffer)) {
-      return { ok: true, tipo: { contentType: d.contentType, ext: d.ext, categoria: d.categoria, imagem: d.imagem } };
+      return {
+        ok: true,
+        tipo: { contentType: d.contentType, ext: d.ext, categoria: d.categoria, imagem: d.imagem },
+      };
     }
   }
 
@@ -152,14 +159,20 @@ export function detectarTipo(buffer: Buffer, nomeArquivo?: string): ResultadoDet
   if (ehZip(buffer)) {
     const contentType = OOXML[ext] ?? OOXML.zip!;
     const extFinal = ext in OOXML ? ext : 'zip';
-    return { ok: true, tipo: { contentType, ext: extFinal, categoria: 'documento', imagem: false } };
+    return {
+      ok: true,
+      tipo: { contentType, ext: extFinal, categoria: 'documento', imagem: false },
+    };
   }
 
   // Sem assinatura: só aceitamos como texto se a EXTENSÃO for de texto E o
   // conteúdo passar na heurística (specs/09 §5 — validação por conteúdo).
   if (ext in EXTENSOES_TEXTO) {
     if (!pareceTexto(buffer)) return { ok: false, motivo: 'conteudo_incompativel' };
-    return { ok: true, tipo: { contentType: EXTENSOES_TEXTO[ext]!, ext, categoria: 'documento', imagem: false } };
+    return {
+      ok: true,
+      tipo: { contentType: EXTENSOES_TEXTO[ext]!, ext, categoria: 'documento', imagem: false },
+    };
   }
 
   return { ok: false, motivo: 'tipo_nao_suportado' };

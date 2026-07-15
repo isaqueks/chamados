@@ -1,13 +1,13 @@
-"use client"
+'use client';
 
-import { useActionState, useEffect, useRef } from "react"
-import { VisibilidadeMensagem } from "@chamados/shared"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { acaoResponder, type EstadoChamado } from "../actions"
+import { useActionState, useEffect, useRef } from 'react';
+import { VisibilidadeMensagem } from '@chamados/shared';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoResponder, type EstadoChamado } from '../actions';
 
-const INICIAL: EstadoChamado = {}
+const INICIAL: EstadoChamado = {};
 
 /**
  * Formulário de resposta na timeline (specs/04 §6). Cliente só publica mensagem
@@ -16,16 +16,22 @@ const INICIAL: EstadoChamado = {}
  * real (sanitização/anexos). Upload de anexos por `multipart` (progressive
  * enhancement do server action).
  */
-export function RespostaForm({ chamadoId, podeInterna }: { chamadoId: string; podeInterna: boolean }) {
-  const [estado, acao, pendente] = useActionState(acaoResponder, INICIAL)
-  const formRef = useRef<HTMLFormElement>(null)
+export function RespostaForm({
+  chamadoId,
+  podeInterna,
+}: {
+  chamadoId: string;
+  podeInterna: boolean;
+}) {
+  const [estado, acao, pendente] = useActionState(acaoResponder, INICIAL);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (estado.sucesso) formRef.current?.reset()
-  }, [estado.sucesso])
+    if (estado.sucesso) formRef.current?.reset();
+  }, [estado.sucesso]);
 
   const SELECT_CLS =
-    "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
     <form ref={formRef} action={acao} className="flex flex-col gap-4">
@@ -64,7 +70,9 @@ export function RespostaForm({ chamadoId, podeInterna }: { chamadoId: string; po
           name="corpo"
           required
           rows={4}
-          placeholder={podeInterna ? "Responda ou registre uma nota interna…" : "Escreva sua mensagem…"}
+          placeholder={
+            podeInterna ? 'Responda ou registre uma nota interna…' : 'Escreva sua mensagem…'
+          }
           className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
@@ -85,9 +93,9 @@ export function RespostaForm({ chamadoId, podeInterna }: { chamadoId: string; po
 
       <div>
         <Button type="submit" disabled={pendente}>
-          {pendente ? "Enviando…" : "Enviar"}
+          {pendente ? 'Enviando…' : 'Enviar'}
         </Button>
       </div>
     </form>
-  )
+  );
 }

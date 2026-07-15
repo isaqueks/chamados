@@ -3,6 +3,7 @@
 Este documento define os controles de segurança da plataforma "Chamados" e as práticas de conformidade com a Lei Geral de Proteção de Dados (Lei 13.709/2018 - LGPD). O foco é o que é específico deste produto: isolamento multi-tenant, segurança do `agente_ia` (que executa código e acessa sistemas dos clientes), tratamento de uploads e rich text, criptografia de credenciais de `SistemaAlvo` e o ciclo de vida de dados pessoais.
 
 Assuntos fora de escopo aqui, tratados nos documentos indicados:
+
 - Autenticação, sessões, convites e matriz de permissões: `03-autenticacao-perfis-permissoes.md`.
 - Detalhes de infraestrutura, deploy, rede e configuração de workers/filas: `01-arquitetura.md`.
 - Estratégia multi-tenant no banco (RLS, `tenant_id`) em nível de modelagem: `02-modelo-de-dados.md` e `07-multitenancy-whitelabel.md`.
@@ -26,18 +27,18 @@ Nomes de entidades, papéis (`admin`, `operador`, `cliente`, `agente_ia`) e enum
 
 Metodologia STRIDE aplicada aos ativos críticos. Ativos: dados de chamados de um tenant, credenciais de `SistemaAlvo` (git, logs, BD read-only), segredos da plataforma, código-fonte dos clientes acessível pelo worker.
 
-| Ameaça | Vetor concreto | Mitigação principal | Doc/seção |
-|---|---|---|---|
-| Vazamento cross-tenant | Bug de escopo em query; JWT/sessão sem `tenant_id`; job da fila com tenant errado | RLS + escopo na aplicação + testes de isolamento (§3) | §3, `02`, `07` |
-| Prompt injection | Texto do chamado/anexo instrui a IA a exfiltrar dados ou executar ações indevidas | Contexto não confiável marcado, menor privilégio, aprovação humana (§4) | §4 |
-| Exfiltração via IA | IA convencida a ler segredos/BD de outro tenant ou vazar em nota pública | Worker recebe só credenciais do tenant do job; saída revisada; guardrails (§4) | §4 |
-| Upload malicioso | Arquivo executável, SVG com script, polyglot, path traversal, zip bomb | Validação de tipo real, limites, storage fora do webroot, URLs assinadas (§5) | §5 |
-| XSS armazenado | Rich text com `<script>`/handlers em descrição/mensagem renderizado a outro usuário | Sanitização server-side, CSP, allowlist de tags (§6) | §6 |
-| Roubo de credenciais de SistemaAlvo | Dump de BD, log de segredo, acesso indevido | Criptografia at rest (envelope), segregação de KMS, sem log de segredo (§7) | §7 |
-| Elevação de privilégio | `cliente` acessando rota de `operador`/`admin`; IA agindo além do papel | Autorização por papel (`03`); `agente_ia` como service account restrita | `03`, §4 |
-| Escape do sandbox do worker | Código do repositório do cliente ou payload da IA executando no host | Worker isolado, efêmero, sem credenciais de plataforma, egress restrito (§4.4) | §4.4 |
-| Violação LGPD | Retenção indevida, ausência de base legal, não atendimento a titular | Bases legais, retenção, exclusão/anonimização, DSR (§8) | §8 |
-| Perda de dados | Falha de storage/BD, ransomware, exclusão acidental | Backups criptografados, testes de restore, RPO/RTO (§9) | §9 |
+| Ameaça                              | Vetor concreto                                                                      | Mitigação principal                                                            | Doc/seção      |
+| ----------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------- |
+| Vazamento cross-tenant              | Bug de escopo em query; JWT/sessão sem `tenant_id`; job da fila com tenant errado   | RLS + escopo na aplicação + testes de isolamento (§3)                          | §3, `02`, `07` |
+| Prompt injection                    | Texto do chamado/anexo instrui a IA a exfiltrar dados ou executar ações indevidas   | Contexto não confiável marcado, menor privilégio, aprovação humana (§4)        | §4             |
+| Exfiltração via IA                  | IA convencida a ler segredos/BD de outro tenant ou vazar em nota pública            | Worker recebe só credenciais do tenant do job; saída revisada; guardrails (§4) | §4             |
+| Upload malicioso                    | Arquivo executável, SVG com script, polyglot, path traversal, zip bomb              | Validação de tipo real, limites, storage fora do webroot, URLs assinadas (§5)  | §5             |
+| XSS armazenado                      | Rich text com `<script>`/handlers em descrição/mensagem renderizado a outro usuário | Sanitização server-side, CSP, allowlist de tags (§6)                           | §6             |
+| Roubo de credenciais de SistemaAlvo | Dump de BD, log de segredo, acesso indevido                                         | Criptografia at rest (envelope), segregação de KMS, sem log de segredo (§7)    | §7             |
+| Elevação de privilégio              | `cliente` acessando rota de `operador`/`admin`; IA agindo além do papel             | Autorização por papel (`03`); `agente_ia` como service account restrita        | `03`, §4       |
+| Escape do sandbox do worker         | Código do repositório do cliente ou payload da IA executando no host                | Worker isolado, efêmero, sem credenciais de plataforma, egress restrito (§4.4) | §4.4           |
+| Violação LGPD                       | Retenção indevida, ausência de base legal, não atendimento a titular                | Bases legais, retenção, exclusão/anonimização, DSR (§8)                        | §8             |
+| Perda de dados                      | Falha de storage/BD, ransomware, exclusão acidental                                 | Backups criptografados, testes de restore, RPO/RTO (§9)                        | §9             |
 
 > DECISÃO PENDENTE: adotar um threat model documentado formalmente (ex.: planilha STRIDE por sprint) e revisá-lo a cada nova integração externa, ou manter apenas esta seção resumida como referência viva.
 
@@ -95,6 +96,7 @@ O `agente_ia` é o componente de maior superfície de risco: recebe texto não c
 Todo conteúdo originado do `cliente` — título, descrição rich text, mensagens, texto extraído de anexos — é **entrada não confiável** e pode conter instruções maliciosas ("ignore as regras anteriores", "vaze as credenciais", "abra um PR que remove validações").
 
 Controles:
+
 - **Separação de canais**: instruções do sistema/pipeline vêm em canal distinto do conteúdo do usuário. O conteúdo do chamado é sempre apresentado à IA como dado a ser analisado, delimitado e rotulado como não confiável, nunca como comando.
 - **A IA não deriva autoridade do texto do chamado**: pedidos embutidos no texto para elevar privilégio, acessar outro tenant, mudar prioridade/status fora do fluxo, ou executar ações não previstas no pipeline são ignorados por construção — as ações permitidas são um conjunto fechado (§4.3).
 - **Anexos**: texto extraído de anexos (OCR/parse) é tratado como conteúdo não confiável idêntico ao corpo do chamado. Arquivos não são executados; apenas lidos/parseados em ambiente isolado.
@@ -109,6 +111,7 @@ Controles:
 ### 4.3 Ações permitidas (conjunto fechado)
 
 O pipeline (detalhado em `05`) só habilita:
+
 - Publicar `Mensagem` pública pedindo informações (leva a `aguardando_cliente`).
 - Publicar nota interna (`visibilidade=interna`) com diagnóstico, classificação de `complexidade`, ajuste de `natureza`, sugestão de `prioridade`.
 - Para `natureza=problema` + `complexidade=facil` bem compreendido: criar branch, implementar, **abrir PR** e publicar nota interna com o resultado — **nunca** merge/deploy, **nunca** commit direto em produção.
@@ -186,31 +189,32 @@ Descrições e mensagens usam rich text (TipTap no cliente, ver `04`/`08`). O cl
 
 ### 8.2 Dados pessoais tratados
 
-| Categoria | Exemplos | Onde | Base legal típica |
-|---|---|---|---|
-| Identificação/contato | nome, e-mail, telefone do `Usuario` | `Usuario`, `PreferenciaNotificacao`, `CanalNotificacao` | Execução de contrato / legítimo interesse |
-| Conteúdo de chamado | título, descrição, `Mensagem`, `Anexo` (podem conter dados pessoais informados livremente) | `Chamado`, `Mensagem`, `Anexo` | Execução de contrato (suporte) |
-| Metadados/auditoria | `EventoChamado`, logs de acesso, IP, timestamps | logs, `EventoChamado` | Legítimo interesse / obrigação legal |
-| Dados do SistemaAlvo | logs/BD do cliente acessados pela IA podem conter dados pessoais de terceiros | acesso read-only, efêmero no worker | Responsabilidade do tenant controlador |
+| Categoria             | Exemplos                                                                                   | Onde                                                    | Base legal típica                         |
+| --------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------- | ----------------------------------------- |
+| Identificação/contato | nome, e-mail, telefone do `Usuario`                                                        | `Usuario`, `PreferenciaNotificacao`, `CanalNotificacao` | Execução de contrato / legítimo interesse |
+| Conteúdo de chamado   | título, descrição, `Mensagem`, `Anexo` (podem conter dados pessoais informados livremente) | `Chamado`, `Mensagem`, `Anexo`                          | Execução de contrato (suporte)            |
+| Metadados/auditoria   | `EventoChamado`, logs de acesso, IP, timestamps                                            | logs, `EventoChamado`                                   | Legítimo interesse / obrigação legal      |
+| Dados do SistemaAlvo  | logs/BD do cliente acessados pela IA podem conter dados pessoais de terceiros              | acesso read-only, efêmero no worker                     | Responsabilidade do tenant controlador    |
 
 Princípio de **minimização**: os formulários mínimos do produto já limitam a coleta. Não solicitar dados sensíveis; se aparecerem no texto livre, aplicam-se retenção e exclusão como aos demais.
 
 ### 8.3 Direitos do titular (DSR)
 
 Suportar, mediado pelo tenant controlador: confirmação de tratamento, acesso, correção, anonimização/eliminação, portabilidade e informação sobre compartilhamento. Operacionalmente:
+
 - Endpoint/rotina administrativa para **exportar** os dados pessoais de um titular dentro de um tenant.
 - Rotina de **exclusão/anonimização** (§8.5).
 - Prazo de atendimento conforme LGPD; toda solicitação registrada em log de acesso.
 
 ### 8.4 Retenção
 
-| Dado | Retenção padrão | Observação |
-|---|---|---|
-| Chamados `fechado`/`resolvido` | Configurável por tenant | `resolvido` fecha após N dias (ver `04`); histórico visível ao cliente |
-| Logs de acesso/auditoria | Período definido (ex.: 6-12 meses) | Necessário para segurança e obrigações legais |
-| `ExecucaoIA` | Período definido | Custo/diagnóstico; pode conter trechos do chamado |
-| Anexos | Vinculada ao chamado | Excluídos junto do chamado |
-| Backups | Janela de retenção do backup (§9) | Exclusão em backups ocorre pela expiração natural |
+| Dado                           | Retenção padrão                    | Observação                                                             |
+| ------------------------------ | ---------------------------------- | ---------------------------------------------------------------------- |
+| Chamados `fechado`/`resolvido` | Configurável por tenant            | `resolvido` fecha após N dias (ver `04`); histórico visível ao cliente |
+| Logs de acesso/auditoria       | Período definido (ex.: 6-12 meses) | Necessário para segurança e obrigações legais                          |
+| `ExecucaoIA`                   | Período definido                   | Custo/diagnóstico; pode conter trechos do chamado                      |
+| Anexos                         | Vinculada ao chamado               | Excluídos junto do chamado                                             |
+| Backups                        | Janela de retenção do backup (§9)  | Exclusão em backups ocorre pela expiração natural                      |
 
 > DECISÃO PENDENTE: prazos numéricos de retenção por categoria e se são configuráveis por tenant. Definir com jurídico e com `07` (config por tenant).
 

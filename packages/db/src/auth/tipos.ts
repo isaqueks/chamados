@@ -23,5 +23,4 @@ export interface UsuarioAutenticado {
 
 /** Resultado do login. `ok:false` é sempre genérico (anti-enumeração). */
 export type ResultadoLogin =
-  | { ok: true; token: string; usuario: UsuarioAutenticado }
-  | { ok: false };
+  { ok: true; token: string; usuario: UsuarioAutenticado } | { ok: false };

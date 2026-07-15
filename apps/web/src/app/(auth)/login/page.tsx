@@ -1,20 +1,14 @@
-import Link from "next/link"
-import { redirect } from "next/navigation"
-import { obterContexto } from "@/lib/sessao"
-import { CabecalhoTenant } from "@/components/cabecalho-tenant"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { LoginForm } from "./login-form"
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { obterContexto } from '@/lib/sessao';
+import { CabecalhoTenant } from '@/components/cabecalho-tenant';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { LoginForm } from './login-form';
 
 export default async function LoginPage() {
-  const { tenant, usuario } = await obterContexto()
-  if (usuario) redirect("/app")
+  const { tenant, usuario } = await obterContexto();
+  if (usuario) redirect('/app');
 
   return (
     <>
@@ -23,9 +17,7 @@ export default async function LoginPage() {
         <CardHeader>
           <CardTitle>Entrar</CardTitle>
           <CardDescription>
-            {tenant
-              ? `Acesse o suporte de ${tenant.nome_exibicao}.`
-              : "Helpdesk multi-tenant."}
+            {tenant ? `Acesse o suporte de ${tenant.nome_exibicao}.` : 'Helpdesk multi-tenant.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -34,9 +26,8 @@ export default async function LoginPage() {
           ) : (
             <Alert variant="destructive">
               <AlertDescription>
-                Endereço de tenant desconhecido. Em desenvolvimento, acesse por um
-                subdomínio (ex.: <code>acme.localhost:3000</code>) ou use{" "}
-                <code>?tenant=acme</code>.
+                Endereço de tenant desconhecido. Em desenvolvimento, acesse por um subdomínio (ex.:{' '}
+                <code>acme.localhost:3000</code>) ou use <code>?tenant=acme</code>.
               </AlertDescription>
             </Alert>
           )}
@@ -54,5 +45,5 @@ export default async function LoginPage() {
         </p>
       )}
     </>
-  )
+  );
 }

@@ -69,5 +69,7 @@ export function proxy(request: NextRequest): NextResponse {
 
 export const config = {
   // Roda em todas as rotas exceto assets estáticos e internals do Next.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+  ],
 };

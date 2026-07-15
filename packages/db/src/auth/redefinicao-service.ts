@@ -5,11 +5,7 @@ import { runInTenantContext } from '../rls';
 import { gerarTokenOpaco, hashToken } from './token';
 import { REDEFINICAO_TTL_MS } from './constantes';
 import { verificarSenha } from './senha';
-import {
-  buscarUsuarioAtivoPorEmail,
-  buscarUsuarioPorId,
-  definirSenha,
-} from './usuario-service';
+import { buscarUsuarioAtivoPorEmail, buscarUsuarioPorId, definirSenha } from './usuario-service';
 import { revogarSessoesDoUsuario } from './sessao-service';
 
 /**
@@ -39,8 +35,7 @@ export async function solicitarRedefinicao(
 }
 
 export type ResultadoRedefinir =
-  | { ok: true }
-  | { ok: false; motivo: 'invalido' | 'expirado' | 'usado' };
+  { ok: true } | { ok: false; motivo: 'invalido' | 'expirado' | 'usado' };
 
 /**
  * Redefine a senha a partir do token de uso único. Marca o token como usado e
@@ -62,11 +57,7 @@ export async function redefinirComToken(
     if (registro.expira_em <= new Date()) return { ok: false, motivo: 'expirado' };
 
     await definirSenha(em, registro.usuario_id, novaSenha);
-    await em.update(
-      RedefinicaoSenhaSchema,
-      { id: registro.id },
-      { usado_em: new Date() },
-    );
+    await em.update(RedefinicaoSenhaSchema, { id: registro.id }, { usado_em: new Date() });
     // Invalida também outros tokens de reset pendentes da mesma conta.
     await em.update(
       RedefinicaoSenhaSchema,

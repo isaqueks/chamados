@@ -3,10 +3,11 @@
 Este documento define como usuários se autenticam na plataforma **Chamados**, como o
 tenant é resolvido a partir da requisição, como usuários são convidados e vinculados
 a um tenant, e a matriz completa de permissões por papel × recurso × ação. Cobre
-também o tratamento do **agente_ia** como *service account* e a fronteira de dados que
+também o tratamento do **agente_ia** como _service account_ e a fronteira de dados que
 o **cliente** NUNCA enxerga.
 
 Referências:
+
 - Modelagem das tabelas (`Usuario`, `Tenant`, sessões, convites, credenciais do
   agente_ia): ver `02-modelo-de-dados.md`.
 - Telas de login, convite, aceite e reset: ver `08-ui-ux.md`.
@@ -27,12 +28,12 @@ tenants diferentes — por exemplo `cliente` no tenant A e `operador` no tenant 
 como **contas independentes** (linhas de `Usuario` distintas, com senha própria em cada
 tenant), não como uma identidade global compartilhada.
 
-| Papel | Tipo | Descrição |
-|-------|------|-----------|
-| `admin` | humano | Administra o tenant: usuários, sistemas-alvo, categorias, branding, configurações, notificações. Faz tudo que o operador faz. |
-| `operador` | humano | Atende chamados: lê tudo do chamado, responde publicamente, escreve notas internas, muda status/prioridade/atribuição, aprova ações da IA. |
-| `cliente` | humano | Usuário final do tenant. Abre e acompanha os próprios chamados. Visão restrita (§7). |
-| `agente_ia` | serviço | Usuário de serviço automatizado. Participa dos chamados como operador automatizado, com escopo limitado (§6). |
+| Papel       | Tipo    | Descrição                                                                                                                                  |
+| ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `admin`     | humano  | Administra o tenant: usuários, sistemas-alvo, categorias, branding, configurações, notificações. Faz tudo que o operador faz.              |
+| `operador`  | humano  | Atende chamados: lê tudo do chamado, responde publicamente, escreve notas internas, muda status/prioridade/atribuição, aprova ações da IA. |
+| `cliente`   | humano  | Usuário final do tenant. Abre e acompanha os próprios chamados. Visão restrita (§7).                                                       |
+| `agente_ia` | serviço | Usuário de serviço automatizado. Participa dos chamados como operador automatizado, com escopo limitado (§6).                              |
 
 > DECISÃO PENDENTE: se `admin` e `operador` devem ser papéis mutuamente exclusivos ou
 > se `admin` é um flag adicional sobre `operador`. Este documento assume papéis
@@ -51,6 +52,7 @@ tenant), não como uma identidade global compartilhada.
 > (D-010). O restante deste documento descreve o modelo diretamente implementado.
 
 Decisões fixas independentes da lib:
+
 - **Autenticação primária por e-mail + senha**, escopada ao tenant resolvido.
 - Senhas com **Argon2id** (fallback bcrypt cost ≥ 12). Nunca reversível.
 - Sessões **server-side** (registro em tabela de sessão + cookie opaco), não JWT
@@ -71,6 +73,7 @@ pelo host da requisição, ANTES da autenticação, e fixa o escopo de todas as 
 subsequentes (incluindo o `tenant_id` do RLS — ver `07-multitenancy-whitelabel.md`).
 
 Estratégia:
+
 1. **Subdomínio**: `acme.chamados.app` → tenant cujo `slug = acme`.
 2. **Domínio próprio**: `suporte.acme.com` → tenant cujo `dominio_proprio` casa com
    o host (validado por CNAME + certificado emitido; ver `07`).
@@ -91,6 +94,7 @@ flowchart TD
 ```
 
 Regras de fronteira:
+
 - A sessão é **válida somente no tenant onde foi criada**. Um cookie de `acme` não
   autentica em `beta`, mesmo que exista uma conta com o mesmo e-mail em ambos os tenants
   (são `Usuario` distintos, sem senha nem sessão compartilhadas).
@@ -215,6 +219,7 @@ junto do tenant. Ele participa dos chamados (autoria de mensagens/notas/eventos)
 qualquer operador automatizado, mas **não é uma pessoa** e não usa login por senha.
 
 Características:
+
 - **Sem senha e sem sessão interativa.** Autentica-se de máquina-para-máquina: o worker
   do pipeline (ver `05-agente-ia.md`) porta uma credencial de serviço escopada ao
   `tenant_id` (ex.: chave de API/segredo assinado, rotacionável, guardada em cofre —
@@ -235,6 +240,7 @@ Características:
   worker e princípio do menor privilégio).
 
 Poderes do agente_ia dentro do chamado (subconjunto do operador):
+
 - Publicar mensagem `publica` (pedido de informação ao cliente — RF-11).
 - Publicar nota `interna` (diagnóstico, SPEC de alteração, resultado de tentativa de
   resolução — RF-16).
@@ -244,6 +250,7 @@ Poderes do agente_ia dentro do chamado (subconjunto do operador):
   `aguardando_cliente`), dentro do permitido em `04-chamados.md`.
 
 Poderes que o agente_ia NÃO tem:
+
 - Fechar chamado, cancelar chamado, fazer merge/deploy de PR, ou qualquer ação que a
   política de guardrail reserve a humano (relaxável por configuração do tenant no
   futuro — ver `05`).
@@ -256,19 +263,19 @@ Poderes que o agente_ia NÃO tem:
 Fronteira de dados inegociável do papel `cliente` (RF-04, RF-07, RF-08, RF-09).
 Aplicada tanto na API (filtros server-side) quanto na UI (`08-ui-ux.md`):
 
-| Recurso / campo | Cliente vê? | Observação |
-|-----------------|-------------|------------|
-| Mensagem `visibilidade = publica` | Sim | Timeline pública do chamado. |
-| Mensagem `visibilidade = interna` (nota interna) | **Não** | Nunca serializada para o cliente. |
-| `complexidade` (facil/medio/dificil) | **Não** | Campo estritamente interno. |
-| `ExecucaoIA` (entrada, ações, custo, duração, resultado) | **Não** | Nem existência, nem metadados. |
-| `natureza`, `status`, `prioridade` | Sim | Acompanhamento (RF-04). |
-| Diagnóstico técnico da IA (nota interna) | **Não** | É nota interna. |
-| SPEC de alteração gerada pela IA | **Não** | Nota interna para o dev (RF-16). |
-| PRs/branches criados pela IA | **Não** | Detalhe operacional interno. |
-| Atribuição de operador, notas de bastidor | **Não** | Só o fato de estar "em atendimento". |
-| Histórico dos **próprios** chamados fechados | Sim | RF-04. |
-| Chamados de outros usuários/empresas | **Não** | Isolamento por tenant e por autoria. |
+| Recurso / campo                                          | Cliente vê? | Observação                           |
+| -------------------------------------------------------- | ----------- | ------------------------------------ |
+| Mensagem `visibilidade = publica`                        | Sim         | Timeline pública do chamado.         |
+| Mensagem `visibilidade = interna` (nota interna)         | **Não**     | Nunca serializada para o cliente.    |
+| `complexidade` (facil/medio/dificil)                     | **Não**     | Campo estritamente interno.          |
+| `ExecucaoIA` (entrada, ações, custo, duração, resultado) | **Não**     | Nem existência, nem metadados.       |
+| `natureza`, `status`, `prioridade`                       | Sim         | Acompanhamento (RF-04).              |
+| Diagnóstico técnico da IA (nota interna)                 | **Não**     | É nota interna.                      |
+| SPEC de alteração gerada pela IA                         | **Não**     | Nota interna para o dev (RF-16).     |
+| PRs/branches criados pela IA                             | **Não**     | Detalhe operacional interno.         |
+| Atribuição de operador, notas de bastidor                | **Não**     | Só o fato de estar "em atendimento". |
+| Histórico dos **próprios** chamados fechados             | Sim         | RF-04.                               |
+| Chamados de outros usuários/empresas                     | **Não**     | Isolamento por tenant e por autoria. |
 
 Regra de ouro: qualquer serializer/endpoint exposto ao papel `cliente` deve **excluir por
 padrão** notas internas, complexidade e ExecucaoIA — allowlist de campos, não denylist.
@@ -283,41 +290,42 @@ Convenções: ✅ permitido · ⚠️ condicional (nota) · ❌ negado. `admin` 
 
 ### 8.1 Chamados e conteúdo
 
-| Recurso · Ação | admin | operador | cliente | agente_ia |
-|---|---|---|---|---|
-| Chamado · criar | ✅ | ✅ | ✅ (próprio) | ❌ |
-| Chamado · ler | ✅ (tenant) | ✅ (tenant) | ⚠️ só os próprios | ✅ (tenant) |
-| Chamado · mudar status | ✅ | ✅ | ⚠️ só reabrir `resolvido`→`em_atendimento` | ⚠️ transições de triagem |
-| Chamado · mudar prioridade | ✅ | ✅ | ❌ (define apenas na abertura — ver `04-chamados.md` §3.2) | ⚠️ sugerir |
-| Chamado · mudar natureza | ✅ | ✅ | ❌ (define apenas na abertura — ver `04-chamados.md` §3.1) | ⚠️ validar/ajustar |
-| Chamado · atribuir operador | ✅ | ✅ | ❌ | ❌ |
-| Chamado · classificar `complexidade` | ✅ | ✅ | ❌ | ✅ |
-| Chamado · fechar | ✅ | ✅ | ❌ | ❌ |
-| Chamado · cancelar | ✅ | ✅ | ⚠️ apenas os próprios chamados, e apenas em `novo`/`aguardando_cliente` (regras finas de transição em `04-chamados.md` §1.3) | ❌ |
-| Mensagem `publica` · escrever | ✅ | ✅ | ✅ (nos próprios) | ✅ |
-| Mensagem `publica` · ler | ✅ | ✅ | ✅ (nos próprios) | ✅ |
-| Mensagem `interna` · escrever | ✅ | ✅ | ❌ | ✅ |
-| Mensagem `interna` · ler | ✅ | ✅ | ❌ | ✅ |
-| Anexo · enviar/baixar | ✅ | ✅ | ⚠️ nos próprios chamados | ⚠️ conforme visibilidade |
-| `EventoChamado` (histórico) · ler | ✅ | ✅ | ⚠️ só eventos públicos dos próprios | ✅ |
-| `ExecucaoIA` · ler | ✅ | ✅ | ❌ | ⚠️ as próprias |
+| Recurso · Ação                       | admin       | operador    | cliente                                                                                                                      | agente_ia                |
+| ------------------------------------ | ----------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Chamado · criar                      | ✅          | ✅          | ✅ (próprio)                                                                                                                 | ❌                       |
+| Chamado · ler                        | ✅ (tenant) | ✅ (tenant) | ⚠️ só os próprios                                                                                                            | ✅ (tenant)              |
+| Chamado · mudar status               | ✅          | ✅          | ⚠️ só reabrir `resolvido`→`em_atendimento`                                                                                   | ⚠️ transições de triagem |
+| Chamado · mudar prioridade           | ✅          | ✅          | ❌ (define apenas na abertura — ver `04-chamados.md` §3.2)                                                                   | ⚠️ sugerir               |
+| Chamado · mudar natureza             | ✅          | ✅          | ❌ (define apenas na abertura — ver `04-chamados.md` §3.1)                                                                   | ⚠️ validar/ajustar       |
+| Chamado · atribuir operador          | ✅          | ✅          | ❌                                                                                                                           | ❌                       |
+| Chamado · classificar `complexidade` | ✅          | ✅          | ❌                                                                                                                           | ✅                       |
+| Chamado · fechar                     | ✅          | ✅          | ❌                                                                                                                           | ❌                       |
+| Chamado · cancelar                   | ✅          | ✅          | ⚠️ apenas os próprios chamados, e apenas em `novo`/`aguardando_cliente` (regras finas de transição em `04-chamados.md` §1.3) | ❌                       |
+| Mensagem `publica` · escrever        | ✅          | ✅          | ✅ (nos próprios)                                                                                                            | ✅                       |
+| Mensagem `publica` · ler             | ✅          | ✅          | ✅ (nos próprios)                                                                                                            | ✅                       |
+| Mensagem `interna` · escrever        | ✅          | ✅          | ❌                                                                                                                           | ✅                       |
+| Mensagem `interna` · ler             | ✅          | ✅          | ❌                                                                                                                           | ✅                       |
+| Anexo · enviar/baixar                | ✅          | ✅          | ⚠️ nos próprios chamados                                                                                                     | ⚠️ conforme visibilidade |
+| `EventoChamado` (histórico) · ler    | ✅          | ✅          | ⚠️ só eventos públicos dos próprios                                                                                          | ✅                       |
+| `ExecucaoIA` · ler                   | ✅          | ✅          | ❌                                                                                                                           | ⚠️ as próprias           |
 
 ### 8.2 Administração do tenant
 
-| Recurso · Ação | admin | operador | cliente | agente_ia |
-|---|---|---|---|---|
-| Usuário · convidar | ✅ | ⚠️ só `cliente` (se habilitado) | ❌ | ❌ |
-| Usuário · listar/editar papel/desativar | ✅ | ❌ | ❌ | ❌ |
-| `SistemaAlvo` · CRUD (repo, logs, DB read-only) | ✅ | ⚠️ leitura | ❌ | ❌ |
-| `Categoria` · CRUD | ✅ | ⚠️ leitura | ❌ | ❌ |
-| Branding / domínio / whitelabel | ✅ | ❌ | ❌ | ❌ |
-| Config. de notificações do tenant | ✅ | ⚠️ leitura | ❌ | ❌ |
-| `PreferenciaNotificacao` própria | ✅ | ✅ | ✅ | ❌ |
-| Configuração de guardrails da IA | ✅ | ❌ | ❌ | ❌ |
-| Aprovar merge/deploy de PR da IA | ✅ | ✅ | ❌ | ❌ |
-| Sessões · encerrar de terceiros (no tenant) | ✅ | ❌ | ❌ | ❌ |
+| Recurso · Ação                                  | admin | operador                        | cliente | agente_ia |
+| ----------------------------------------------- | ----- | ------------------------------- | ------- | --------- |
+| Usuário · convidar                              | ✅    | ⚠️ só `cliente` (se habilitado) | ❌      | ❌        |
+| Usuário · listar/editar papel/desativar         | ✅    | ❌                              | ❌      | ❌        |
+| `SistemaAlvo` · CRUD (repo, logs, DB read-only) | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| `Categoria` · CRUD                              | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| Branding / domínio / whitelabel                 | ✅    | ❌                              | ❌      | ❌        |
+| Config. de notificações do tenant               | ✅    | ⚠️ leitura                      | ❌      | ❌        |
+| `PreferenciaNotificacao` própria                | ✅    | ✅                              | ✅      | ❌        |
+| Configuração de guardrails da IA                | ✅    | ❌                              | ❌      | ❌        |
+| Aprovar merge/deploy de PR da IA                | ✅    | ✅                              | ❌      | ❌        |
+| Sessões · encerrar de terceiros (no tenant)     | ✅    | ❌                              | ❌      | ❌        |
 
 Notas condicionais:
+
 - Cliente só acessa recursos cujo **autor/solicitante é ele mesmo** e cujo `tenant_id`
   bate com o tenant resolvido.
 - "operador convidar cliente" depende de flag de configuração do tenant (default
@@ -329,10 +337,10 @@ Notas condicionais:
 ## 9. Modelo de autorização (implementação)
 
 - **Ponto único de decisão**: um módulo `authorize(usuario, tenant_ctx, recurso, acao,
-  alvo?)` central, chamado por toda rota/route handler e server action. Nada de checagem
+alvo?)` central, chamado por toda rota/route handler e server action. Nada de checagem
   espalhada em componentes de UI (UI apenas esconde; a API é a fronteira real).
 - **Ownership**: para o papel `cliente`, além do papel, valida-se `alvo.autor_id ===
-  usuario.id` (ou solicitante do chamado). Para `operador`/`admin`, valida-se
+usuario.id` (ou solicitante do chamado). Para `operador`/`admin`, valida-se
   `alvo.tenant_id === tenant_ctx`.
 - **Visibilidade de mensagem**: a query de timeline recebe o papel e filtra
   `visibilidade`. Para `cliente`, `WHERE visibilidade = 'publica'` é imposto no

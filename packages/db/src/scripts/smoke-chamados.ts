@@ -30,9 +30,8 @@ const {
   definirComplexidade,
   atorSistema,
 } = await import('../chamados/chamado-service');
-const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade } = await import(
-  '@chamados/shared'
-);
+const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade } =
+  await import('@chamados/shared');
 
 function ok(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`ASSERT FALHOU: ${msg}`);
@@ -140,7 +139,12 @@ async function main(): Promise<void> {
     // 2) Máquina de estados ---------------------------------------------------
     // Caminho válido: sistema→em_triagem, operador→em_atendimento.
     await runInTenantContext(ds, tenantA, async (em) => {
-      const t1 = await transicionarStatus(em, atorSistema(tenantA), ch1.id, StatusChamado.em_triagem);
+      const t1 = await transicionarStatus(
+        em,
+        atorSistema(tenantA),
+        ch1.id,
+        StatusChamado.em_triagem,
+      );
       ok(t1.ok, 'sistema: novo → em_triagem — ok');
       const t2 = await transicionarStatus(em, atorOp, ch1.id, StatusChamado.em_atendimento);
       ok(t2.ok, 'operador: em_triagem → em_atendimento — ok');
@@ -276,12 +280,16 @@ async function main(): Promise<void> {
       );
       const comoOperador = await obterChamado(em, atorOp, ch1.id);
       ok(
-        comoOperador != null && 'complexidade' in comoOperador && comoOperador.complexidade === Complexidade.facil,
+        comoOperador != null &&
+          'complexidade' in comoOperador &&
+          comoOperador.complexidade === Complexidade.facil,
         'projeção do operador contém complexidade = facil',
       );
     });
 
-    console.log('\n[smoke-chamados] RESULTADO: PASSOU — Chamado/numeração/máquina de estados confirmados.');
+    console.log(
+      '\n[smoke-chamados] RESULTADO: PASSOU — Chamado/numeração/máquina de estados confirmados.',
+    );
   } finally {
     const admin = criarAdminDataSource();
     await admin.initialize();

@@ -6,15 +6,10 @@ import { UsuarioSchema, type Usuario } from '../entities/usuario';
 import { runInTenantContext } from '../rls';
 import { gerarTokenOpaco, hashToken } from './token';
 import { CONVITE_TTL_MS } from './constantes';
-import {
-  criarUsuarioAtivoComSenha,
-  existeContaPorEmail,
-  normalizarEmail,
-} from './usuario-service';
+import { criarUsuarioAtivoComSenha, existeContaPorEmail, normalizarEmail } from './usuario-service';
 
 export type ResultadoCriarConvite =
-  | { ok: true; token: string; convite_id: string }
-  | { ok: false; motivo: 'conta_existente' };
+  { ok: true; token: string; convite_id: string } | { ok: false; motivo: 'conta_existente' };
 
 /**
  * Cria um convite pendente no tenant corrente (specs/03 §4.2). Se já houver
@@ -63,9 +58,7 @@ export async function buscarConvitePorToken(
 
 /** Um convite está aceitável agora? (pendente e dentro do TTL) */
 export function conviteAceitavel(convite: Convite): boolean {
-  return (
-    convite.status === StatusConvite.pendente && convite.expira_em > new Date()
-  );
+  return convite.status === StatusConvite.pendente && convite.expira_em > new Date();
 }
 
 export type ResultadoAceite =
@@ -87,11 +80,7 @@ export async function aceitarConvite(
   }
   if (convite.expira_em <= new Date()) {
     // Marca como expirado (higiene); segue negando.
-    await em.update(
-      ConviteSchema,
-      { id: convite.id },
-      { status: StatusConvite.expirado },
-    );
+    await em.update(ConviteSchema, { id: convite.id }, { status: StatusConvite.expirado });
     return { ok: false, motivo: 'expirado' };
   }
   if (await existeContaPorEmail(em, convite.email)) {
@@ -116,10 +105,7 @@ export async function aceitarConvite(
 }
 
 /** Revoga um convite pendente (admin). */
-export async function revogarConvite(
-  em: EntityManager,
-  convite_id: string,
-): Promise<void> {
+export async function revogarConvite(em: EntityManager, convite_id: string): Promise<void> {
   await em.update(
     ConviteSchema,
     { id: convite_id, status: StatusConvite.pendente },
@@ -128,9 +114,7 @@ export async function revogarConvite(
 }
 
 /** Lista convites pendentes do tenant (admin). */
-export async function listarConvitesPendentes(
-  em: EntityManager,
-): Promise<Convite[]> {
+export async function listarConvitesPendentes(em: EntityManager): Promise<Convite[]> {
   return em.find(ConviteSchema, {
     where: { status: StatusConvite.pendente },
     order: { created_at: 'DESC' },

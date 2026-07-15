@@ -24,13 +24,13 @@ const { criarAppDataSource, criarAdminDataSource } = await import('../data-sourc
 const { runInTenantContext } = await import('../rls');
 const { provisionarTenant, criarUsuarioAtivoComSenha } = await import('../auth');
 const { ChamadoSchema } = await import('../entities/chamado');
-const { criarChamado, transicionarStatus, definirComplexidade, atorSistema } = await import(
-  '../chamados/chamado-service'
-);
+const { criarChamado, transicionarStatus, definirComplexidade, atorSistema } =
+  await import('../chamados/chamado-service');
 const mensagemMod = await import('../chamados/mensagem-service');
 const { criarMensagem, listarMensagens } = mensagemMod;
 type DocRico = import('../chamados/rich-text').DocRico;
-const { autorizarDownloadAnexo, listarAnexosDaMensagem } = await import('../chamados/anexo-service');
+const { autorizarDownloadAnexo, listarAnexosDaMensagem } =
+  await import('../chamados/anexo-service');
 const { listarEventos } = await import('../chamados/evento-service');
 const { Papel, StatusTenant, StatusChamado, Natureza, Complexidade, VisibilidadeMensagem } =
   await import('@chamados/shared');
@@ -154,7 +154,9 @@ async function main(): Promise<void> {
         chamado_id: chamadoId,
         visibilidade: VisibilidadeMensagem.interna,
         corpo: 'Log anexado para diagnóstico.',
-        anexos: [{ nome_arquivo: 'erro.log', buffer: Buffer.from('2026-07-15 ERRO timeout\n', 'utf8') }],
+        anexos: [
+          { nome_arquivo: 'erro.log', buffer: Buffer.from('2026-07-15 ERRO timeout\n', 'utf8') },
+        ],
       });
       if (!r.ok) throw new Error('falha ao anexar log em nota interna');
       const anexos = await listarAnexosDaMensagem(em, r.id);
@@ -175,7 +177,9 @@ async function main(): Promise<void> {
         chamado_id: chamadoId,
         visibilidade: VisibilidadeMensagem.interna,
         corpo: 'Tentando anexar um falso PNG.',
-        anexos: [{ nome_arquivo: 'foto.png', buffer: Buffer.from('isto nao eh uma imagem', 'utf8') }],
+        anexos: [
+          { nome_arquivo: 'foto.png', buffer: Buffer.from('isto nao eh uma imagem', 'utf8') },
+        ],
       });
       ok(!r.ok, 'anexo cujo conteúdo NÃO bate com o tipo é rejeitado (magic bytes)');
       if (!r.ok) ok(r.motivo === 'anexo_invalido', 'motivo = anexo_invalido');
@@ -207,7 +211,10 @@ async function main(): Promise<void> {
     await runInTenantContext(ds, tenantA, async (em) => {
       const msgs = await listarMensagens(em, atorOp, chamadoId);
       const alvo = msgs.find((m) => m.id === msgImagemId)!;
-      ok(!alvo.corpo_html.includes('data:'), 'HTML final NÃO contém data: (imagem virou referência)');
+      ok(
+        !alvo.corpo_html.includes('data:'),
+        'HTML final NÃO contém data: (imagem virou referência)',
+      );
       ok(alvo.corpo_html.includes('/api/anexos/'), 'HTML referencia o anexo por /api/anexos/<id>');
     });
 
@@ -268,7 +275,9 @@ async function main(): Promise<void> {
     });
 
     // 7) Eventos: gerados em todas as mutações; visibilidade por papel -------
-    await runInTenantContext(ds, tenantA, (em) => definirComplexidade(em, atorOp, chamadoId, Complexidade.medio));
+    await runInTenantContext(ds, tenantA, (em) =>
+      definirComplexidade(em, atorOp, chamadoId, Complexidade.medio),
+    );
     await runInTenantContext(ds, tenantA, async (em) => {
       const doOperador = await listarEventos(em, atorOp, chamadoId);
       const tipos = new Set(doOperador.map((e) => e.tipo));
@@ -283,7 +292,10 @@ async function main(): Promise<void> {
       const tiposCliente = new Set(doCliente.map((e) => e.tipo));
       ok(!tiposCliente.has('nota_interna_publicada'), 'cliente NÃO vê nota_interna_publicada');
       ok(!tiposCliente.has('complexidade_alterada'), 'cliente NÃO vê complexidade_alterada');
-      ok(!tiposCliente.has('anexo_adicionado'), 'cliente NÃO vê anexo_adicionado (pode ser interno)');
+      ok(
+        !tiposCliente.has('anexo_adicionado'),
+        'cliente NÃO vê anexo_adicionado (pode ser interno)',
+      );
       ok(tiposCliente.has('chamado_criado'), 'cliente vê chamado_criado');
       ok(tiposCliente.has('mensagem_publicada'), 'cliente vê mensagem_publicada');
     });

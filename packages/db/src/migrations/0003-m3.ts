@@ -1,11 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
-import {
-  StatusChamado,
-  Natureza,
-  Prioridade,
-  Complexidade,
-  valoresEnum,
-} from '@chamados/shared';
+import { StatusChamado, Natureza, Prioridade, Complexidade, valoresEnum } from '@chamados/shared';
 import { credenciaisApp } from '../config';
 
 /** Monta a lista de valores de um ENUM para o CREATE TYPE. */

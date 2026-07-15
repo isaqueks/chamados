@@ -1,9 +1,9 @@
-import { LogOut } from "lucide-react"
-import type { UsuarioAutenticado } from "@chamados/db"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { ROTULO_PAPEL, iniciais } from "@/lib/rotulos"
-import { acaoLogout } from "@/app/app/actions"
+import { LogOut } from 'lucide-react';
+import type { UsuarioAutenticado } from '@chamados/db';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ROTULO_PAPEL, iniciais } from '@/lib/rotulos';
+import { acaoLogout } from '@/app/app/actions';
 
 export function Topbar({ usuario }: { usuario: UsuarioAutenticado }) {
   return (
@@ -35,5 +35,5 @@ export function Topbar({ usuario }: { usuario: UsuarioAutenticado }) {
         </form>
       </div>
     </header>
-  )
+  );
 }

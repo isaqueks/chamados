@@ -5,13 +5,7 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@chamados/shared', '@chamados/db'],
   // Dependências nativas/Node que NÃO devem ser empacotadas pelo bundler
   // (TypeORM carrega drivers dinamicamente; pg/ioredis são Node-only).
-  serverExternalPackages: [
-    'typeorm',
-    'pg',
-    'ioredis',
-    'reflect-metadata',
-    '@node-rs/argon2',
-  ],
+  serverExternalPackages: ['typeorm', 'pg', 'ioredis', 'reflect-metadata', '@node-rs/argon2'],
 };
 
 export default nextConfig;

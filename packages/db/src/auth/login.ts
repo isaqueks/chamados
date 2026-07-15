@@ -2,10 +2,7 @@ import type { DataSource } from 'typeorm';
 import { Papel, StatusTenant } from '@chamados/shared';
 import { runInTenantContext } from '../rls';
 import { gerarHashSenha, verificarSenha } from './senha';
-import {
-  buscarUsuarioAtivoPorEmail,
-  registrarUltimoAcesso,
-} from './usuario-service';
+import { buscarUsuarioAtivoPorEmail, registrarUltimoAcesso } from './usuario-service';
 import { criarSessao } from './sessao-service';
 import type { ResultadoLogin, TenantResolvido } from './tipos';
 
@@ -53,9 +50,7 @@ export async function autenticarComSenha(
   // Verificação de senha SEMPRE ocorre (mesmo sem conta / sem hash), para
   // equalizar o tempo de resposta.
   const podeAutenticar =
-    !!usuario &&
-    usuario.papel !== Papel.agente_ia &&
-    tenantPermiteLogin(tenant, usuario.papel);
+    !!usuario && usuario.papel !== Papel.agente_ia && tenantPermiteLogin(tenant, usuario.papel);
 
   const hashParaVerificar = usuario?.senha_hash ?? (await hashIsca());
   const senhaOk = await verificarSenha(hashParaVerificar, entrada.senha);

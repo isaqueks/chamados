@@ -1,37 +1,37 @@
-"use client"
+'use client';
 
-import { useActionState, useState } from "react"
-import { avaliarCorMarca } from "@chamados/shared"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { acaoSalvarBranding, type EstadoConfig } from "./actions"
+import { useActionState, useState } from 'react';
+import { avaliarCorMarca } from '@chamados/shared';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { acaoSalvarBranding, type EstadoConfig } from './actions';
 
-const INICIAL: EstadoConfig = {}
+const INICIAL: EstadoConfig = {};
 
 interface Props {
-  nomeExibicao: string
-  agenteIaNome: string
-  emailRemetenteNome: string
-  emailRemetenteEndereco: string
-  corPrimaria: string | null
-  corSecundaria: string | null
+  nomeExibicao: string;
+  agenteIaNome: string;
+  emailRemetenteNome: string;
+  emailRemetenteEndereco: string;
+  corPrimaria: string | null;
+  corSecundaria: string | null;
 }
 
 interface SeletorCor {
-  id: string
-  rotulo: string
-  ativa: boolean
-  setAtiva: (v: boolean) => void
-  cor: string
-  setCor: (v: string) => void
-  descricao: string
+  id: string;
+  rotulo: string;
+  ativa: boolean;
+  setAtiva: (v: boolean) => void;
+  cor: string;
+  setCor: (v: string) => void;
+  descricao: string;
 }
 
 function CampoCor({ s }: { s: SeletorCor }) {
-  const aval = avaliarCorMarca(s.cor)
-  const reprovada = s.ativa && !aval.ok
+  const aval = avaliarCorMarca(s.cor);
+  const reprovada = s.ativa && !aval.ok;
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -70,22 +70,20 @@ function CampoCor({ s }: { s: SeletorCor }) {
       <p className="text-xs text-muted-foreground">{s.descricao}</p>
       {reprovada && (
         <p className="text-xs text-destructive">
-          Contraste {aval.razao.toFixed(2)}:1 sobre fundo claro, abaixo do mínimo
-          AA (4.5:1). Escolha um tom mais escuro — a cor não será aplicada.
+          Contraste {aval.razao.toFixed(2)}:1 sobre fundo claro, abaixo do mínimo AA (4.5:1).
+          Escolha um tom mais escuro — a cor não será aplicada.
         </p>
       )}
     </div>
-  )
+  );
 }
 
 export function BrandingForm(props: Props) {
-  const [estado, acao, pendente] = useActionState(acaoSalvarBranding, INICIAL)
-  const [corPrimariaAtiva, setCorPrimariaAtiva] = useState(props.corPrimaria !== null)
-  const [corPrimaria, setCorPrimaria] = useState(props.corPrimaria ?? "#2563eb")
-  const [corSecundariaAtiva, setCorSecundariaAtiva] = useState(
-    props.corSecundaria !== null,
-  )
-  const [corSecundaria, setCorSecundaria] = useState(props.corSecundaria ?? "#7c3aed")
+  const [estado, acao, pendente] = useActionState(acaoSalvarBranding, INICIAL);
+  const [corPrimariaAtiva, setCorPrimariaAtiva] = useState(props.corPrimaria !== null);
+  const [corPrimaria, setCorPrimaria] = useState(props.corPrimaria ?? '#2563eb');
+  const [corSecundariaAtiva, setCorSecundariaAtiva] = useState(props.corSecundaria !== null);
+  const [corSecundaria, setCorSecundaria] = useState(props.corSecundaria ?? '#7c3aed');
 
   return (
     <form action={acao} className="flex flex-col gap-5">
@@ -144,33 +142,33 @@ export function BrandingForm(props: Props) {
       <div className="grid gap-5 sm:grid-cols-2">
         <CampoCor
           s={{
-            id: "cor_primaria",
-            rotulo: "Cor primária",
+            id: 'cor_primaria',
+            rotulo: 'Cor primária',
             ativa: corPrimariaAtiva,
             setAtiva: setCorPrimariaAtiva,
             cor: corPrimaria,
             setCor: setCorPrimaria,
-            descricao: "Botões, links e destaques.",
+            descricao: 'Botões, links e destaques.',
           }}
         />
         <CampoCor
           s={{
-            id: "cor_secundaria",
-            rotulo: "Cor de destaque",
+            id: 'cor_secundaria',
+            rotulo: 'Cor de destaque',
             ativa: corSecundariaAtiva,
             setAtiva: setCorSecundariaAtiva,
             cor: corSecundaria,
             setCor: setCorSecundaria,
-            descricao: "Acentos secundários.",
+            descricao: 'Acentos secundários.',
           }}
         />
       </div>
 
       <div>
         <Button type="submit" disabled={pendente}>
-          {pendente ? "Salvando…" : "Salvar identidade e cores"}
+          {pendente ? 'Salvando…' : 'Salvar identidade e cores'}
         </Button>
       </div>
     </form>
-  )
+  );
 }
