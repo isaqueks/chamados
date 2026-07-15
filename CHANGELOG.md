@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-15 — Marco M3: Chamado — modelo, numeração e máquina de estados
+
+- **Máquina de estados pura** em `packages/shared` (spec 04 §1.3): tabela canônica de transições × papéis com motivos de negação, invariantes (fechado/cancelado terminais, `agente_ia` nunca resolve, reabertura só de `resolvido`, admin ⊇ operador) — 38 testes.
+- **Entidade Chamado** com migration RLS: campos canônicos da spec 02 (descrição em JSON+HTML, natureza/prioridade/complexidade, `fechar_automaticamente_em`, `reaberto_count`), CHECKs (título 3..160, sistema_alvo XOR categoria) e índice parcial de auto-fechamento.
+- **Numeração sequencial por tenant sem buracos**: tabela `tenant_contador` com upsert atômico na transação de criação (sequências independentes por tenant).
+- **Services**: criar (formulário mínimo), transicionar (máquina + autorização + ownership; agenda auto-fechamento pelo `dias_fechamento_automatico` do tenant), atribuir, prioridade/complexidade/natureza, listar (filtros da spec, escopo por papel, keyset pagination), obter (serializer por papel — cliente nunca recebe complexidade).
+- Rich text **provisório** (texto simples → doc mínimo + HTML escapado) e seam de auditoria no-op — ambos marcados para o M4 substituir.
+- Página provisória `/app/chamados` (lista + abertura + transições válidas por papel); seed com 4 chamados de exemplo; `npm run smoke:chamados` (38 asserts).
+- **Verificado:** typecheck, lint, build, migrations zero/incremental/revert, 6 smokes, 69/69 testes, health.
+- Conflitos de spec identificados e decididos (reconciliação em andamento): título 160 (02 manda no schema), cliente cancela os próprios chamados em estados iniciais (04 manda no ciclo de vida), prioridade/natureza do cliente só na abertura (04 §3).
+
 ## 2026-07-15 — Marco M2: SistemaAlvo, cofre de segredos, categorias, branding e domínio próprio
 
 - **SecretStore (specs 07/09):** envelope encryption AES-256-GCM (chave mestra em `SECRET_STORE_MASTER_KEY`, DEK por segredo), tabela `segredo` com RLS; refs `*_ref` só resolvem no contexto do tenant dono; credencial do `agente_ia` migrada do env para o cofre (`usuario.credencial_servico_ref`).

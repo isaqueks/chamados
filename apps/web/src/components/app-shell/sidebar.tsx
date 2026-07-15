@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Users, Server, Tags, Settings } from "lucide-react"
+import { LayoutDashboard, Users, Server, Tags, Settings, Ticket } from "lucide-react"
 import { Papel } from "@chamados/shared"
 import { cn } from "@/lib/utils"
 
@@ -16,6 +16,7 @@ interface ItemNav {
 
 const ITENS: ItemNav[] = [
   { href: "/app", rotulo: "Painel", icone: LayoutDashboard },
+  { href: "/app/chamados", rotulo: "Chamados", icone: Ticket },
   { href: "/app/sistemas", rotulo: "Sistemas-alvo", icone: Server, papeis: [Papel.admin] },
   { href: "/app/categorias", rotulo: "Categorias", icone: Tags, papeis: [Papel.admin] },
   { href: "/app/usuarios", rotulo: "Usuários", icone: Users, papeis: [Papel.admin] },

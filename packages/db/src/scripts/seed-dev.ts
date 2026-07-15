@@ -17,7 +17,18 @@ const {
   criarUsuarioAtivoComSenha,
   existeContaPorEmail,
 } = await import('../auth');
-const { Papel, StatusTenant } = await import('@chamados/shared');
+const { UsuarioSchema } = await import('../entities/usuario');
+const { ChamadoSchema } = await import('../entities/chamado');
+const {
+  criarChamado,
+  transicionarStatus,
+  atribuirOperador,
+  definirComplexidade,
+  atorSistema,
+} = await import('../chamados/chamado-service');
+const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade } = await import(
+  '@chamados/shared'
+);
 
 const SLUG = 'acme';
 const SENHA_DEV = 'Dev@12345';
@@ -65,6 +76,85 @@ async function main(): Promise<void> {
 
     // 3) Ativa o tenant (setup concluído).
     await atualizarStatusTenant(ds, prov.tenant_id, StatusTenant.ativo);
+
+    // 4) Chamados de exemplo (idempotente): variam natureza/prioridade e status
+    //    alcançados por transições LEGÍTIMAS (para os marcos seguintes). Sem
+    //    sistema-alvo cadastrado, caem na categoria geral (specs/04 §2).
+    await runInTenantContext(ds, prov.tenant_id, async (em) => {
+      const jaTem = await em.count(ChamadoSchema, {});
+      if (jaTem > 0) {
+        console.log(`[seed-dev] chamados de exemplo já existem (${jaTem}); pulando.`);
+        return;
+      }
+
+      const cliente = await em.findOne(UsuarioSchema, { where: { email: 'cliente@acme.dev' } });
+      const operadorU = await em.findOne(UsuarioSchema, { where: { email: 'operador@acme.dev' } });
+      if (!cliente || !operadorU) {
+        console.warn('[seed-dev] cliente/operador não encontrados; sem chamados de exemplo.');
+        return;
+      }
+
+      const atorCliente = { id: cliente.id, tenant_id: prov.tenant_id, papel: Papel.cliente };
+      const atorOperador = { id: operadorU.id, tenant_id: prov.tenant_id, papel: Papel.operador };
+      const atorIA = { id: prov.agente_ia_id, tenant_id: prov.tenant_id, papel: Papel.agente_ia };
+      const sistema = atorSistema(prov.tenant_id);
+
+      async function abrir(
+        titulo: string,
+        descricao: string,
+        natureza: (typeof Natureza)[keyof typeof Natureza],
+        prioridade: (typeof Prioridade)[keyof typeof Prioridade],
+      ): Promise<string> {
+        const r = await criarChamado(em, atorCliente, { titulo, descricao, natureza, prioridade });
+        if (!r.ok) throw new Error(`falha ao criar chamado de exemplo: ${r.motivo}`);
+        return r.id;
+      }
+
+      // #1 novo (problema/alta) — recém-aberto, aguardando triagem.
+      await abrir(
+        'Erro 500 ao salvar pedido',
+        'Ao finalizar um pedido, aparece a mensagem de erro 500 e nada é salvo.',
+        Natureza.problema,
+        Prioridade.alta,
+      );
+
+      // #2 em_atendimento (problema/media) — operador assumiu; complexidade média.
+      const c2 = await abrir(
+        'Botão de exportar não responde',
+        'O botão "Exportar CSV" na tela de relatórios não faz nada ao ser clicado.',
+        Natureza.problema,
+        Prioridade.media,
+      );
+      await transicionarStatus(em, sistema, c2, StatusChamado.em_triagem);
+      await transicionarStatus(em, atorOperador, c2, StatusChamado.em_atendimento);
+      await atribuirOperador(em, atorOperador, c2, operadorU.id);
+      await definirComplexidade(em, atorOperador, c2, Complexidade.medio);
+
+      // #3 aguardando_cliente (alteracao/baixa) — a IA pediu mais informações.
+      const c3 = await abrir(
+        'Adicionar filtro por data no relatório',
+        'Seria possível filtrar o relatório mensal por intervalo de datas?',
+        Natureza.alteracao,
+        Prioridade.baixa,
+      );
+      await transicionarStatus(em, sistema, c3, StatusChamado.em_triagem);
+      await transicionarStatus(em, atorIA, c3, StatusChamado.aguardando_cliente);
+
+      // #4 resolvido (problema/urgente) — ciclo completo até resolvido.
+      const c4 = await abrir(
+        'Login intermitente em horário de pico',
+        'Alguns usuários não conseguem entrar entre 9h e 10h; cai na tela de login.',
+        Natureza.problema,
+        Prioridade.urgente,
+      );
+      await transicionarStatus(em, sistema, c4, StatusChamado.em_triagem);
+      await transicionarStatus(em, atorOperador, c4, StatusChamado.em_atendimento);
+      await atribuirOperador(em, atorOperador, c4, operadorU.id);
+      await definirComplexidade(em, atorOperador, c4, Complexidade.facil);
+      await transicionarStatus(em, atorOperador, c4, StatusChamado.resolvido);
+
+      console.log('[seed-dev]   • 4 chamados de exemplo criados (novo/em_atendimento/aguardando_cliente/resolvido).');
+    });
 
     console.log('\n[seed-dev] PRONTO. Acesse: http://acme.localhost:3000/login');
     console.log('[seed-dev] Credenciais de dev (senha comum a todos):');
