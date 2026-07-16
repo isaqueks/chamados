@@ -14,6 +14,7 @@ import { criarAppDataSource } from '@chamados/db';
 import { redisConnection, iaConfig, triagemConfig } from './config';
 import { resolverProvider } from './ia/resolver-provider';
 import { registrarTriagemIA } from './filas/triagem-ia';
+import { registrarMapeamentoIA } from './filas/mapeamento-ia';
 import { registrarNotificacoes } from './filas/notificacoes';
 import { registrarManutencao, manutencaoConfigEnv } from './filas/manutencao';
 import { registryPadrao } from './notificacoes/registry';
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
       redis,
       provider,
       limites: iaConfig.limites,
+      mapa: iaConfig.mapa,
       lock: triagemConfig.lock,
       connection: redisConnection,
       concorrencia: triagemConfig.concorrencia,
@@ -57,6 +59,19 @@ async function main(): Promise<void> {
         prTimeoutMs: iaConfig.resolucao.prTimeoutMs,
         appBaseUrl: iaConfig.resolucao.appBaseUrl,
       },
+    }),
+    // D-013 — fila de mapeamento de conhecimento ("Mapear agora"). Fila própria
+    // leve; concorrência baixa (mapeamento é caro). Lock por tenant compartilhado
+    // com a triagem (1 execução de IA por tenant).
+    registrarMapeamentoIA({
+      ds,
+      redis,
+      provider,
+      limites: iaConfig.mapa,
+      lock: triagemConfig.lock,
+      connection: redisConnection,
+      concorrencia: 1,
+      log,
     }),
     // M9 — fila de notificações (SMTP + webhook, templates, idempotência).
     registrarNotificacoes({

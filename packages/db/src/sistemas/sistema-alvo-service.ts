@@ -31,6 +31,10 @@ export interface SistemaAlvoResumo {
   tem_git_credencial: boolean;
   tem_logs_credencial: boolean;
   tem_bd_credencial: boolean;
+  /** Mapa de conhecimento (D-013): resumo em markdown; NULL = nunca mapeado. */
+  conhecimento_resumo: string | null;
+  conhecimento_commit: string | null;
+  conhecimento_gerado_em: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -53,9 +57,33 @@ export function toResumoSistemaAlvo(s: SistemaAlvo): SistemaAlvoResumo {
     tem_git_credencial: !!s.git_credencial_ref,
     tem_logs_credencial: !!s.logs_credencial_ref,
     tem_bd_credencial: !!s.bd_credencial_ref,
+    conhecimento_resumo: s.conhecimento_resumo,
+    conhecimento_commit: s.conhecimento_commit,
+    conhecimento_gerado_em: s.conhecimento_gerado_em,
     created_at: s.created_at,
     updated_at: s.updated_at,
   };
+}
+
+/**
+ * Persiste o MAPA DE CONHECIMENTO (D-013) do sistema-alvo: resumo em markdown,
+ * commit (HEAD do checkout mapeado) e timestamp de geração. Chamado pelo worker
+ * ao concluir uma execução de mapeamento.
+ */
+export async function salvarConhecimentoSistema(
+  em: EntityManager,
+  sistemaAlvoId: string,
+  dados: { resumo: string; commit: string | null; geradoEm: Date },
+): Promise<void> {
+  await em.update(
+    SistemaAlvoSchema,
+    { id: sistemaAlvoId },
+    {
+      conhecimento_resumo: dados.resumo,
+      conhecimento_commit: dados.commit,
+      conhecimento_gerado_em: dados.geradoEm,
+    },
+  );
 }
 
 /** Campos de segredo em claro. `undefined`/'' = não altera; `limpar` remove. */

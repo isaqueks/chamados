@@ -67,7 +67,14 @@ sequenceDiagram
     Q->>W: entrega job
     W->>W: abre ExecucaoIA (executando)
     W->>SA: git pull do repo
-    W->>W: monta contexto (sanitiza texto do cliente)
+    opt mapa ausente ou commit divergente (§3.3)
+        W->>W: abre ExecucaoIA de mapeamento (sem chamado_id)
+        W->>P: prompt de mapeamento + ferramentas ro
+        P->>SA: explora repo (busca/leitura)
+        P-->>W: resumo estruturado
+        W->>SA: persiste conhecimento_resumo/commit/gerado_em
+    end
+    W->>W: monta contexto (sanitiza texto do cliente; injeta conhecimento_resumo)
     W->>P: prompt de análise + ferramentas (ro; + escrita se gate pre-call aberto)
     P->>SA: lê código / logs / BD (read-only)
     P-->>W: resultado estruturado (JSON)
@@ -91,7 +98,7 @@ sequenceDiagram
 ### 3.1 Etapas do worker
 
 1. **Abrir `ExecucaoIA`** com status `executando` (enum `status_execucao_ia` de `02-modelo-de-dados.md`: `na_fila`, `executando`, `concluido`, `falhou`, `cancelado`), `chamado_id`, `ultima_mensagem_id`, timestamp de início e budget alocado.
-2. **Sincronizar conhecimento**: obter/atualizar a working copy do `SistemaAlvo` (ciclo de vida em §3.2) — `git clone` na primeira triagem, `git pull` (fast-forward) nas seguintes. Falha de git → escalonar (ver §8), nunca prosseguir com código desatualizado silenciosamente.
+2. **Sincronizar conhecimento**: obter/atualizar a working copy do `SistemaAlvo` (ciclo de vida em §3.2) — `git clone` na primeira triagem, `git pull` (fast-forward) nas seguintes. Falha de git → escalonar (ver §8), nunca prosseguir com código desatualizado silenciosamente. Em seguida, verifica se é preciso (re)gerar o mapa de conhecimento do sistema (§3.3) — mapa ausente ou commit divergente — e prepara o `conhecimento_resumo` resultante para a montagem de contexto do passo seguinte.
 3. **Montar contexto** (§4) com separação estrita entre instruções do sistema e dados não confiáveis.
 4. **Invocar o provider** com as ferramentas read-only habilitadas (§4.2), timeout e budget (§7).
 5. **Parsear a saída estruturada** (JSON validado por schema). Saída inválida → 1 retry de reformatação; persistindo, escalona.
@@ -113,6 +120,43 @@ Fluxo por job:
 
 Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efêmero de `09` §4.4: **filesystem de execução efêmero** ≠ **cache de repositório persistente e não confiável**. Ver `09-seguranca-lgpd.md` §4.4 para a especificação da fronteira de isolamento.
 
+### 3.3 Conhecimento do sistema (mapeamento)
+
+Ler o repositório inteiro em cada triagem é proibitivo em custo/latência. Por isso existe uma **execução de IA dedicada ao `SistemaAlvo`**, com `gatilho = 'mapeamento'`, separada de uma triagem de chamado: diferente do job `triagem_ia` de §2 (que sempre carrega um `chamado_id`), o mapeamento roda como execução própria do `SistemaAlvo`, enfileirada na mesma infraestrutura de filas (`01-arquitetura.md` §3.5). D-013 (`specs/decisoes.md`) é a decisão de origem.
+
+**O que a execução de mapeamento faz**: sobre a working copy já sincronizada (§3.2), o provider explora o repositório com as mesmas ferramentas read-only de §4.2 (`repo_buscar`, `repo_ler_arquivo`; `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas) e produz um **resumo estruturado** cobrindo:
+
+- **Stack**: linguagens, frameworks, principais dependências.
+- **Módulos**: organização de pastas/serviços e a responsabilidade de cada um.
+- **Entidades**: principais modelos de dados/tabelas e como se relacionam.
+- **Regras de negócio**: invariantes e comportamentos centrais identificados no código.
+- **Fluxos**: principais jornadas/processos do sistema (ex.: como uma requisição entra e é tratada).
+- **Glossário**: termos e nomenclaturas específicas do domínio do sistema-alvo, para a IA reconhecer o vocabulário do cliente.
+
+**Persistência**: o resultado grava três campos em `SistemaAlvo` (`02-modelo-de-dados.md`) — `conhecimento_resumo` (o mapa estruturado), `conhecimento_commit` (SHA do commit do repositório no momento da geração) e `conhecimento_gerado_em` (timestamp da geração). Um novo mapeamento sobrescreve os três; o histórico das execuções em si permanece em `ExecucaoIA` (ver "Auditoria" abaixo).
+
+**Gatilhos** (qualquer um dispara uma nova execução de mapeamento):
+
+1. **Primeira triagem sem mapa**: o `SistemaAlvo` ainda não tem `conhecimento_resumo` (nunca foi mapeado). O mapeamento roda dentro do próprio pipeline de triagem, antes da montagem de contexto (§3.1 passo 2; diagrama de §3) — a triagem que disparou o mapeamento já se beneficia do mapa recém-gerado.
+2. **Commit divergente**: o commit da working copy sincronizada em §3.2 é diferente de `conhecimento_commit` (o repositório evoluiu desde o último mapa). Também roda dentro do pipeline de triagem, no mesmo ponto do item 1.
+3. **Manual pelo admin**: ação "Mapear agora" no painel do admin, a qualquer momento — roda fora do contexto de qualquer chamado específico, bastando o `SistemaAlvo` e o commit atual do repositório.
+
+**Uso do mapa**: `conhecimento_resumo` é injetado como contexto de fundo em **toda** triagem (§4.1), reduzindo a chance de a IA perguntar ao cliente algo que o código já responde e ancorando o protocolo investigação-primeiro (§5.1) com conhecimento prévio do sistema — sem substituir a investigação pontual do chamado, que continua via `repo_buscar`/`repo_ler_arquivo`.
+
+**Auditoria**: como qualquer execução de IA, o mapeamento grava um `ExecucaoIA` — mas sem `chamado_id` (pertence ao `SistemaAlvo`, não a um chamado; ver `execucao_ia.sistema_alvo_id` e o CHECK correspondente em `02-modelo-de-dados.md`, D-013).
+
+**Limites próprios**: o mapeamento tem guardrails independentes dos de triagem (§8) — cobre o repositório inteiro (mais caro por execução), mas roda com frequência muito menor:
+
+| Guardrail (mapeamento)                                | Comportamento ao exceder                                                                                                     |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `IA_MAPA_MAX_CHARS` — tamanho máx. do resumo          | resumo truncado/reformatado; se o provider não conseguir compactar, mapeamento falha e o mapa anterior (se houver) é mantido |
+| `IA_MAPA_BUDGET` — orçamento de custo da execução     | aborta, `ExecucaoIA.status = falhou` (`erro = "budget_excedido"`); mapa anterior permanece válido                            |
+| `IA_MAPA_TURNOS` — máx. turnos/chamadas de ferramenta | corta e conclui com o que tem; se insuficiente para produzir resumo coerente, mapeamento falha                               |
+
+> DECISÃO PENDENTE: valores default de `IA_MAPA_MAX_CHARS`/`IA_MAPA_BUDGET`/`IA_MAPA_TURNOS` (tendem a ser maiores que os guardrails de triagem de §8, por cobrir o repositório inteiro, mas compensados pela frequência muito menor de execução).
+
+Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem anterior), a triagem segue apoiada só na investigação pontual do chamado (§5.1); com mapa anterior desatualizado, ele é usado mesmo assim (best-effort) e a divergência de commit permanece registrada para nova tentativa na próxima triagem.
+
 ---
 
 ## 4. Contexto e ferramentas
@@ -122,7 +166,7 @@ Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efême
 - **Metadados do chamado**: `natureza`, `prioridade`, `status`, `SistemaAlvo` (nome, stack), `Categoria`.
 - **Timeline**: mensagens `publica` e `interna` (a IA vê ambas), em ordem, com autor e papel.
 - **Anexos**: texto/imagens relevantes (imagens via visão do modelo quando suportado; ver limites em §7).
-- **Conhecimento do sistema-alvo**: acesso sob demanda via ferramentas (não despejar o repo inteiro no prompt).
+- **Conhecimento do sistema-alvo**: o mapa de conhecimento (`conhecimento_resumo`, §3.3) é injetado como contexto de fundo em toda triagem; a investigação do caso específico do chamado é sob demanda via ferramentas (não se despeja o repo inteiro no prompt).
 
 ### 4.2 Ferramentas (read-only sobre o SistemaAlvo, exceto a dupla de escrita gated)
 
@@ -156,6 +200,8 @@ A saída do modelo deve incluir um objeto de avaliação; o worker aplica os lim
 }
 ```
 
+**Protocolo investigação-primeiro (D-013)**: antes de decidir `compreendido = false`, a IA É OBRIGADA a investigar — buscar os termos do chamado no código com `repo_buscar`/`repo_ler_arquivo` (§4.2) e ler os arquivos relevantes, além de consultar `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas. Perguntas ao cliente (§5.3) são reservadas a **fatos do lado do cliente** — passos executados, tela/funcionalidade usada, usuário/conta envolvida, quando o problema começou — nunca ao que o código, log ou BD já respondem: `compreendido = false` motivado só por não ter investigado é falha de protocolo, não lacuna legítima. O `diagnostico`, entendido ou não, cita as evidências investigadas (arquivo/trecho, log, consulta), coerente com o array `evidencias` abaixo.
+
 Considera-se **entendido** quando TODAS as condições valem:
 
 - `confianca >= LIMIAR_TENANT` (default `0.7`, configurável por tenant);
@@ -183,6 +229,7 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 - No máximo 3–5 perguntas, cada uma acionável e específica (o que, onde, quando, print/erro exato).
 - Nunca revela credenciais, queries, trechos de log crus ou nomes de tabela.
 - Explica brevemente por que precisa da informação (transparência).
+- Cada pergunta versa sobre fato do lado do cliente (passos, tela, usuário, quando começou) — nunca sobre algo que código, log ou BD já responderiam (protocolo investigação-primeiro, §5.1).
 - Se após `MAX_ROUNDS_PERGUNTAS` (default 3) o cliente ainda não deu o suficiente, escalona para operador humano (nota interna) em vez de repetir.
 
 ---

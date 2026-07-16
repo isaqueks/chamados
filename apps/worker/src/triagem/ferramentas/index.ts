@@ -36,6 +36,8 @@ export interface FerramentasReais {
   prepararResolucao(): Promise<void>;
   /** Cópia descartável preparada (ou null) — o worker commita/faz push a partir dela. */
   copiaResolucao(): CopiaDescartavel | null;
+  /** Diretório do checkout sincronizado (ou null se não há repo / antes do sync). */
+  checkout(): string | null;
   /** Libera recursos (BD + destrói a cópia descartável) ao fim do job. */
   encerrar(): Promise<void>;
 }
@@ -118,6 +120,7 @@ export function montarFerramentasReais(
     ferramentas: {
       repo_buscar: repo.repo_buscar,
       repo_ler_arquivo: repo.repo_ler_arquivo,
+      repo_arvore: repo.repo_arvore,
       logs_consultar: logs,
       bd_consultar: bd.bd_consultar,
       // Escrita SÓ quando o gate PRÉ-call passou (specs/05 §6).
@@ -137,6 +140,9 @@ export function montarFerramentasReais(
     },
     copiaResolucao() {
       return copia;
+    },
+    checkout() {
+      return checkoutDir;
     },
     async encerrar() {
       await bd.encerrar();

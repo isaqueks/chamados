@@ -158,6 +158,9 @@ export const GatilhoIA = {
   chamado_criado: 'chamado_criado',
   resposta_cliente: 'resposta_cliente',
   reprocessamento_manual: 'reprocessamento_manual',
+  /** Mapeamento do conhecimento de um sistema-alvo (D-013): execução dedicada,
+   *  vinculada ao SISTEMA (não a um chamado). */
+  mapeamento: 'mapeamento',
 } as const;
 export type GatilhoIA = (typeof GatilhoIA)[keyof typeof GatilhoIA];
 

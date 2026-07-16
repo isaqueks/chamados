@@ -1,6 +1,11 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
-import { autorizar, StatusExecucaoIA, type AIProviderResult } from '@chamados/shared';
+import {
+  autorizar,
+  StatusExecucaoIA,
+  type AIProviderResult,
+  type AIMapeamentoResult,
+} from '@chamados/shared';
 import { ExecucaoIASchema, type ExecucaoIA } from '../entities/execucao-ia';
 import { ChamadoSchema } from '../entities/chamado';
 import type { AtorChamado } from './chamado-service';
@@ -17,11 +22,14 @@ import type { AtorChamado } from './chamado-service';
  */
 
 export interface EntradaCriarExecucao {
-  chamado_id: string;
+  /** Chamado (triagem/resolução). Exatamente um de chamado_id/sistema_alvo_id (CHECK XOR). */
+  chamado_id?: string | null;
+  /** Sistema-alvo (mapeamento — D-013). Exatamente um de chamado_id/sistema_alvo_id. */
+  sistema_alvo_id?: string | null;
   gatilho: string;
   provider: string;
   modelo: string;
-  /** Snapshot sanitizado do input (deve conter `ultima_mensagem_id`). */
+  /** Snapshot sanitizado do input (deve conter `ultima_mensagem_id` na triagem). */
   entrada: Record<string, unknown>;
 }
 
@@ -33,7 +41,8 @@ export async function criarExecucao(
 ): Promise<string> {
   const res = await em.insert(ExecucaoIASchema, {
     tenant_id: ator.tenant_id,
-    chamado_id: dados.chamado_id,
+    chamado_id: dados.chamado_id ?? null,
+    sistema_alvo_id: dados.sistema_alvo_id ?? null,
     status: StatusExecucaoIA.na_fila,
     provider: dados.provider,
     modelo: dados.modelo,
@@ -62,6 +71,34 @@ export async function concluirExecucao(
   em: EntityManager,
   id: string,
   resultado: AIProviderResult,
+  acoes: unknown[] = [],
+): Promise<void> {
+  const t = resultado.telemetria;
+  await em.update(
+    ExecucaoIASchema,
+    { id },
+    {
+      status: StatusExecucaoIA.concluido,
+      resultado,
+      acoes,
+      custo_usd: String(t.custoUsd),
+      duracao_ms: Math.round(t.duracaoMs),
+      tokens_entrada: Math.round(t.tokensEntrada),
+      tokens_saida: Math.round(t.tokensSaida),
+      finalizado_em: new Date(),
+    },
+  );
+}
+
+/**
+ * Conclui uma execução de MAPEAMENTO (D-013), gravando o resumo (`resultado`) e a
+ * telemetria. Análogo a `concluirExecucao`, mas o `resultado` é um
+ * `AIMapeamentoResult` (não há classificação de chamado).
+ */
+export async function concluirExecucaoMapeamento(
+  em: EntityManager,
+  id: string,
+  resultado: AIMapeamentoResult,
   acoes: unknown[] = [],
 ): Promise<void> {
   const t = resultado.telemetria;
@@ -192,6 +229,27 @@ export async function listarExecucoesDoChamado(
   const linhas = await em.find(ExecucaoIASchema, {
     where: { chamado_id: chamadoId },
     order: { created_at: 'DESC' },
+  });
+  return linhas.map(toView);
+}
+
+/**
+ * Lista as execuções de MAPEAMENTO de um sistema-alvo (D-013 — mais recentes
+ * primeiro). Mesma autorização de `listarExecucoesDoChamado` (`execucao_ia` `ler`:
+ * operador/admin/agente_ia; o cliente nunca vê). Usa o índice
+ * `(tenant_id, sistema_alvo_id, created_at)`.
+ */
+export async function listarExecucoesDoSistema(
+  em: EntityManager,
+  ator: AtorChamado,
+  sistemaAlvoId: string,
+  opts: { limite?: number } = {},
+): Promise<ExecucaoIAView[]> {
+  if (!autorizar(ator, 'execucao_ia', 'ler')) return [];
+  const linhas = await em.find(ExecucaoIASchema, {
+    where: { sistema_alvo_id: sistemaAlvoId },
+    order: { created_at: 'DESC' },
+    take: opts.limite ?? 10,
   });
   return linhas.map(toView);
 }

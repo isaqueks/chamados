@@ -2,6 +2,15 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-013: mapa de conhecimento do sistema + investigação obrigatória + fiação real das tools
+
+- **Causa-raiz do "IA não investiga" (produção):** as ferramentas MCP eram registradas mas **não permitidas** — o modo headless do Agent SDK (`permissionMode: 'default'`) nega silenciosamente toda chamada de tool sem handler interativo; o modelo respondia sem tocar no código (0 ações auditadas). Correção: tools em `allowedTools` (prefixo `mcp__triagem__*`) + `bypassPermissions`, com **menor privilégio por construção**: `tools: []` desliga TODAS as built-in do SDK (sem Bash/Read/Web — só os handles escopados do worker) e `settingSources: []` isola do host. Os testes unitários mockavam a fronteira e não pegavam — a fiação agora é validada ao vivo.
+- **Telemetria corrigida:** `tokens_entrada` somava só o último turno (6 tokens!); agora soma o uso cumulativo (incluindo cache) de todos os turnos.
+- **Mapa de conhecimento por sistema-alvo** (migration 0008): execução dedicada (gatilho `mapeamento`, fila `mapeamento-ia`) explora o repo e persiste resumo estruturado + commit em `sistema_alvo`; disparo na primeira triagem, quando o commit muda, ou pelo botão "Mapear agora" (card no cadastro do sistema com preview). `execucao_ia` agora pertence a um chamado XOR sistema-alvo (CHECK; `chamado_id` nullable, `sistema_alvo_id` novo). Resumo injetado em toda triagem. Envs `IA_MAPA_*`.
+- **Protocolo investigação-primeiro** no prompt: buscar/ler o código antes de decidir; perguntas ao cliente restritas a fatos do lado dele (nunca o que o código responde); diagnóstico cita evidências (arquivos/trechos). Nova ferramenta `repo_arvore`.
+- **Validado AO VIVO** (Opus 4.8 real, custo total US$ 0,24): mapeamento com 4 ações citando a regra de negócio do fixture; triagem com 4 ações (busca + leitura) e diagnóstico citando arquivo/linhas; perguntas só sobre fatos do cliente. 154/154 testes; smokes completos incluindo `smoke:conhecimento` (única exceção: `smoke:triagem` competiu com o worker ativo do usuário na fila compartilhada — ambiental, não regressão).
+- Specs 05 (§3.3 mapeamento, §5.1 protocolo) e 02 (colunas de conhecimento, XOR de `execucao_ia`) atualizadas; ADR D-013.
+
 ## 2026-07-16 — Correção: cache de repositório com autocura + log sanitizado do git sync
 
 - **Bug real de produção:** ao trocar a URL/caminho do repositório de um SistemaAlvo existente, o cache do worker mantinha o clone antigo; `set-url` + `pull --ff-only` entre históricos não relacionados falhava com "Not possible to fast-forward" — e o erro era engolido como `git_sync_falhou` genérico (chamado escalado a humano em loop).

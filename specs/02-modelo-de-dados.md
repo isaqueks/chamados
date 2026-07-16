@@ -179,11 +179,12 @@ erDiagram
     USUARIO ||--o{ REDEFINICAO_SENHA : "solicita"
 
     SISTEMA_ALVO ||--o{ CHAMADO : "alvo de"
+    SISTEMA_ALVO |o--o{ EXECUCAO_IA : "mapeado por"
     CATEGORIA ||--o{ CHAMADO : classifica
 
     CHAMADO ||--o{ MENSAGEM : contem
     CHAMADO ||--o{ EVENTO_CHAMADO : registra
-    CHAMADO ||--o{ EXECUCAO_IA : dispara
+    CHAMADO |o--o{ EXECUCAO_IA : dispara
     CHAMADO ||--o{ ANEXO : "anexos diretos"
 
     MENSAGEM ||--o{ ANEXO : contem
@@ -298,27 +299,31 @@ Token de uso único para o fluxo de "esqueci a senha" (ver `03-autenticacao-perf
 
 Sistema de software do tenant sobre o qual os chamados são abertos. Guarda repositório git, fontes de logs e conexão somente-leitura ao BD do sistema. Credenciais NUNCA em texto puro — ver `09-seguranca-lgpd.md`. **Esta modelagem é canônica e deve espelhar `07-multitenancy-whitelabel.md` §5.1** (conexão de BD em campos separados; `descricao`, `logs_tipo`, `logs_credencial_ref` presentes nos dois docs).
 
-| campo                                | tipo        | constraints             | notas                                                     |
-| ------------------------------------ | ----------- | ----------------------- | --------------------------------------------------------- |
-| id                                   | uuid        | PK                      |                                                           |
-| tenant_id                            | uuid        | FK, NOT NULL            |                                                           |
-| nome                                 | text        | NOT NULL                |                                                           |
-| descricao                            | text        | NULL                    | descrição livre do sistema                                |
-| git_repo_url                         | text        | NOT NULL                |                                                           |
-| git_credencial_ref                   | text        | NULL                    | ponteiro para secret manager                              |
-| git_branch_padrao                    | text        | NOT NULL default 'main' |                                                           |
-| logs_tipo                            | text        | NULL                    | tipo/fonte de logs (ex.: 'arquivo', 'cloudwatch', 'loki') |
-| logs_config                          | jsonb       | NOT NULL default '{}'   | caminhos/parâmetros de logs                               |
-| logs_credencial_ref                  | text        | NULL                    | ponteiro p/ credencial de acesso aos logs                 |
-| bd_tipo                              | text        | NULL                    | SGBD (ex.: 'postgres', 'mysql')                           |
-| bd_host                              | text        | NULL                    | host do BD do sistema-alvo                                |
-| bd_porta                             | int         | NULL                    | porta                                                     |
-| bd_nome                              | text        | NULL                    | nome do banco                                             |
-| bd_credencial_ref                    | text        | NULL                    | ponteiro p/ credencial read-only (usuário/senha em cofre) |
-| ativo                                | bool        | NOT NULL default true   |                                                           |
-| created_at / updated_at / deleted_at | timestamptz |                         |                                                           |
+| campo                                | tipo        | constraints             | notas                                                                                                                                                                  |
+| ------------------------------------ | ----------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                                   | uuid        | PK                      |                                                                                                                                                                        |
+| tenant_id                            | uuid        | FK, NOT NULL            |                                                                                                                                                                        |
+| nome                                 | text        | NOT NULL                |                                                                                                                                                                        |
+| descricao                            | text        | NULL                    | descrição livre do sistema                                                                                                                                             |
+| git_repo_url                         | text        | NOT NULL                |                                                                                                                                                                        |
+| git_credencial_ref                   | text        | NULL                    | ponteiro para secret manager                                                                                                                                           |
+| git_branch_padrao                    | text        | NOT NULL default 'main' |                                                                                                                                                                        |
+| logs_tipo                            | text        | NULL                    | tipo/fonte de logs (ex.: 'arquivo', 'cloudwatch', 'loki')                                                                                                              |
+| logs_config                          | jsonb       | NOT NULL default '{}'   | caminhos/parâmetros de logs                                                                                                                                            |
+| logs_credencial_ref                  | text        | NULL                    | ponteiro p/ credencial de acesso aos logs                                                                                                                              |
+| bd_tipo                              | text        | NULL                    | SGBD (ex.: 'postgres', 'mysql')                                                                                                                                        |
+| bd_host                              | text        | NULL                    | host do BD do sistema-alvo                                                                                                                                             |
+| bd_porta                             | int         | NULL                    | porta                                                                                                                                                                  |
+| bd_nome                              | text        | NULL                    | nome do banco                                                                                                                                                          |
+| bd_credencial_ref                    | text        | NULL                    | ponteiro p/ credencial read-only (usuário/senha em cofre)                                                                                                              |
+| ativo                                | bool        | NOT NULL default true   |                                                                                                                                                                        |
+| conhecimento_resumo                  | text        | NULL                    | mapa de conhecimento estruturado (stack, módulos, entidades, regras de negócio, fluxos, glossário); gerado pela execução de mapeamento (`05-agente-ia.md` §3.3, D-013) |
+| conhecimento_commit                  | text        | NULL                    | SHA do commit do repositório no momento em que `conhecimento_resumo` foi gerado; usado para detectar divergência e disparar novo mapeamento                            |
+| conhecimento_gerado_em               | timestamptz | NULL                    | quando `conhecimento_resumo` foi gerado                                                                                                                                |
+| created_at / updated_at / deleted_at | timestamptz |                         |                                                                                                                                                                        |
 
 - UNIQUE `(tenant_id, nome)`.
+- **Conhecimento do sistema** (D-013): `conhecimento_resumo`/`conhecimento_commit`/`conhecimento_gerado_em` guardam o mapa produzido pela execução de mapeamento dedicada (`execucao_ia` com `gatilho = 'mapeamento'`, sem `chamado_id` — ver entidade `ExecucaoIA` abaixo e `05-agente-ia.md` §3.3). Os três ficam `NULL` até o primeiro mapeamento; um novo mapeamento sobrescreve os três (sem histórico de versões do resumo em si — o histórico de execuções fica em `execucao_ia`).
 - Conexão de BD modelada em **campos separados** (`bd_tipo`/`bd_host`/`bd_porta`/`bd_nome` + `bd_credencial_ref`), NÃO como DSN único — mesma representação de `07` §5.1. A conexão é sempre somente-leitura.
 - Nenhum secret (token git, senha do BD, credencial de logs) é persistido em claro: apenas referências (`*_ref`) a um cofre de segredos. Ver `09-seguranca-lgpd.md`.
 
@@ -429,28 +434,31 @@ Auditoria/histórico imutável. Todo evento relevante gera uma linha (append-onl
 
 Registro de cada execução do pipeline do agente_ia. Detalhes de comportamento em `05-agente-ia.md`.
 
-| campo          | tipo               | constraints                | notas                                      |
-| -------------- | ------------------ | -------------------------- | ------------------------------------------ |
-| id             | uuid               | PK                         |                                            |
-| tenant_id      | uuid               | FK, NOT NULL               |                                            |
-| chamado_id     | uuid               | FK, NOT NULL               |                                            |
-| status         | status_execucao_ia | NOT NULL default 'na_fila' |                                            |
-| provider       | text               | NOT NULL                   | ex.: 'claude-code' (abstração de provider) |
-| modelo         | text               | NOT NULL                   | ex.: 'opus-4.8'                            |
-| gatilho        | text               | NOT NULL                   | ex.: 'chamado_criado', 'resposta_cliente'  |
-| entrada        | jsonb              | NOT NULL default '{}'      | snapshot do input                          |
-| acoes          | jsonb              | NOT NULL default '[]'      | trilha de ações (git pull, PR, etc.)       |
-| resultado      | jsonb              | NULL                       | diagnóstico/PR/spec                        |
-| custo_usd      | numeric(12,6)      | NULL                       |                                            |
-| tokens_entrada | int                | NULL                       |                                            |
-| tokens_saida   | int                | NULL                       |                                            |
-| duracao_ms     | int                | NULL                       |                                            |
-| erro           | text               | NULL                       | quando `falhou`                            |
-| iniciado_em    | timestamptz        | NULL                       |                                            |
-| finalizado_em  | timestamptz        | NULL                       |                                            |
-| created_at     | timestamptz        | NOT NULL                   |                                            |
+| campo           | tipo               | constraints                | notas                                                                                                              |
+| --------------- | ------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| id              | uuid               | PK                         |                                                                                                                    |
+| tenant_id       | uuid               | FK, NOT NULL               |                                                                                                                    |
+| chamado_id      | uuid               | FK NULL                    | NULL em execuções de mapeamento (D-013); ver CHECK abaixo                                                          |
+| sistema_alvo_id | uuid               | FK NULL                    | preenchido só em execuções de mapeamento (`gatilho = 'mapeamento'`); mutuamente exclusivo com `chamado_id` (D-013) |
+| status          | status_execucao_ia | NOT NULL default 'na_fila' |                                                                                                                    |
+| provider        | text               | NOT NULL                   | ex.: 'claude-code' (abstração de provider)                                                                         |
+| modelo          | text               | NOT NULL                   | ex.: 'opus-4.8'                                                                                                    |
+| gatilho         | text               | NOT NULL                   | ex.: 'chamado_criado', 'resposta_cliente', 'mapeamento'                                                            |
+| entrada         | jsonb              | NOT NULL default '{}'      | snapshot do input                                                                                                  |
+| acoes           | jsonb              | NOT NULL default '[]'      | trilha de ações (git pull, PR, etc.)                                                                               |
+| resultado       | jsonb              | NULL                       | diagnóstico/PR/spec                                                                                                |
+| custo_usd       | numeric(12,6)      | NULL                       |                                                                                                                    |
+| tokens_entrada  | int                | NULL                       |                                                                                                                    |
+| tokens_saida    | int                | NULL                       |                                                                                                                    |
+| duracao_ms      | int                | NULL                       |                                                                                                                    |
+| erro            | text               | NULL                       | quando `falhou`                                                                                                    |
+| iniciado_em     | timestamptz        | NULL                       |                                                                                                                    |
+| finalizado_em   | timestamptz        | NULL                       |                                                                                                                    |
+| created_at      | timestamptz        | NOT NULL                   |                                                                                                                    |
 
+- CHECK: `(chamado_id IS NOT NULL AND sistema_alvo_id IS NULL) OR (chamado_id IS NULL AND sistema_alvo_id IS NOT NULL)` — toda execução pertence a exatamente um dos dois: um `Chamado` (triagem/reprocessamento) OU um `SistemaAlvo` (mapeamento, sem chamado associado). D-013 (`specs/decisoes.md`).
 - Índice `(tenant_id, chamado_id, created_at)`.
+- Índice `(tenant_id, sistema_alvo_id, created_at)` — histórico de mapeamentos por sistema-alvo.
 
 ### CanalNotificacao
 
@@ -573,6 +581,7 @@ Descrições e mensagens são rich text (TipTap recomendado). Guardamos **duas r
 | mensagem          | `(tenant_id, chamado_id, created_at)`                               | timeline                                        |
 | evento_chamado    | `(tenant_id, chamado_id, created_at)`                               | histórico                                       |
 | execucao_ia       | `(tenant_id, chamado_id, created_at)`                               | trilha de IA                                    |
+| execucao_ia       | `(tenant_id, sistema_alvo_id, created_at)`                          | histórico de mapeamentos por sistema-alvo       |
 | anexo             | `(tenant_id, chamado_id)` / `(tenant_id, mensagem_id)`              | listar anexos                                   |
 | chamado           | GIN sobre `busca_tsv` (coluna gerada: título + descrição)           | busca full-text                                 |
 

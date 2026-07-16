@@ -121,6 +121,7 @@ export const ROTULO_GATILHO_IA: Record<string, string> = {
   [GatilhoIA.chamado_criado]: 'Abertura do chamado',
   [GatilhoIA.resposta_cliente]: 'Resposta do cliente',
   [GatilhoIA.reprocessamento_manual]: 'Reprocessamento manual',
+  [GatilhoIA.mapeamento]: 'Mapeamento do sistema',
 };
 
 /** Iniciais para o avatar a partir do nome. */

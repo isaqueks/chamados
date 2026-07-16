@@ -31,6 +31,17 @@ export const iaConfig = {
     budgetUsd: num('IA_BUDGET_USD', 5),
     maxTurnos: num('IA_MAX_TURNOS', 20),
   },
+  /**
+   * Mapeamento de conhecimento do sistema (D-013): execução dedicada, mais cara e
+   * com mais turnos que a triagem (explora o repo inteiro). Budget/turnos/timeout
+   * próprios; teto de caracteres do resumo injetado nas triagens.
+   */
+  mapa: {
+    timeoutMs: num('IA_MAPA_TIMEOUT_MS', 600_000),
+    budgetUsd: num('IA_MAPA_BUDGET_USD', 10),
+    maxTurnos: num('IA_MAPA_MAX_TURNOS', 40),
+    maxChars: num('IA_MAPA_MAX_CHARS', 12_000),
+  },
   /** Resolução automática (specs/05 §6): PR e link do chamado. */
   resolucao: {
     /** Timeout do POST de abertura de PR no GitHub (ms). */

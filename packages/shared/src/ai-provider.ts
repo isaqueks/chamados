@@ -43,6 +43,23 @@ export interface MetadadosSistemaAlvo {
   stack: string | null;
 }
 
+/**
+ * MAPA DE CONHECIMENTO do sistema-alvo (D-013): resumo estruturado (markdown)
+ * do repositório — stack, módulos, entidades, regras de negócio, fluxos — gerado
+ * por uma execução dedicada de mapeamento e INJETADO em toda triagem para que a
+ * IA "conheça o sistema" sem reler o repo inteiro. Derivado de código do cliente
+ * (conteúdo não confiável), mas já DESTILADO — o prompt o rotula como material de
+ * REFERÊNCIA, nunca como instruções.
+ */
+export interface ConhecimentoSistema {
+  /** Resumo em markdown (≤ IA_MAPA_MAX_CHARS). */
+  resumo: string;
+  /** Commit (HEAD do checkout) sobre o qual o mapa foi gerado. */
+  commit: string | null;
+  /** Timestamp ISO-8601 (UTC) de geração do mapa. */
+  geradoEm: string;
+}
+
 // ---------------------------------------------------------------------------
 // Ferramentas read-only (specs/05 §4.2) — handles JÁ escopados, injetados pelo
 // worker. O provider recebe FUNÇÕES, nunca conexões/credenciais cruas.
@@ -104,11 +121,17 @@ export interface AIProviderInput {
     timeline: MensagemPublica[];
     /** Metadados SEM credenciais (nem DSN, nem caminho de repo cru). */
     sistemaAlvo: MetadadosSistemaAlvo;
+    /**
+     * Mapa de conhecimento do sistema-alvo (D-013), injetado pelo worker quando
+     * disponível/atualizado. `null`/ausente quando não há repo ou o mapa ainda
+     * não foi gerado.
+     */
+    conhecimento?: ConhecimentoSistema | null;
   };
 
   /**
    * Handles de ferramentas JÁ escopadas, injetados pelo worker (nunca
-   * conexões/credenciais cruas). As quatro primeiras são read-only sobre o
+   * conexões/credenciais cruas). As primeiras são read-only sobre o
    * sistema-alvo. As de ESCRITA (`repo_escrever_arquivo`/`repo_criar_arquivo`)
    * SÓ existem quando o gate de resolução automática passou (specs/05 §6) —
    * caso contrário são `undefined` e o provider não tem como tentar resolver.
@@ -116,6 +139,8 @@ export interface AIProviderInput {
   ferramentas: {
     repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
     repo_ler_arquivo(caminho: string): Promise<string>;
+    /** Lista caminhos (relativos) do checkout — apoia a investigação de estrutura. */
+    repo_arvore?(subdir?: string): Promise<string[]>;
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
     /** SELECT-only, com timeout imposto pelo worker. */
     bd_consultar(sql: string): Promise<Linha[]>;
@@ -181,6 +206,36 @@ export interface AIProviderResult {
   telemetria: TelemetriaIA;
 }
 
+// ---------------------------------------------------------------------------
+// Mapeamento de conhecimento do sistema (D-013) — execução DEDICADA que explora
+// o repositório e produz um resumo estruturado (markdown), persistido no
+// sistema-alvo e injetado nas triagens seguintes.
+// ---------------------------------------------------------------------------
+
+export interface AIMapeamentoInput {
+  /** Metadados do sistema-alvo (SEM credenciais). */
+  sistemaAlvo: MetadadosSistemaAlvo;
+  /** Ferramentas READ-ONLY sobre o checkout sincronizado (menor privilégio). */
+  ferramentas: {
+    repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
+    repo_ler_arquivo(caminho: string): Promise<string>;
+    repo_arvore?(subdir?: string): Promise<string[]>;
+  };
+  limites: {
+    timeoutMs: number;
+    budgetUsd: number;
+    maxTurnos: number;
+  };
+  /** Teto de caracteres do resumo (env `IA_MAPA_MAX_CHARS`). */
+  maxChars: number;
+}
+
+export interface AIMapeamentoResult {
+  /** Resumo em markdown (≤ `maxChars`), pronto para injeção nas triagens. */
+  resumo: string;
+  telemetria: TelemetriaIA;
+}
+
 /**
  * Abstração do provider. O pipeline consome SEMPRE `AIProviderResult`,
  * independentemente do engine concreto (Claude Agent SDK hoje — D-006).
@@ -192,4 +247,11 @@ export interface AIProvider {
   modelo: string;
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;
+
+  /**
+   * Mapeia o conhecimento do sistema-alvo (D-013): explora o repositório via as
+   * ferramentas read-only e devolve um resumo estruturado em markdown. Mesma
+   * fronteira injetável/telemetria da triagem.
+   */
+  mapearSistema(input: AIMapeamentoInput): Promise<AIMapeamentoResult>;
 }

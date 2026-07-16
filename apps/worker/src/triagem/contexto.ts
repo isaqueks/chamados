@@ -67,10 +67,14 @@ export interface PreparacaoContexto {
   prepararResolucao: FerramentasReais['prepararResolucao'];
   /** Cópia descartável preparada (ou null). */
   copiaResolucao: FerramentasReais['copiaResolucao'];
+  /** Diretório do checkout sincronizado (ou null) — usado pelo mapeamento (D-013). */
+  checkout: FerramentasReais['checkout'];
   /** Encerra recursos das ferramentas (conexão de BD + cópia descartável). */
   encerrar: FerramentasReais['encerrar'];
   /** Metadados do gate de resolução (specs/05 §6). */
   resolucao: ResolucaoContexto;
+  /** Sistema-alvo do chamado (ou null) — chave do mapa de conhecimento (D-013). */
+  sistemaAlvoId: string | null;
 }
 
 /** Converte HTML sanitizado numa projeção de texto puro (para o contexto do modelo). */
@@ -196,6 +200,7 @@ export async function montarInput(
     sincronizar: reais.sincronizar,
     prepararResolucao: reais.prepararResolucao,
     copiaResolucao: reais.copiaResolucao,
+    checkout: reais.checkout,
     encerrar: reais.encerrar,
     resolucao: {
       habilitadaPreCall,
@@ -203,5 +208,6 @@ export async function montarInput(
       repo: configFerramentas.repo,
       numeroChamado: String(chamado.numero),
     },
+    sistemaAlvoId: chamado.sistema_alvo_id,
   };
 }

@@ -9,6 +9,8 @@ import {
   criarSistemaAlvo,
   atualizarSistemaAlvo,
   definirAtivoSistemaAlvo,
+  buscarSistemaAlvo,
+  enfileirarMapeamento,
   permitirRepoLocal,
   type EntradaSistemaAlvo,
 } from '@chamados/db';
@@ -150,4 +152,37 @@ export async function acaoDefinirAtivoSistema(formData: FormData): Promise<void>
   const ds = await obterAppDataSource();
   await runInTenantContext(ds, tenant.id, (em) => definirAtivoSistemaAlvo(em, id, ativo));
   revalidatePath('/app/sistemas');
+}
+
+/** Resultado de uma ação simples com feedback (padrão do painel). */
+export interface ResultadoAcaoSistema {
+  ok: boolean;
+  msg: string;
+}
+
+/**
+ * Enfileira o MAPEAMENTO de conhecimento de um sistema-alvo (D-013 — "Mapear
+ * agora", admin). O worker gera o mapa (ExecucaoIA dedicada) e o injeta nas
+ * triagens. Best-effort: falha de fila vira mensagem, nunca exceção não tratada.
+ */
+export async function acaoMapearSistema(sistemaAlvoId: string): Promise<ResultadoAcaoSistema> {
+  const { tenant, usuario } = await exigirUsuario();
+  if (!autorizar(usuario, 'sistema_alvo', 'editar')) {
+    return { ok: false, msg: 'Sem permissão para mapear o sistema.' };
+  }
+  if (!sistemaAlvoId) return { ok: false, msg: 'Sistema-alvo inválido.' };
+
+  const ds = await obterAppDataSource();
+  const sistema = await runInTenantContext(ds, tenant.id, (em) =>
+    buscarSistemaAlvo(em, sistemaAlvoId),
+  );
+  if (!sistema) return { ok: false, msg: 'Sistema-alvo não encontrado.' };
+
+  try {
+    await enfileirarMapeamento({ tenantId: tenant.id, sistemaAlvoId });
+  } catch {
+    return { ok: false, msg: 'Não foi possível enfileirar o mapeamento agora. Tente novamente.' };
+  }
+  revalidatePath(`/app/sistemas/${sistemaAlvoId}`);
+  return { ok: true, msg: 'Mapeamento enfileirado. O resumo aparecerá aqui em instantes.' };
 }

@@ -163,6 +163,30 @@ Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com
 `status='falhou'` e `erro='timeout'` / `erro='budget_excedido'`
 (`specs/05-agente-ia.md` §8).
 
+#### Mapa de conhecimento do sistema (D-013)
+
+Antes de analisar chamados, a IA precisa conhecer o sistema: uma execução
+dedicada (gatilho `mapeamento`, fila própria `mapeamento-ia`) explora o
+repositório e produz um resumo estruturado (stack, módulos, entidades, regras de
+negócio, fluxos) persistido no `sistema_alvo` com o commit mapeado. Dispara na
+**primeira triagem** sem mapa, quando o **commit do checkout muda**, ou pelo botão
+**"Mapear agora"** no cadastro do sistema (`/app/sistemas/[id]`, admin). O resumo
+é injetado em toda triagem; a triagem segue o protocolo **investigação-primeiro**
+(busca/lê o código antes de decidir; só pergunta ao cliente fatos do lado dele).
+
+| Variável             | Default  | Descrição                                |
+| -------------------- | -------- | ---------------------------------------- |
+| `IA_MAPA_BUDGET_USD` | `10`     | teto de custo por execução de mapeamento |
+| `IA_MAPA_MAX_TURNOS` | `40`     | turnos/ferramentas do mapeamento         |
+| `IA_MAPA_MAX_CHARS`  | `12000`  | tamanho máximo do resumo persistido      |
+| `IA_MAPA_TIMEOUT_MS` | `600000` | timeout do mapeamento                    |
+
+Nota técnica da fiação (Agent SDK): as ferramentas MCP in-process precisam constar
+em `allowedTools` (com prefixo `mcp__triagem__*`) e o modo headless usa
+`bypassPermissions` — o menor privilégio vem de `tools: []` (todas as built-in do
+SDK desligadas: sem Bash/Read/Web) e `settingSources: []` (isolado de settings do
+host); o modelo só enxerga os handles escopados do worker.
+
 #### Autenticação do provider `claude` (D-012)
 
 Quando `IA_PROVIDER=claude`, o worker precisa de **uma** de duas credenciais

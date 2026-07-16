@@ -15,7 +15,14 @@ import { StatusExecucaoIA, valoresEnum } from '@chamados/shared';
 export interface ExecucaoIA {
   id: string;
   tenant_id: string;
-  chamado_id: string;
+  /**
+   * Chamado da execução (triagem/resolução). NULL nas execuções de MAPEAMENTO
+   * (D-013), que pertencem ao sistema-alvo. Exatamente um de `chamado_id`/
+   * `sistema_alvo_id` é preenchido (CHECK XOR na migration 0008).
+   */
+  chamado_id: string | null;
+  /** Sistema-alvo da execução de MAPEAMENTO (D-013). NULL nas de triagem/resolução. */
+  sistema_alvo_id: string | null;
   status: StatusExecucaoIA;
   /** Abstração de provider (ex.: 'claude-agent-sdk', 'fake'). */
   provider: string;
@@ -46,7 +53,8 @@ export const ExecucaoIASchema = new EntitySchema<ExecucaoIA>({
   columns: {
     id: { type: 'uuid', primary: true, default: () => 'gen_random_uuid()' },
     tenant_id: { type: 'uuid' },
-    chamado_id: { type: 'uuid' },
+    chamado_id: { type: 'uuid', nullable: true },
+    sistema_alvo_id: { type: 'uuid', nullable: true },
     status: {
       type: 'enum',
       enum: valoresEnum(StatusExecucaoIA),
@@ -72,6 +80,10 @@ export const ExecucaoIASchema = new EntitySchema<ExecucaoIA>({
     {
       name: 'ix_execucao_ia_tenant_chamado_created',
       columns: ['tenant_id', 'chamado_id', 'created_at'],
+    },
+    {
+      name: 'ix_execucao_ia_tenant_sistema_created',
+      columns: ['tenant_id', 'sistema_alvo_id', 'created_at'],
     },
   ],
 });

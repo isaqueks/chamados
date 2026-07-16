@@ -31,6 +31,12 @@ export interface SistemaAlvo {
   bd_nome: string | null;
   bd_credencial_ref: string | null;
   ativo: boolean;
+  /** Mapa de conhecimento (D-013): resumo em markdown do repositório. NULL = nunca mapeado. */
+  conhecimento_resumo: string | null;
+  /** Commit (HEAD do checkout) sobre o qual o mapa foi gerado. */
+  conhecimento_commit: string | null;
+  /** Quando o mapa foi gerado. NULL = nunca mapeado. */
+  conhecimento_gerado_em: Date | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -60,6 +66,9 @@ export const SistemaAlvoSchema = new EntitySchema<SistemaAlvo>({
     bd_nome: { type: 'text', nullable: true },
     bd_credencial_ref: { type: 'text', nullable: true },
     ativo: { type: 'boolean', default: true },
+    conhecimento_resumo: { type: 'text', nullable: true },
+    conhecimento_commit: { type: 'text', nullable: true },
+    conhecimento_gerado_em: { type: 'timestamptz', nullable: true },
     created_at: { type: 'timestamptz', createDate: true },
     updated_at: { type: 'timestamptz', updateDate: true },
     deleted_at: { type: 'timestamptz', deleteDate: true, nullable: true },

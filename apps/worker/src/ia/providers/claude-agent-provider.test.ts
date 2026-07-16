@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { Natureza, Prioridade, Complexidade, type AIProviderInput } from '@chamados/shared';
+import {
+  Natureza,
+  Prioridade,
+  Complexidade,
+  type AIProviderInput,
+  type AIMapeamentoInput,
+} from '@chamados/shared';
 import {
   ClaudeAgentProvider,
   mapearResultado,
@@ -8,6 +14,7 @@ import {
   validarCredenciaisClaude,
   type MensagemSdk,
   type QueryFn,
+  type QueryMapFn,
 } from './claude-agent-provider';
 import { ErroProviderBudget, ErroProviderTimeout } from '../erros';
 
@@ -36,8 +43,28 @@ function inputBase(): AIProviderInput {
   };
 }
 
+function inputMapeamento(): AIMapeamentoInput {
+  return {
+    sistemaAlvo: { nome: 'Loja', descricao: null, stack: 'bd: postgres' },
+    ferramentas: {
+      repo_buscar: async () => [],
+      repo_ler_arquivo: async () => '',
+      repo_arvore: async () => [],
+    },
+    limites: { timeoutMs: 1000, budgetUsd: 5, maxTurnos: 10 },
+    maxChars: 200,
+  };
+}
+
 /** queryFn falsa que emite as mensagens SDK fornecidas. */
 function queryFnDe(...msgs: MensagemSdk[]): QueryFn {
+  return async function* () {
+    for (const m of msgs) yield m;
+  };
+}
+
+/** queryMapFn falsa que emite as mensagens SDK fornecidas. */
+function queryMapFnDe(...msgs: MensagemSdk[]): QueryMapFn {
   return async function* () {
     for (const m of msgs) yield m;
   };
@@ -140,6 +167,122 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     const prompt = montarPrompt(inputBase());
     expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
     expect(prompt).toContain('Erro ao salvar');
+  });
+
+  it('montarPrompt injeta o conhecimento do sistema quando presente (D-013)', () => {
+    const input = inputBase();
+    input.contexto.conhecimento = {
+      resumo: '# Mapa\n\nRégua usa os canais X e Y (src/regua.ts).',
+      commit: 'abc1234',
+      geradoEm: '2026-07-16T00:00:00Z',
+    };
+    const prompt = montarPrompt(input);
+    expect(prompt).toContain('<conhecimento_do_sistema>');
+    expect(prompt).toContain('src/regua.ts');
+    expect(prompt).toContain('abc1234');
+  });
+
+  it('telemetria SOMA tokens de todos os turnos (inclui cache) quando não há modelUsage', async () => {
+    const queryFn: QueryFn = async function* () {
+      yield { type: 'assistant', message: { usage: { input_tokens: 10, output_tokens: 5 } } };
+      yield {
+        type: 'assistant',
+        message: { usage: { input_tokens: 20, cache_read_input_tokens: 100, output_tokens: 7 } },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 0.01,
+        duration_ms: 100,
+        structured_output: { compreendido: true, confianca: 0.8 },
+      };
+    };
+    const p = new ClaudeAgentProvider({ queryFn });
+    const r = await p.executarTriagem(inputBase());
+    expect(r.telemetria.tokensEntrada).toBe(130); // 10 + 20 + 100 (cache_read)
+    expect(r.telemetria.tokensSaida).toBe(12); // 5 + 7
+  });
+
+  it('telemetria prefere modelUsage cumulativo do result (inclui cache)', async () => {
+    const queryFn: QueryFn = async function* () {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        total_cost_usd: 0.02,
+        duration_ms: 50,
+        // Bug de D-013: usage do result só reflete o último turno (input=6).
+        usage: { input_tokens: 6, output_tokens: 3886 },
+        modelUsage: {
+          'claude-opus-4-8': {
+            inputTokens: 5000,
+            cacheReadInputTokens: 90000,
+            cacheCreationInputTokens: 1000,
+            outputTokens: 3886,
+          },
+        },
+        structured_output: { compreendido: true, confianca: 0.9 },
+      };
+    };
+    const p = new ClaudeAgentProvider({ queryFn });
+    const r = await p.executarTriagem(inputBase());
+    expect(r.telemetria.tokensEntrada).toBe(96000); // 5000 + 90000 + 1000 (NÃO 6)
+    expect(r.telemetria.tokensSaida).toBe(3886);
+  });
+});
+
+describe('ClaudeAgentProvider — mapeamento (D-013)', () => {
+  it('mapearSistema devolve o resumo (texto do result) + telemetria', async () => {
+    const queryMapFn = queryMapFnDe(
+      { type: 'assistant', message: { usage: { input_tokens: 1000, output_tokens: 100 } } },
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        total_cost_usd: 0.05,
+        duration_ms: 3000,
+        modelUsage: {
+          'claude-opus-4-8': {
+            inputTokens: 1000,
+            cacheReadInputTokens: 500,
+            cacheCreationInputTokens: 0,
+            outputTokens: 100,
+          },
+        },
+        result: '# Mapa do sistema\n\nRegra de negócio em src/regra.ts',
+      },
+    );
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const r = await p.mapearSistema(inputMapeamento());
+    expect(r.resumo).toContain('src/regra.ts');
+    expect(r.telemetria.tokensEntrada).toBe(1500); // 1000 + 500 cache
+    expect(r.telemetria.tokensSaida).toBe(100);
+    expect(r.telemetria.custoUsd).toBe(0.05);
+  });
+
+  it('mapearSistema trunca o resumo ao maxChars', async () => {
+    const longo = 'x'.repeat(500);
+    const queryMapFn = queryMapFnDe({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0,
+      duration_ms: 10,
+      result: longo,
+    });
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const r = await p.mapearSistema(inputMapeamento()); // maxChars: 200
+    expect(r.resumo.length).toBe(200);
+  });
+
+  it('mapearSistema com resultado vazio lança', async () => {
+    const queryMapFn = queryMapFnDe({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0,
+      duration_ms: 10,
+      result: '   ',
+    });
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    await expect(p.mapearSistema(inputMapeamento())).rejects.toThrow(/mapeamento_vazio/);
   });
 });
 

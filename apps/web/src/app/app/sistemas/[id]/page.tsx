@@ -5,18 +5,26 @@ import {
   obterAppDataSource,
   runInTenantContext,
   buscarSistemaAlvo,
+  listarExecucoesDoSistema,
   permitirRepoLocal,
 } from '@chamados/db';
 import { Papel } from '@chamados/shared';
 import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent } from '@/components/ui/card';
 import { SistemaForm } from '../sistema-form';
+import { ConhecimentoSistemaCard } from './conhecimento-card';
 
 export default async function EditarSistemaPage({ params }: { params: Promise<{ id: string }> }) {
-  const { tenant } = await exigirPapel(Papel.admin);
+  const { tenant, usuario } = await exigirPapel(Papel.admin);
   const { id } = await params;
   const ds = await obterAppDataSource();
-  const sistema = await runInTenantContext(ds, tenant.id, (em) => buscarSistemaAlvo(em, id));
+  const { sistema, execucoesMapa } = await runInTenantContext(ds, tenant.id, async (em) => {
+    const sistema = await buscarSistemaAlvo(em, id);
+    if (!sistema) return { sistema: null, execucoesMapa: [] };
+    const ator = { id: usuario.id, tenant_id: tenant.id, papel: usuario.papel };
+    const execucoesMapa = await listarExecucoesDoSistema(em, ator, id, { limite: 5 });
+    return { sistema, execucoesMapa };
+  });
   if (!sistema) notFound();
   const repoLocalHabilitado = permitirRepoLocal();
 
@@ -38,6 +46,8 @@ export default async function EditarSistemaPage({ params }: { params: Promise<{ 
           <SistemaForm sistema={sistema} permitirRepoLocal={repoLocalHabilitado} />
         </CardContent>
       </Card>
+
+      <ConhecimentoSistemaCard sistema={sistema} execucoes={execucoesMapa} />
     </div>
   );
 }

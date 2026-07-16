@@ -6,6 +6,8 @@ import {
   type AIProvider,
   type AIProviderInput,
   type AIProviderResult,
+  type AIMapeamentoInput,
+  type AIMapeamentoResult,
 } from '@chamados/shared';
 import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
 
@@ -32,7 +34,15 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  * Sem marcadores: compreendido=true, confiança 0.9, complexidade 'facil',
  * diagnóstico curto. A telemetria é determinística (derivada do tamanho do texto),
  * exceto `duracaoMs`, medido de fato.
+ *
+ * MAPEAMENTO (D-013): `mapearSistema` produz um resumo markdown determinístico com
+ * o marcador `[[mapa-fake]]` (citando o que `repo_buscar('regra')` encontra no
+ * fixture). Quando o resumo é injetado na triagem (`contexto.conhecimento`), o
+ * diagnóstico o ECOA — o smoke `conhecimento` asserta o marcador para provar a
+ * injeção fim-a-fim.
  */
+/** Marcador embutido no resumo de mapeamento (o smoke asserta a injeção por ele). */
+export const MARCADOR_MAPA_FAKE = '[[mapa-fake]]';
 export class FakeProvider implements AIProvider {
   readonly nome = 'fake';
   readonly modelo: string;
@@ -120,7 +130,11 @@ export class FakeProvider implements AIProvider {
       diagnostico:
         `[fake] Diagnóstico determinístico de "${input.contexto.titulo}". ` +
         'Resumo: análise simulada sem execução de modelo. Evidências: (fake). ' +
-        'Causa provável: cenário controlado de teste.',
+        'Causa provável: cenário controlado de teste.' +
+        // Ecoa o conhecimento injetado (D-013): prova a injeção fim-a-fim no smoke.
+        (input.contexto.conhecimento
+          ? ` Conhecimento do sistema injetado: ${input.contexto.conhecimento.resumo.slice(0, 60)}`
+          : ''),
       // Para natureza=alteracao, gera a SPEC COMPLETA no template de specs/05 §7
       // (M7): prova determinística de que o fluxo produz uma SPEC utilizável.
       spec: ehAlteracao
@@ -138,6 +152,44 @@ export class FakeProvider implements AIProvider {
         : null,
       tentativaResolucao,
       telemetria,
+    };
+  }
+
+  /**
+   * MAPEAMENTO determinístico (D-013): EXERCITA `repo_buscar('regra')` (prova a
+   * injeção real dos handles) e devolve um resumo markdown com o marcador
+   * `[[mapa-fake]]`, citando o(s) arquivo(s) onde a "regra de negócio" aparece.
+   * Respeita `maxChars`. Sem exceções de rede/custo (é o caminho de apoio dos smokes).
+   */
+  async mapearSistema(input: AIMapeamentoInput): Promise<AIMapeamentoResult> {
+    const inicio = Date.now();
+    const achados = await input.ferramentas.repo_buscar('regra').catch(() => []);
+    const linhas = achados.slice(0, 5).map((a) => `- ${a.caminho}:${a.linha} — ${a.trecho}`);
+
+    const resumo = [
+      `# Mapa do sistema (fake) ${MARCADOR_MAPA_FAKE}`,
+      `Sistema: ${input.sistemaAlvo.nome}`,
+      `Stack: ${input.sistemaAlvo.stack ?? '—'}`,
+      '',
+      '## Regras de negócio encontradas',
+      ...(linhas.length > 0 ? linhas : ['- (nenhuma regra localizada no fixture)']),
+      '',
+      '## Estrutura',
+      '- Resumo determinístico gerado pelo FakeProvider para os smokes.',
+    ]
+      .join('\n')
+      .slice(0, input.maxChars);
+
+    const tokensEntrada = Math.max(1, resumo.length);
+    const tokensSaida = 200;
+    return {
+      resumo,
+      telemetria: {
+        custoUsd: Number((tokensEntrada * 0.000003 + tokensSaida * 0.000015).toFixed(6)),
+        duracaoMs: Date.now() - inicio,
+        tokensEntrada,
+        tokensSaida,
+      },
     };
   }
 }

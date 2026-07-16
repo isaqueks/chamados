@@ -151,6 +151,21 @@ function logGitSync(msg: string, erro: unknown, cfg: ConfigRepo, authed: string)
   );
 }
 
+/**
+ * Commit atual (HEAD) do checkout sincronizado — usado pelo mapa de conhecimento
+ * (D-013) para decidir se o mapa está atualizado. Devolve `null` se indisponível
+ * (repo sem commits, erro de git) — o chamador trata como "commit desconhecido".
+ */
+export async function commitAtual(dir: string): Promise<string | null> {
+  try {
+    const hash = await simpleGit(dir).revparse(['HEAD']);
+    const limpo = hash.trim();
+    return limpo.length > 0 ? limpo : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve `caminho` DENTRO do checkout (barra traversal lexical `..`/absoluto). */
 function resolverDentro(base: string, caminho: string): string {
   const alvo = resolve(base, caminho);
@@ -175,6 +190,8 @@ const IGNORAR = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.tur
 export interface HandlesRepo {
   repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
   repo_ler_arquivo(caminho: string): Promise<string>;
+  /** Lista caminhos (relativos, `/`-separados) do checkout; diretórios com `/` final. */
+  repo_arvore(subdir?: string): Promise<string[]>;
 }
 
 /**
@@ -255,6 +272,37 @@ export function criarHandlesRepo(obterDir: () => string | null, registrar: Regis
         throw new Error(`arquivo excede o limite de ${maxArquivoBytes} bytes`);
       }
       return fs.readFile(real, 'utf8');
+    },
+
+    async repo_arvore(subdir) {
+      registrar('repo_arvore', { subdir: subdir ?? null });
+      const dir = obterDir();
+      if (!dir) throw new Error('repositório não configurado para este sistema-alvo');
+      const base = subdir ? resolverDentro(dir, subdir) : dir;
+
+      const caminhos: string[] = [];
+      const rel = (full: string): string => relative(dir, full).split(sep).join('/');
+
+      const walk = async (atual: string): Promise<void> => {
+        if (caminhos.length >= maxArquivosVarridos) return;
+        const entradas = await fs.readdir(atual, { withFileTypes: true }).catch(() => []);
+        // Ordena para saída determinística (estrutura estável entre chamadas).
+        entradas.sort((a, b) => a.name.localeCompare(b.name));
+        for (const e of entradas) {
+          if (caminhos.length >= maxArquivosVarridos) return;
+          if (IGNORAR.has(e.name)) continue;
+          const full = join(atual, e.name);
+          if (e.isDirectory()) {
+            caminhos.push(rel(full) + '/');
+            await walk(full);
+          } else if (e.isFile()) {
+            caminhos.push(rel(full));
+          }
+        }
+      };
+
+      await walk(base);
+      return caminhos;
     },
   };
 }

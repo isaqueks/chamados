@@ -24,6 +24,7 @@ import { ferramentasConfig } from './ferramentas/config';
 import type { FetchImpl } from './github-pr';
 import { motivoErro } from '../ia/erros';
 import { adquirirLockComEspera, liberarLockTenant, type OpcoesEspera } from '../lock-tenant';
+import { garantirConhecimento, type MapaLimites } from '../mapeamento/mapeamento';
 
 /**
  * PROCESSADOR da fila `triagem-ia` (M7 — pipeline completo, specs/05 §3). Consome
@@ -47,6 +48,8 @@ export interface DepsProcessador {
   redis: Redis;
   provider: AIProvider;
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
+  /** Limites do MAPA de conhecimento (D-013). Ausente → triagem sem mapeamento. */
+  mapa?: MapaLimites;
   lock: OpcoesEspera;
   log: (msg: string, extra?: Record<string, unknown>) => void;
   /** Config da RESOLUÇÃO automática (specs/05 §6). Opcional (default: rede real). */
@@ -169,6 +172,25 @@ export async function processarTriagem(
           chamadoId: job.chamadoId,
           erro: motivoErro(err),
         });
+      }
+    }
+    // Conhecimento do sistema (D-013): após o git sync, garante o mapa ATUALIZADO
+    // (gera/re-gera como ExecucaoIA separada quando ausente ou o commit mudou) e o
+    // injeta no contexto da triagem. Best-effort: `garantirConhecimento` nunca
+    // lança (falha de mapa não derruba a triagem).
+    if (!erro && deps.mapa && ctxAtivo.sistemaAlvoId) {
+      const checkoutDir = ctxAtivo.checkout();
+      if (checkoutDir) {
+        const conhecimento = await garantirConhecimento({
+          ds,
+          tenantId: job.tenantId,
+          sistemaAlvoId: ctxAtivo.sistemaAlvoId,
+          checkoutDir,
+          provider,
+          limites: deps.mapa,
+          log,
+        });
+        if (conhecimento) ctxAtivo.input.contexto.conhecimento = conhecimento;
       }
     }
     if (!erro) {
