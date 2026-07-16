@@ -31,13 +31,13 @@ Princípios inegociáveis:
 
 Um job de triagem (`triagem_ia`) entra na fila (Redis + BullMQ, ver `01-arquitetura.md`) nos seguintes eventos:
 
-| Gatilho                | Condição                                        | Ação                                            |
-| ---------------------- | ----------------------------------------------- | ----------------------------------------------- |
-| Chamado criado         | sempre                                          | enfileira triagem, status `novo` → `em_triagem` |
-| Resposta do cliente    | chamado em `aguardando_cliente` ou `em_triagem` | reenfileira triagem                             |
-| Reprocessamento manual | operador/admin aciona "reanalisar"              | enfileira triagem                               |
+| Gatilho                | Condição                                                    | Ação                                                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Chamado criado         | sempre (tenant com `agente_ia`)                             | enfileira triagem, status `novo` → `em_triagem`                                                                                                                                                  |
+| Resposta do cliente    | mensagem pública em QUALQUER estado não terminal (D-017 p3) | reenfileira triagem; de `aguardando_cliente` → `em_triagem` (sistema); de `resolvido` → REABRE (`em_atendimento`, autor) e triagem analisa; em `novo`/`em_triagem`/`em_atendimento` só enfileira |
+| Reprocessamento manual | operador/admin aciona "reanalisar"                          | enfileira triagem                                                                                                                                                                                |
 
-Não dispara triagem: resposta do cliente em chamado `em_atendimento`, `resolvido`, `fechado` ou `cancelado` (nesses o fluxo é humano; a IA só age se um operador pedir reanálise).
+Não dispara triagem: mensagens em `fechado`/`cancelado` (estados terminais não aceitam mensagens), notas internas e mensagens de operador/admin (o fluxo humano não re-dispara a IA; se quiser a IA, o operador usa "reanalisar" ou orienta via nota interna, que a triagem seguinte lê — D-015).
 
 Regras de fila:
 
@@ -45,7 +45,7 @@ Regras de fila:
 - **Chave de concorrência**: por tenant, limite configurável de jobs simultâneos (evita um tenant esgotar o worker e o budget). Implementação (D-016): lock Redis por tenant com **TTL curto (90 s) renovado por heartbeat (30 s)** enquanto a execução vive — se o processo do worker morrer sem liberar (kill/crash; no Windows o Ctrl+C mata sem sinal), o lock órfão expira em ≤ TTL. **Lock ocupado não é falha**: o job é reagendado (30–45 s, com jitter) via `moveToDelayed` + `DelayedError`, sem consumir tentativa, até um teto de reagendamentos (20); só então a espera passa a contar como tentativa.
 - **Idempotência**: cada job carrega `chamado_id` + `ultima_mensagem_id`; se já existir `ExecucaoIA` concluída para esse par, descarta.
 
-> DECISÃO PENDENTE: aplicar debounce (ex.: 30–60 s) após a última mensagem do cliente antes de enfileirar, para agrupar mensagens em rajada em uma única análise.
+> DECIDIDO (M7): debounce substituível de **45 s** (`TRIAGEM_DEBOUNCE_S`) após a última mensagem do cliente — mensagens em rajada colapsam numa única análise sobre a última (novo enfileiramento automático do mesmo chamado remove os jobs pendentes anteriores).
 
 ---
 

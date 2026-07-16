@@ -162,7 +162,7 @@ Cada chamado possui uma sequência ordenada de `Mensagem` (timeline). Cada mensa
 ### 4.2 Efeitos de uma nova mensagem
 
 - Nova mensagem `publica` do operador/IA em `aguardando_cliente` mantém o status até o cliente responder (ou operador transiciona manualmente).
-- Nova mensagem `publica` do cliente em `aguardando_cliente` → `em_triagem` (re-enfileira) ou, se configurado, notifica o operador atribuído.
+- Nova mensagem `publica` do cliente re-dispara a triagem em QUALQUER estado não terminal (D-017 parte 3): de `aguardando_cliente` → `em_triagem` (sistema); de `resolvido` → reabre (§8.2) e a triagem analisa; em `novo`/`em_triagem`/`em_atendimento` apenas re-enfileira (sem mudar status). O operador atribuído segue sendo notificado.
 - Toda nova mensagem `publica` gera evento notificável ("nova mensagem publica"); notas `interna` notificam apenas a equipe conforme preferências.
 - Mensagens são **imutáveis** após o envio no MVP (sem edição/exclusão), preservando a integridade da timeline.
 
@@ -232,11 +232,11 @@ Limites:
 
 > DECIDIDO (2026-07-15): `dias_fechamento_automatico` tem default **3 dias**, configurável por tenant (`Tenant.dias_fechamento_automatico`, ver `02-modelo-de-dados.md`). Um job **repetível** de manutenção (BullMQ repeatable, a cada **5 minutos** por padrão, intervalo configurável) enumera os tenants ativos (`chamados_tenants_ativos()`, ver `02-modelo-de-dados.md`) e, para cada um, varre os chamados `resolvido` com `fechar_automaticamente_em` vencido, transicionando-os para `fechado` — gera `EventoChamado` do tipo `chamado_fechado_auto` e a notificação correspondente (implementado no M10).
 
-- Qualquer nova mensagem pública do cliente ou reabertura antes do prazo cancela/reagenda o auto-fechamento; a reabertura (§8.2) limpa `resolvido_em`/`fechar_automaticamente_em`.
+- Nova mensagem pública do cliente em `resolvido` **reabre o chamado** (D-017 parte 3): a reabertura (§8.2) limpa `resolvido_em`/`fechar_automaticamente_em` — cancelando o auto-fechamento — e re-dispara a triagem sobre a nova mensagem.
 
 ### 8.2 Reabertura
 
-- Enquanto `resolvido`, o `cliente` (autor) pode **reabrir**: status volta para `em_atendimento`, com `EventoChamado` de reabertura e notificação à equipe.
+- Enquanto `resolvido`, o `cliente` (autor) pode **reabrir** — pela ação explícita OU simplesmente enviando uma nova mensagem pública (D-017 parte 3): status volta para `em_atendimento`, com `EventoChamado` de reabertura e notificação à equipe; a mensagem re-dispara a triagem.
 - Operador/admin também podem reabrir manualmente.
 - `fechado` é **terminal**: não há reabertura direta. Ver DECISÃO PENDENTE na seção 1.3 sobre criar novo chamado vinculado.
 

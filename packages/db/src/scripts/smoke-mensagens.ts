@@ -274,6 +274,71 @@ async function main(): Promise<void> {
       );
     });
 
+    // 6b) D-017 (parte 3): mensagem do cliente em em_atendimento re-dispara a
+    //     triagem SEM mudar o status (o operador segue com o chamado).
+    {
+      const capturadas: Array<{ tipo: string; gatilho?: string }> = [];
+      const desp = { publicar: (e: { tipo: string }) => void capturadas.push(e) };
+      await runInTenantContext(ds, tenantA, async (em) => {
+        await transicionarStatus(em, atorOp, chamadoId, StatusChamado.em_atendimento);
+        const r = await criarMensagem(
+          em,
+          atorCli,
+          {
+            chamado_id: chamadoId,
+            visibilidade: VisibilidadeMensagem.publica,
+            corpo: 'Complementando: o erro também acontece na tela de listagem.',
+          },
+          { despachante: desp },
+        );
+        ok(r.ok, 'cliente responde em em_atendimento — ok');
+        const ch = await em.findOne(ChamadoSchema, { where: { id: chamadoId } });
+        ok(
+          ch?.status === StatusChamado.em_atendimento,
+          'mensagem em em_atendimento NÃO muda o status',
+        );
+      });
+      ok(
+        capturadas.some((e) => e.tipo === 'triagem_solicitada'),
+        'mensagem em em_atendimento DISPARA triagem (triagem_solicitada publicado)',
+      );
+    }
+
+    // 6c) D-017 (parte 3): mensagem do cliente em resolvido REABRE (autor) e
+    //     re-dispara a triagem.
+    {
+      const capturadas: Array<{ tipo: string }> = [];
+      const desp = { publicar: (e: { tipo: string }) => void capturadas.push(e) };
+      await runInTenantContext(ds, tenantA, async (em) => {
+        await transicionarStatus(em, atorOp, chamadoId, StatusChamado.resolvido);
+        const r = await criarMensagem(
+          em,
+          atorCli,
+          {
+            chamado_id: chamadoId,
+            visibilidade: VisibilidadeMensagem.publica,
+            corpo: 'Na verdade o problema voltou a acontecer hoje.',
+          },
+          { despachante: desp },
+        );
+        ok(r.ok, 'cliente responde em resolvido — ok');
+        const ch = await em.findOne(ChamadoSchema, { where: { id: chamadoId } });
+        ok(
+          ch?.status === StatusChamado.em_atendimento,
+          'mensagem do cliente em resolvido REABRE (→ em_atendimento)',
+        );
+        const evs = await listarEventos(em, atorOp, chamadoId);
+        ok(
+          evs.some((e) => e.tipo === 'chamado_reaberto'),
+          'evento chamado_reaberto registrado na reabertura por mensagem',
+        );
+      });
+      ok(
+        capturadas.some((e) => e.tipo === 'triagem_solicitada'),
+        'mensagem em resolvido DISPARA triagem (triagem_solicitada publicado)',
+      );
+    }
+
     // 7) Eventos: gerados em todas as mutações; visibilidade por papel -------
     await runInTenantContext(ds, tenantA, (em) =>
       definirComplexidade(em, atorOp, chamadoId, Complexidade.medio),

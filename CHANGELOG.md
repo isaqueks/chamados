@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-017 (parte 3, tarefa #11): triagem automática em toda mensagem do cliente
+
+- **Antes**: mensagem pública do cliente só re-disparava a triagem em `aguardando_cliente`/`em_triagem`; em `em_atendimento`/`resolvido` a IA ficava de fora.
+- **Agora (specs/05 §2, specs/04 §1.3/§4.2/§8)**: mensagem pública do cliente re-dispara a triagem em QUALQUER estado não terminal — de `aguardando_cliente` → `em_triagem` (sistema, como antes); em `em_atendimento` apenas re-enfileira (status intacto — o operador segue com o chamado e a IA analisa a mensagem nova); em **`resolvido` a mensagem REABRE o chamado** (aresta do autor na máquina; `chamado_reaberto`, prazo de auto-fechamento limpo) e a triagem analisa. Notas internas e mensagens de operador nunca disparam (canal humano→IA é a nota interna, D-015). A criação já enfileirava automaticamente (M7) — inalterada.
+- O debounce substituível (45s) segue valendo: rajadas de mensagens colapsam numa única triagem sobre a última.
+- Smoke:mensagens +2 cenários (6b em_atendimento sem mudar status + triagem; 6c resolvido reabre + triagem). ADR D-017 (parte 3).
+
 ## 2026-07-16 — D-017 (parte 2, tarefa #13): natureza opcional na abertura — a IA identifica
 
 - **Portal do cliente**: o bloco proeminente "Qual é a natureza do chamado?" saiu do formulário; a escolha agora vive em **"Opções avançadas"** como select opcional com default **"Automático — nossa assistente identifica"** (inclui Dúvida). Menos atrito na abertura; o caminho normal é não escolher.
