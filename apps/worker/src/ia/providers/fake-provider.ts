@@ -102,7 +102,9 @@ export class FakeProvider implements AIProvider {
         ],
         respostaAoCliente: null,
         complexidade: null,
-        naturezaAjustada: null,
+        // #19 (meta-análise): a classificação de intenção vale mesmo sem
+        // compreensão — o marcador [[natureza:...]] é honrado aqui também.
+        naturezaAjustada,
         prioridadeSugerida: null,
         diagnostico: null,
         spec: null,

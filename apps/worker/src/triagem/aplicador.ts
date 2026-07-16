@@ -154,6 +154,17 @@ async function aplicarNaoEntendeu(
   const { ator, chamado, execucaoId, resultado } = ctx;
   const hooks: HooksChamado = { despachante: deps.despachante };
 
+  // #19 (meta-análise): a classificação de INTENÇÃO vale mesmo sem compreensão
+  // total — o modelo quase sempre sabe a natureza só pelo texto. Antes, o fluxo
+  // "não entendeu" IGNORAVA naturezaAjustada e o chamado ficava com a natureza
+  // errada (caso real: "Alterações" preso como Problema).
+  if (resultado.naturezaAjustada && resultado.naturezaAjustada !== chamado.natureza) {
+    exigir(
+      (await alterarNatureza(em, ator, chamado.id, resultado.naturezaAjustada, hooks)).ok,
+      'natureza',
+    );
+  }
+
   const corpo = formatarPerguntasCliente(resultado.perguntasAoCliente ?? []);
   const msg = await criarMensagem(
     em,

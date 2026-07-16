@@ -289,6 +289,27 @@ async function main(): Promise<void> {
       );
     });
 
+    // ---- #19) meta-análise: natureza aplicada MESMO sem compreensão --------
+    console.log('\n[#19] meta-análise: natureza vale no fluxo não-entendeu');
+    const ch19 = await abrir(
+      atorCli,
+      'Gostaríamos de mudar os prazos [[nao-entendeu]][[natureza:alteracao]]',
+    );
+    ok((await triar(ch19)).status === 'concluido', 'triagem (não entendeu + natureza) → concluido');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const ch = await em.findOne(ChamadoSchema, { where: { id: ch19 } });
+      ok(
+        ch?.status === StatusChamado.aguardando_cliente,
+        'segue para aguardando_cliente (perguntas)',
+      );
+      ok(ch?.natureza === Natureza.alteracao, 'natureza APLICADA no fluxo não-entendeu (#19)');
+      const evs = await listarEventos(em, atorOp, ch19);
+      ok(
+        evs.some((e) => e.tipo === 'natureza_alterada'),
+        'evento natureza_alterada registrado',
+      );
+    });
+
     // ---- 2) Entendeu problema fácil (prioridade APLICADA) ----------------
     console.log('\n[2] entendeu fácil (prioridade aplicada)');
     const ch2 = await abrir(

@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Tarefa #19: meta-análise de intenção antes da investigação
+
+- **Caso real:** chamado "Alterações" (novos prazos de financiamento + reordenar etapas — claramente alteração) classificado como Problema, com pergunta genérica de reprodução ("o que aconteceu, passo a passo"). Duas causas: (a) o protocolo do prompt era enviesado para bug (investigar defeito → reproduzir); (b) o fluxo "não entendeu" IGNORAVA `naturezaAjustada` — a classificação só era aplicada quando a IA compreendia tudo.
+- **ETAPA 0 — meta-análise da intenção** no prompt (specs/05 §5.1): antes de qualquer ferramenta, decidir O QUE o cliente quer (problema/alteracao/duvida, com sinais típicos de alteração explicitados) e registrar SEMPRE em `naturezaAjustada` (inclusive com `compreendido=false`); o restante da análise segue protocolo específico por natureza — perguntas de reprodução são EXCLUSIVAS de problema; em alteração a investigação mira o ESTADO ATUAL (evidências para a SPEC) e as perguntas só especificam a mudança.
+- **Aplicador**: `naturezaAjustada` passa a ser aplicada também no fluxo não-entendeu (evento `natureza_alterada`); FakeProvider honra `[[natureza:...]]` junto com `[[nao-entendeu]]`.
+- Alternativa registrada (se o prompt não bastar em produção): execução META dedicada e barata antes da triagem — descartada por ora para não duplicar custo/latência, já que o modelo tem todo o contexto na própria execução.
+- Smoke:pipeline +1 cenário (#19); validado AO VIVO com o texto exato do caso real (ver commit). Spec 05 §5.1.
+
 ## 2026-07-16 — Tarefa #16: imagem colada na descrição (bug de CSP) + IA lê os prints (multimodal)
 
 - **Bug real ("imagem não aparece"):** o pipeline SEMPRE persistiu a imagem colada (anexo + `/api/anexos/<id>` no HTML — comprovado por reprodução server-side), mas o download é um **302 para a URL pré-assinada do storage** e o CSP `img-src 'self' data: blob:` avalia a URL FINAL do redirect → o browser bloqueava silenciosamente TODA imagem colada (descrição e mensagens). Correção: `img-src` passa a incluir a origem do storage (espelha a resolução de endpoint de `@chamados/storage`: `STORAGE_ENDPOINT` ou `http://MINIO_HOST:MINIO_PORT`). Exige restart do dev server.
