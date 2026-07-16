@@ -370,6 +370,26 @@ Todas as portas são configuráveis via `.env`.
   Algum serviço de infra está fora. Rode `docker compose ps` e verifique
   Postgres/Redis; suba o que estiver parado.
 
+- **`ECONNRESET` ao conectar em Postgres/Redis, com o container `healthy`**
+  Sintoma clássico de porta interceptada no host: o TCP conecta, mas a conexão
+  é resetada antes do handshake do protocolo, e o log do container não registra
+  nada. Duas causas conhecidas no Windows:
+  1. **Portproxy órfão do `netsh`** — `netsh interface portproxy show all` lista
+     um proxy `0.0.0.0:5432 → <IP antigo do WSL>` que captura a porta antes do
+     Docker. Removê-lo exige admin (`netsh interface portproxy delete ...`).
+     **Workaround sem admin:** mude a porta publicada no `.env`
+     (ex.: `POSTGRES_PORT=55432`), rode `docker compose up -d` e reinicie
+     web/worker — o compose e a aplicação usam a mesma variável.
+  2. **`wslrelay` em `[::1]`** — serviços dentro de uma distro WSL fazem o
+     Windows escutar a mesma porta em IPv6 (`[::1]`), e `localhost` resolve
+     primeiro para `::1`. Por isso os `*_HOST` do `.env` devem ser `127.0.0.1`,
+     nunca `localhost`.
+  Diagnóstico rápido: `netstat -ano | findstr :5432` e veja qual PID detém a
+  porta (`tasklist /fi "pid eq <PID>"`).
+  ⚠️ Ao recriar o `.env` a partir do `.env.example`, preserve o `POSTGRES_PORT`
+  customizado — voltar para 5432 reintroduz o `ECONNRESET` se o portproxy ainda
+  existir.
+
 - **Fim de linha (CRLF/LF)**
   O repositório usa `LF` (`.editorconfig` + `.gitattributes` implícito via
   Prettier). Se o Git reclamar, `git config core.autocrlf false`.

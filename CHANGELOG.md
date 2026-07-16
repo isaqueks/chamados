@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Infra: causa-raiz do blackhole host→Postgres (portproxy órfão + wslrelay) e workaround sem admin
+
+- **Sintoma:** conexões do host aos containers (Postgres, depois tudo) caíam com `ECONNRESET` — TCP conectava, mas era resetado antes do handshake; log do Postgres vazio; reiniciar Docker Desktop não resolvia.
+- **Causa-raiz (duas camadas):** (1) um **portproxy órfão do `netsh`** (`0.0.0.0:5432 → IP antigo de WSL`, processo `iphlpsvc`) capturava a porta 5432 antes do proxy do Docker; (2) **`wslrelay`** escutando em `[::1]` (serviços dentro da distro WSL) capturava `localhost`, que resolve primeiro para IPv6.
+- **Workaround sem privilégio de admin** (remover o portproxy exige elevação): `*_HOST=127.0.0.1` (nunca `localhost`) e `POSTGRES_PORT=55432` no `.env` — o `docker-compose` publica e a aplicação conecta pela mesma variável. Validado: smoke:rls/pipeline/resolucao verdes.
+- **Recorrência documentada:** recriar o `.env` a partir do `.env.example` reverteu a porta para 5432 e derrubou o sistema de novo (`ECONNRESET` no web). Avisos adicionados no `.env.example` (Postgres/Redis/MinIO com `127.0.0.1` e nota da porta) e novo item de troubleshooting no `docs/desenvolvimento.md` §6 com diagnóstico (`netstat -ano | findstr :5432`).
+
 ## 2026-07-16 — D-015: notas internas no contexto da IA + resposta pública sem detalhes técnicos
 
 - **Timeline completa no contexto**: a IA agora vê mensagens públicas E notas internas, demarcadas ("conversa com o cliente" vs "notas internas da equipe — NUNCA visíveis ao cliente") — continuidade com a própria análise anterior e canal operador→IA (permissão já prevista na matriz).
