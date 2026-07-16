@@ -56,13 +56,15 @@ function LinhaNav({
       onClick={onNavigate}
       aria-current={ativo ? 'page' : undefined}
       className={cn(
-        'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+        'relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+        // Indicador de item ativo: barra de acento à esquerda derivada de
+        // --primary (whitelabel) + fundo levemente tingido; ícone realçado.
         ativo
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+          ? 'bg-[color-mix(in_oklab,var(--primary),transparent_90%)] font-semibold text-foreground before:absolute before:top-1/2 before:left-0 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-primary [&_svg]:text-primary'
           : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
       )}
     >
-      <Icone className="size-4 shrink-0" />
+      <Icone className="size-4 shrink-0 transition-colors" />
       {item.rotulo}
     </Link>
   );

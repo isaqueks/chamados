@@ -66,6 +66,14 @@ graph TD
 
 ---
 
+## 2.3 Linguagem visual v2 (D-018 — "levemente 3D", inspiração Cloudflare)
+
+A estética do design system (refina D-009, sem substituí-lo): controles **levemente 3D** — botões e inputs com gradiente vertical sutil, borda 1px um tom mais escura que o preenchimento, realce interno no topo e estado _pressed_ afundando; cards com borda nítida + sombra sutil (hover eleva); superfícies flutuantes (dialog/menu/select) com sombra própria; cabeçalhos de tabela discretos (caps/muted); sidebar com indicador de item ativo em barra de acento. Regras estruturais:
+
+- **Tudo vive nos tokens** (`globals.css`): sombras (`--shadow-ctrl*`, `--shadow-campo`, `--shadow-cartao*`, `--shadow-flutuante`), gradientes (`--grad-*`) e realces (`--realce-*`); componentes `ui/*` apenas referenciam os tokens — um único lugar controla a linguagem.
+- **Whitelabel intocado**: todo efeito que envolve a cor primária DERIVA de `var(--primary)` via `color-mix()` — o branding por tenant recolore a UI inteira; sombras/realces são neutros (profundidade, não marca). Claro/escuro têm overrides próprios dos realces.
+- **Fonte**: Geist (via `next/font`) — a v1 tinha um bug de auto-referência (`--font-sans: var(--font-sans)`) que fazia o app inteiro renderizar na serifada do navegador.
+
 ## 3. Layout e navegação (shell)
 
 **Portal do cliente** — layout de coluna única, largura máxima confortável (~880px), header fixo com logo do tenant, seletor de idioma e menu do usuário. Ação primária "Abrir chamado" sempre visível (botão no header e FAB no mobile).

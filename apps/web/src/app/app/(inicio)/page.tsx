@@ -141,7 +141,7 @@ function CardMetrica({ rotulo, valor, href }: { rotulo: string; valor: number; h
   return (
     <Link
       href={href}
-      className="group flex flex-col gap-1 rounded-xl border bg-card p-4 shadow-sm transition-colors hover:border-ring/40 hover:bg-muted/30"
+      className="group flex flex-col gap-1 rounded-xl border bg-card p-4 shadow-cartao transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-cartao-hover"
     >
       <span className="flex items-center justify-between text-sm text-muted-foreground">
         {rotulo}
@@ -162,7 +162,7 @@ function CardMetricaLeve({
   alerta?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border bg-card p-4">
+    <div className="flex flex-col gap-1 rounded-xl border bg-card p-4 shadow-cartao">
       <span className="text-sm text-muted-foreground">{rotulo}</span>
       <span
         className={cn(
@@ -178,7 +178,7 @@ function CardMetricaLeve({
 
 function BlocoPrsIa({ itens, nomeAssistente }: { itens: ItemPrIa[]; nomeAssistente: string }) {
   return (
-    <div className="flex flex-col rounded-xl border bg-card">
+    <div className="flex flex-col rounded-xl border bg-card shadow-cartao">
       <div className="flex items-center gap-2 border-b px-4 py-3">
         <GitPullRequest className="size-4 text-violet-500" />
         <h3 className="text-sm font-semibold">PRs do {nomeAssistente} aguardando revisão</h3>
@@ -251,7 +251,7 @@ function BlocoAcionavel({
   href: string;
 }) {
   return (
-    <div className="flex flex-col rounded-xl border bg-card">
+    <div className="flex flex-col rounded-xl border bg-card shadow-cartao">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h3 className="flex items-center gap-2 text-sm font-semibold">
           {icone}

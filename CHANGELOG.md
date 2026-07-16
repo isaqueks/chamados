@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-018 (tarefa #18): linguagem visual v2 — controles "levemente 3D" (inspiração Cloudflare) + bug da fonte
+
+- **Bug crítico de fonte:** `--font-sans: var(--font-sans)` (auto-referência circular no `globals.css`) — o app INTEIRO renderizava na serifada default do navegador desde o M3; a Geist (next/font) nunca chegou a valer. Corrigido para `var(--font-geist-sans)`. Grande parte do aspecto "cru" vinha daí.
+- **Linguagem visual v2 (spec 08 §2.3, ADR D-018):** tokens novos no `globals.css` — sombras de elevação (`--shadow-ctrl*`, `--shadow-campo`, `--shadow-cartao*`, `--shadow-flutuante`), gradientes (`--grad-primario/neutro` + hover) e realces (`--realce-*`, com override no `.dark`); `--radius` 0.625→0.7rem. Botões com gradiente vertical sutil + borda um tom mais escura + realce interno + pressed afundando; inputs/selects/textarea com sombra interna e foco suave; cards com sombra sutil (hover eleva); dialog/sheet/menu/select flutuantes; tabelas com cabeçalho discreto; sidebar com indicador de item ativo; topbar sticky com blur; auth com fundo suave; timeline do chamado com bolhas diferenciadas (cliente/equipe/nota interna âmbar) e marcadores anelados.
+- **Whitelabel preservado por construção:** todo efeito do primário deriva de `var(--primary)` via `color-mix()`; sombras/realces são neutros. Componentes `ui/*` só referenciam tokens — um lugar único controla a linguagem (D-009).
+- Implementado por subagente Opus 4.8 sob orquestração; 17 arquivos de apresentação, zero lógica. typecheck/lint/prettier verdes + CSS de teste compilado via @tailwindcss/postcss confirmando os utilitários novos (classes Tailwind inválidas não aparecem no typecheck). `npm run build` deferido (dev server ativo compartilha o `.next`).
+
 ## 2026-07-16 — Tarefa #19: meta-análise de intenção antes da investigação
 
 - **Caso real:** chamado "Alterações" (novos prazos de financiamento + reordenar etapas — claramente alteração) classificado como Problema, com pergunta genérica de reprodução ("o que aconteceu, passo a passo"). Duas causas: (a) o protocolo do prompt era enviesado para bug (investigar defeito → reproduzir); (b) o fluxo "não entendeu" IGNORAVA `naturezaAjustada` — a classificação só era aplicada quando a IA compreendia tudo.

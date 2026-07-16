@@ -29,6 +29,7 @@ import {
 } from '@/components/chamado/badges';
 import { ROTULO_STATUS_CHAMADO, ROTULO_TIPO_EVENTO, ROTULO_PAPEL, iniciais } from '@/lib/rotulos';
 import { dataHora, tempoRelativo } from '@/lib/tempo';
+import { cn } from '@/lib/utils';
 import { RespostaForm } from './resposta-form';
 import { PainelPropriedades } from './painel-propriedades';
 import { AssistenteIA } from './assistente-ia';
@@ -293,17 +294,29 @@ function MensagemBolha({
   anexos: Anexo[];
   quando: Date | string;
 }) {
+  // Distinção NUNCA só por cor (specs/08 §6): há avatar, nome, rótulo de papel e
+  // selo textual. As bolhas se diferenciam por superfície — nota interna em âmbar,
+  // equipe com leve tom da marca (--primary), cliente em neutro.
+  const daEquipe = papel !== undefined && papel !== Papel.cliente;
+  const bolhaCls = interna
+    ? 'border-amber-300 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20'
+    : daEquipe
+      ? 'border-[color-mix(in_oklab,var(--primary),transparent_84%)] bg-[color-mix(in_oklab,var(--primary),transparent_95%)]'
+      : 'border-border bg-card';
+  const avatarCls = interna
+    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+    : daEquipe
+      ? 'bg-primary text-primary-foreground'
+      : 'bg-muted text-foreground';
   return (
-    <div
-      className={
-        'rounded-lg border p-3 ' +
-        (interna
-          ? 'border-amber-300 bg-amber-50/70 dark:border-amber-900/50 dark:bg-amber-950/20'
-          : 'bg-card')
-      }
-    >
+    <div className={cn('rounded-xl border p-3.5 shadow-cartao', bolhaCls)}>
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <div className="flex size-6 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
+        <div
+          className={cn(
+            'flex size-6 items-center justify-center rounded-full text-[10px] font-semibold',
+            avatarCls,
+          )}
+        >
           {iniciais(autor)}
         </div>
         <span className="text-sm font-medium">{autor}</span>
@@ -322,7 +335,7 @@ function MensagemBolha({
               href={`/api/anexos/${a.id}`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-accent"
+              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-accent"
             >
               📎 {a.nome_arquivo}
             </a>
@@ -343,7 +356,10 @@ function EventoLinha({ autor, e }: { autor: string; e: EventoView }) {
   }
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-1 text-xs text-muted-foreground">
-      <span className="size-1.5 rounded-full bg-muted-foreground/40" aria-hidden />
+      <span
+        className="size-2 rounded-full bg-background ring-2 ring-muted-foreground/25 ring-inset"
+        aria-hidden
+      />
       <span className="font-medium">{autor}</span>
       <span>
         {ROTULO_TIPO_EVENTO[e.tipo]}

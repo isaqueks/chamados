@@ -133,10 +133,10 @@ export default async function FilaPage({ searchParams }: { searchParams: Promise
       {pagina.itens.length === 0 ? (
         <VazioFila temFiltro={Boolean(paramsBase.toString())} hrefLimpar="/app/chamados" />
       ) : (
-        <div className="rounded-xl border bg-card">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-cartao">
           <Table>
             <TableHeader>
-              <TableRow className="hover:bg-transparent">
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="w-14">Nº</TableHead>
                 <TableHead className="min-w-[220px]">Título</TableHead>
                 <TableHead>Solicitante</TableHead>
