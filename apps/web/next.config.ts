@@ -1,4 +1,32 @@
 import type { NextConfig } from 'next';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/**
+ * Carrega o `.env` da RAIZ do monorepo. O Next só lê `apps/web/.env*`, mas as
+ * variáveis compartilhadas do projeto (SECRET_STORE_MASTER_KEY,
+ * SISTEMAS_PERMITIR_REPO_LOCAL, NOTIFICACOES_*, etc.) vivem num único `.env`
+ * na raiz, lido também pelo worker e pelos scripts (docs/desenvolvimento.md).
+ * Nunca sobrescreve o que já veio do ambiente do processo ou de `.env` local
+ * do app — apenas preenche o que falta. Sem `.env` na raiz (ex.: produção com
+ * env real), segue silenciosamente.
+ */
+function carregarEnvDaRaiz(): void {
+  const base = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+  try {
+    const conteudo = readFileSync(resolve(base, '../../.env'), 'utf8');
+    for (const linha of conteudo.split(/\r?\n/)) {
+      const m = linha.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (!m) continue;
+      const [, nome, bruto] = m;
+      if (process.env[nome] !== undefined) continue;
+      process.env[nome] = bruto.replace(/^(['"])(.*)\1$/, '$2');
+    }
+  } catch {
+    /* raiz sem .env — ambiente do processo é a fonte */
+  }
+}
+carregarEnvDaRaiz();
 
 const ehProd = process.env.NODE_ENV === 'production';
 

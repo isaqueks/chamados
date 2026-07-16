@@ -2,6 +2,12 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Correção: web app não carregava o `.env` da raiz do monorepo
+
+- **Bug:** o Next.js só lê `apps/web/.env*` — variáveis compartilhadas definidas no `.env` da raiz (`SISTEMAS_PERMITIR_REPO_LOCAL`, `SECRET_STORE_MASTER_KEY`, `NOTIFICACOES_*` etc.) nunca chegavam ao processo do web app (worker e scripts sempre carregaram a raiz explicitamente, por isso os testes passavam). Sintoma relatado: flag setada no `.env` e o formulário de sistemas seguia recusando repositório local.
+- **Correção:** `apps/web/next.config.ts` agora carrega o `.env` da raiz na inicialização, sem sobrescrever variáveis já presentes no ambiente ou em `.env` local do app.
+- **Verificado em runtime:** servidor de produção na porta 3005 com sessão real de admin — o hint de repositório local renderizou com a flag ativa. Lembrete operacional: mudanças no `.env` exigem reiniciar o dev server.
+
 ## 2026-07-16 — Repositório local no SistemaAlvo (D-011) + autenticação por assinatura na IA (D-012)
 
 - **Repositório local (D-011):** o campo de repositório do SistemaAlvo aceita caminho absoluto (`C:\...`, `/...`) ou `file://` quando `SISTEMAS_PERMITIR_REPO_LOCAL=true` (default `false` — risco em SaaS multi-tenant, ver spec 09 §7). Credencial git dispensável para repo local (ignorada/limpa); worker clona/faz `pull --ff-only` de origem local sem credencial; hint no formulário quando a flag está ativa; validação com mensagem clara quando desligada. Normalização `file:///C:/...` no Windows.
