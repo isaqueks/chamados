@@ -12,6 +12,9 @@ import {
   montarNotaResolucaoPr,
   montarNotaFalhaResolucao,
   montarTemplateSpec,
+  detectarConteudoTecnico,
+  montarAvisoRespostaRebaixada,
+  RESPOSTA_PUBLICA_FALLBACK,
   type AIProviderResult,
   type Prioridade,
   type TentativaResolucao,
@@ -200,6 +203,47 @@ async function aplicarEntendeu(
   const { ator, chamado, execucaoId, resultado } = ctx;
   const hooks: HooksChamado = { despachante: deps.despachante };
 
+  // Sequenciador de timestamps (D-015): o default do banco é `now()` — CONSTANTE
+  // dentro da transação —, então mensagens criadas na MESMA Tx empatariam no
+  // created_at e a ordem cairia no id (UUID aleatório). Sequenciamos para garantir
+  // a ordem determinística: resposta pública ANTES da nota interna, e as notas
+  // internas na sequência em que são geradas.
+  const baseMs = Date.now();
+  let passo = 0;
+  const proximoInstante = (): Date => new Date(baseMs + passo++);
+
+  // 0) RESPOSTA PÚBLICA ao cliente (D-015): confirma o entendimento / dá posição em
+  //    linguagem simples. Publicada ANTES da nota interna. Passa pelo VALIDADOR: se
+  //    tiver cara de técnica, é REBAIXADA (o cliente recebe a genérica e o texto
+  //    original é preservado apenas na nota interna). No fluxo "entendeu" apenas —
+  //    no "não entendeu", perguntasAoCliente é o canal (não se duplica).
+  let avisoRebaixamento = '';
+  const respostaCru = (resultado.respostaAoCliente ?? '').trim();
+  if (respostaCru.length > 0) {
+    const deteccao = detectarConteudoTecnico(respostaCru);
+    const corpoPublico = deteccao.tecnica ? RESPOSTA_PUBLICA_FALLBACK : respostaCru;
+    const msgPub = await criarMensagem(
+      em,
+      ator,
+      {
+        chamado_id: chamado.id,
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: corpoPublico,
+        execucao_ia_id: execucaoId,
+        created_at: proximoInstante(),
+      },
+      hooks,
+    );
+    exigir(msgPub.ok, 'mensagem_resposta_cliente');
+    if (deteccao.tecnica) {
+      avisoRebaixamento = montarAvisoRespostaRebaixada(respostaCru, deteccao.motivos);
+      deps.log('resposta pública rebaixada pelo validador', {
+        chamadoId: chamado.id,
+        motivos: deteccao.motivos,
+      });
+    }
+  }
+
   // Complexidade SEMPRE gravada quando compreendido (default medio se ausente).
   const complexidade = resultado.complexidade ?? Complexidade.medio;
   const tocado = await tocadoPorOperador(em, chamado);
@@ -211,15 +255,18 @@ async function aplicarEntendeu(
     resultado.prioridadeSugerida && tocado ? resultado.prioridadeSugerida : null;
 
   // 1) Nota interna de diagnóstico (template curto + registro de classificação).
-  const nota = montarNotaDiagnostico({
-    diagnostico: resultado.diagnostico ?? '',
-    confianca: resultado.confianca,
-    complexidade,
-    naturezaAtual: chamado.natureza,
-    naturezaAjustada: resultado.naturezaAjustada,
-    prioridadeAplicada,
-    prioridadeSugerida,
-  });
+  //    Quando houve rebaixamento da resposta pública, o texto original (técnico)
+  //    proposto pela IA é ANEXADO ao FINAL desta nota interna (D-015).
+  const nota =
+    montarNotaDiagnostico({
+      diagnostico: resultado.diagnostico ?? '',
+      confianca: resultado.confianca,
+      complexidade,
+      naturezaAtual: chamado.natureza,
+      naturezaAjustada: resultado.naturezaAjustada,
+      prioridadeAplicada,
+      prioridadeSugerida,
+    }) + avisoRebaixamento;
   const msgDiag = await criarMensagem(
     em,
     ator,
@@ -228,6 +275,7 @@ async function aplicarEntendeu(
       visibilidade: VisibilidadeMensagem.interna,
       corpo: nota,
       execucao_ia_id: execucaoId,
+      created_at: proximoInstante(),
     },
     hooks,
   );
@@ -285,6 +333,7 @@ async function aplicarEntendeu(
         visibilidade: VisibilidadeMensagem.interna,
         corpo: spec,
         execucao_ia_id: execucaoId,
+        created_at: proximoInstante(),
       },
       hooks,
     );
@@ -302,7 +351,7 @@ async function aplicarEntendeu(
   //     (branch/push/PR já feita FORA da transação pelo pipeline). Nota INTERNA +
   //     evento `ia_abriu_pr` (sucesso) ou nota de falha + `ia_falhou` (falha). O
   //     diagnóstico acima permanece intacto de qualquer forma (specs/05 §6/§8).
-  await aplicarResolucao(em, ctx, deps);
+  await aplicarResolucao(em, ctx, deps, proximoInstante);
 
   // 5) Transição para em_atendimento (só a partir de em_triagem; reprocesso a
   //    partir de em_atendimento não precisa transicionar).
@@ -330,6 +379,7 @@ async function aplicarResolucao(
   em: EntityManager,
   ctx: CtxAplicar,
   deps: DepsAplicador,
+  proximoInstante?: () => Date,
 ): Promise<void> {
   const { ator, chamado, execucaoId, resolucao } = ctx;
   const hooks: HooksChamado = { despachante: deps.despachante };
@@ -350,6 +400,7 @@ async function aplicarResolucao(
           arquivos: t.arquivosAlterados,
         }),
         execucao_ia_id: execucaoId,
+        created_at: proximoInstante?.(),
       },
       hooks,
     );
@@ -379,6 +430,7 @@ async function aplicarResolucao(
       visibilidade: VisibilidadeMensagem.interna,
       corpo: montarNotaFalhaResolucao(resolucao.motivo),
       execucao_ia_id: execucaoId,
+      created_at: proximoInstante?.(),
     },
     hooks,
   );

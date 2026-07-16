@@ -83,6 +83,9 @@ sequenceDiagram
         W->>CH: status = aguardando_cliente
     else Entendeu
         W->>CH: nota interna (diagnostico) + complexidade/natureza/prioridade
+        opt respostaAoCliente presente (validada, sem detalhe tecnico)
+            W->>CH: Mensagem publica (resposta amigavel ao cliente)
+        end
         opt gate pos-call aberto (problema + facil + resolvivel)
             W->>SA: cria branch, commit, push (+ PR via API se github)
             W->>CH: nota interna com link do PR (ou instrucao de PR manual)
@@ -102,7 +105,7 @@ sequenceDiagram
 3. **Montar contexto** (§4) com separação estrita entre instruções do sistema e dados não confiáveis.
 4. **Invocar o provider** com as ferramentas read-only habilitadas (§4.2), timeout e budget (§7).
 5. **Parsear a saída estruturada** (JSON validado por schema). Saída inválida → 1 retry de reformatação; persistindo, escalona.
-6. **Aplicar efeitos**: publicar mensagem/nota interna, ajustar `complexidade`/`natureza`/`prioridade`, transicionar status, gerar `EventoChamado`.
+6. **Aplicar efeitos**: publicar mensagem/nota interna — incluindo, quando presente e validada, a mensagem pública `respostaAoCliente` (§5.4) —, ajustar `complexidade`/`natureza`/`prioridade`, transicionar status, gerar `EventoChamado`.
 7. **Fechar `ExecucaoIA`** com `resultado`, ações executadas, custo (tokens/USD) e duração.
 
 ### 3.2 Ciclo de vida da working copy
@@ -165,7 +168,7 @@ Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem ant
 
 - **Metadados do chamado**: `título`, `natureza`, `prioridade`, `status`, `solicitante`, `SistemaAlvo` (nome, stack), `Categoria`.
 - **Descrição completa do chamado**: o texto pleno (texto plano) informado na abertura do chamado, enviado **integralmente** ao provider — não apenas um resumo ou o título. _(Defeito corrigido em 2026-07-16, D-014: desde o M6 o contexto montado para o provider incluía título e timeline, mas **omitia a descrição do chamado** — comprovado em produção com `entrada_tem_descricao=false` para um chamado com descrição de 287 caracteres já presente no banco. A triagem respondia sem conhecer o pedido real do cliente.)_
-- **Timeline**: mensagens `publica` e `interna` (a IA vê ambas), em ordem, com autor e papel.
+- **Timeline completa** (D-015): a IA recebe **todas** as mensagens do chamado, `publica` e `interna`, em ordem, com autor e papel — demarcadas por visibilidade em blocos claramente rotulados ("conversa com o cliente" para `publica`, "notas internas da equipe" para `interna`), nunca misturadas sem identificação. _(Defeito corrigido em 2026-07-16, D-015: o contexto levava só mensagens públicas, então a IA não via o próprio diagnóstico anterior nem orientações internas de operadores, apesar de o papel `agente_ia` já ter permissão de leitura das duas visibilidades pela matriz de `03-autenticacao-perfis-permissoes.md` §8.1.)_ Racional: continuidade entre triagens (a IA enxerga sua própria análise anterior registrada em nota interna) e um canal direto operador→IA (orientação deixada em nota interna antes de uma reanálise).
 - **Anexos**: texto/imagens relevantes (imagens via visão do modelo quando suportado; ver limites em §7).
 - **Conhecimento do sistema-alvo**: o mapa de conhecimento (`conhecimento_resumo`, §3.3) é injetado como contexto de fundo em toda triagem; a investigação do caso específico do chamado é sob demanda via ferramentas (não se despeja o repo inteiro no prompt).
 
@@ -237,6 +240,16 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 - Explica brevemente por que precisa da informação (transparência).
 - Cada pergunta versa sobre fato do lado do cliente (passos, tela, usuário, quando começou) — nunca sobre algo que código, log ou BD já responderiam (protocolo investigação-primeiro, §5.1).
 - Se após `MAX_ROUNDS_PERGUNTAS` (default 3) o cliente ainda não deu o suficiente, escalona para operador humano (nota interna) em vez de repetir.
+
+### 5.4 Resposta pública ao cliente (D-015)
+
+**Contexto**: antes de D-015, quando a IA entendia o chamado ela só publicava nota interna (diagnóstico) — o cliente ficava sem qualquer retorno até um operador humano agir. `AIProviderResult` ganha o campo `respostaAoCliente: string | null` (contrato canônico em `01-arquitetura.md` §4.1) para fechar essa lacuna.
+
+- **O que é**: uma mensagem pública amigável e **opcional** que o provider pode preencher para confirmar entendimento, dar uma posição sobre o andamento, ou responder diretamente a uma dúvida que a própria IA conseguiu resolver na investigação. Não substitui `perguntasAoCliente` (§5.3, usado quando `compreendido = false`) — é o complemento natural do caminho "entendeu" (§3, diagrama), embora nada impeça o provider de preenchê-lo também ao lado de um pedido de mais informações, quando fizer sentido.
+- **Quem publica**: o worker (o "aplicador" do resultado, §3.1 passo 6), como `Mensagem` de visibilidade `publica` autorada pelo `agente_ia`, nunca o provider diretamente.
+- **Regra de linguagem (inegociável)**: mensagens públicas ao cliente **nunca** contêm detalhes técnicos — caminhos de arquivo, nomes de função/classe, trechos de código, stack traces, nomes de tabela/coluna ou qualquer jargão de implementação. Tudo isso pertence exclusivamente à nota interna (`diagnostico`, §3.1 passo 6). `respostaAoCliente` fala a língua do cliente, do mesmo jeito que as perguntas de §5.3.
+- **Validador conservador**: antes de publicar, o worker valida `respostaAoCliente` contra sinais de conteúdo técnico (ex.: caminhos com `/`, extensões de arquivo, blocos de código/crase, nomes em `camelCase`/`snake_case` típicos de identificador, termos como "função", "classe", "arquivo", "commit", "branch", "endpoint", "query"). Encontrado qualquer sinal, o worker **rebaixa** a resposta pública para uma mensagem genérica de fallback (ex.: "Analisamos seu chamado e já temos um diagnóstico; nossa equipe vai dar sequência.") — o texto original gerado pelo provider é preservado **na nota interna**, marcado com um aviso (ex.: "resposta pública rebaixada pelo validador — conteúdo técnico detectado") para o operador revisar e, se quiser, publicar manualmente uma versão adequada.
+- **Ausência**: `respostaAoCliente = null` é o caso normal quando o diagnóstico não gera nada relevante para comunicar ainda (ex.: aguardando decisão do operador); nesse caso não há mensagem pública nova e o chamado segue para `em_atendimento` só com a nota interna, como antes de D-015.
 
 ---
 
@@ -394,7 +407,7 @@ Fase 1 (RF-17, D-006): **Claude Agent SDK** (programático — controle de ferra
 Resumo do consumo pelo pipeline (campos conforme `01-arquitetura.md` §4.1):
 
 - O worker monta `AIProviderInput` (metadados do chamado, timeline sanitizada, `sistemaAlvo` com o `repoPath` já sincronizado por §3.2, limites de duração/custo) e chama `executarTriagem`.
-- Recebe `AIProviderResult` e o traduz em ações de domínio (§3.1 passo 6): `compreendido`/`perguntasAoCliente` → fluxo de perguntas (§5.3); `complexidade`/`naturezaAjustada`/`prioridadeSugerida` → `chamado_classificar` (§5.2); `diagnostico` → nota interna; `spec` → SPEC de alteração (§7); `tentativaResolucao` → branch/PR (§6).
+- Recebe `AIProviderResult` e o traduz em ações de domínio (§3.1 passo 6): `compreendido`/`perguntasAoCliente` → fluxo de perguntas (§5.3); `respostaAoCliente` → mensagem pública ao cliente, validada contra conteúdo técnico (§5.4, D-015); `complexidade`/`naturezaAjustada`/`prioridadeSugerida` → `chamado_classificar` (§5.2); `diagnostico` → nota interna; `spec` → SPEC de alteração (§7); `tentativaResolucao` → branch/PR (§6).
 - O campo de telemetria de `AIProviderResult` (`telemetria`: `custoUsd`, `duracaoMs`, `tokensEntrada`, `tokensSaida`) é gravado em `ExecucaoIA` com **exatamente** esses nomes — mesma nomenclatura em `01` e `05`, sem "uso"/"telemetria" divergentes.
 
 O objeto de auto-avaliação de §5.1 (`compreendido`/`confianca`/`evidencias`/`lacunas`) é a **saída interna do modelo** que o provider usa para preencher `AIProviderResult.compreendido` e as perguntas; não é um tipo de retorno paralelo do contrato.

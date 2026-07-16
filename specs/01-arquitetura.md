@@ -183,7 +183,7 @@ interface AIProviderInput {
     naturezaDeclarada: 'problema' | 'alteracao';
     prioridadeDeclarada: 'baixa' | 'media' | 'alta' | 'urgente' | null;
     solicitante: { nome: string; papel: string };
-    timeline: MensagemPublica[]; // apenas mensagens públicas, já sanitizadas
+    timeline: MensagemTimeline[]; // timeline COMPLETA (publica E interna), com `visibilidade` demarcada por item — D-015
     sistemaAlvo: MetadadosSistemaAlvo; // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
     conhecimento?: ConhecimentoSistema; // mapa do sistema (D-013), quando existente
   };
@@ -221,6 +221,7 @@ interface AIProviderResult {
   compreendido: boolean;
   confianca: number; // 0..1
   perguntasAoCliente: string[] | null;
+  respostaAoCliente: string | null; // mensagem publica amigavel opcional (confirmacao/posicao/duvida resolvida); NUNCA detalhe tecnico — validada e rebaixavel pelo worker (D-015, 05-agente-ia.md §5.4)
   complexidade: 'facil' | 'medio' | 'dificil' | null;
   naturezaAjustada: 'problema' | 'alteracao' | null;
   prioridadeSugerida: 'baixa' | 'media' | 'alta' | 'urgente' | null;
@@ -243,7 +244,7 @@ interface AIProviderResult {
 }
 ```
 
-O worker preenche `AIProviderInput` a partir do chamado e das ferramentas já escopadas (read-only sempre; as de escrita só quando o gate de resolução automática está aberto — `05-agente-ia.md` §6); `05-agente-ia.md` §10 descreve como cada campo de `AIProviderResult` (`perguntasAoCliente`, `complexidade`/`naturezaAjustada`/`prioridadeSugerida`, `diagnostico`, `spec`, `tentativaResolucao`) é traduzido em ações de domínio. Nenhuma redefinição do contrato vive em `05` — apenas o consumo.
+O worker preenche `AIProviderInput` a partir do chamado e das ferramentas já escopadas (read-only sempre; as de escrita só quando o gate de resolução automática está aberto — `05-agente-ia.md` §6); `05-agente-ia.md` §10 descreve como cada campo de `AIProviderResult` (`perguntasAoCliente`, `respostaAoCliente`, `complexidade`/`naturezaAjustada`/`prioridadeSugerida`, `diagnostico`, `spec`, `tentativaResolucao`) é traduzido em ações de domínio. Nenhuma redefinição do contrato vive em `05` — apenas o consumo.
 
 `tentativaResolucao` divide responsabilidades pelo princípio de menor privilégio (`09-seguranca-lgpd.md` §4): o **provider** só escreve arquivos na working copy descartável via `repo_escrever_arquivo`/`repo_criar_arquivo` e devolve `resumo`/`arquivosAlterados` — ele não tem acesso a git nem à rede. O **worker**, que é quem detém a credencial do repositório, valida a tentativa, cria a branch, comita, faz push e abre o PR; só ele preenche `branch`/`prUrl`/`situacao`, depois do retorno do provider.
 

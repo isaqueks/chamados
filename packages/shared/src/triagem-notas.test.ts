@@ -12,6 +12,9 @@ import {
   montarCorpoPr,
   montarNotaResolucaoPr,
   montarNotaFalhaResolucao,
+  detectarConteudoTecnico,
+  montarAvisoRespostaRebaixada,
+  RESPOSTA_PUBLICA_FALLBACK,
 } from './triagem-notas';
 
 describe('formatarPerguntasCliente', () => {
@@ -181,5 +184,82 @@ describe('resolução automática — branch/commit/PR', () => {
     const nota = montarNotaFalhaResolucao('push_falhou');
     expect(nota).toContain('push_falhou');
     expect(nota).toContain('diagnóstico acima permanece');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Separação técnica/pública (D-015) — validador conservador
+// ---------------------------------------------------------------------------
+
+describe('detectarConteudoTecnico', () => {
+  // Mensagens de atendimento legítimas: NÃO podem disparar (sem falso-positivo).
+  const limpas: Array<[string, string]> = [
+    [
+      'confirmação de entendimento',
+      'Entendi seu pedido: adicionar um filtro por data no relatório. Nossa equipe já está analisando e retorna em breve.',
+    ],
+    [
+      'pergunta ao cliente com usuário(s)',
+      'Olá! Para avançar, poderia informar em qual tela isso acontece e qual usuário(s) é afetado?',
+    ],
+    [
+      'valor monetário com parênteses',
+      'O valor de R$ 1.000,00 (mil reais) está correto no seu cadastro?',
+    ],
+    [
+      'exemplo e pontuação',
+      'Vamos priorizar seu caso. Por exemplo, na próxima semana já teremos um retorno. Obrigado!',
+    ],
+    ['fallback padrão é limpo', RESPOSTA_PUBLICA_FALLBACK],
+    ['agradecimento simples', 'Perfeito, obrigado pela informação! Já estamos cuidando disso.'],
+  ];
+  for (const [nome, texto] of limpas) {
+    it(`NÃO marca como técnica: ${nome}`, () => {
+      expect(detectarConteudoTecnico(texto).tecnica).toBe(false);
+    });
+  }
+
+  // Mensagens com cara de técnico: DEVEM disparar.
+  const tecnicas: Array<[string, string]> = [
+    [
+      'caminho + arquivo + função',
+      'O erro ocorre em src/pedidos/salvar.js na função salvarPedido() quando o valor é nulo.',
+    ],
+    ['bloco de código', 'Rode isto:\n```js\nconsole.log(pedido)\n```'],
+    ['SQL', 'Basta executar SELECT * FROM clientes WHERE ativo = true'],
+    ['caminho windows + extensão', 'Veja o arquivo C:\\Users\\dev\\app\\index.ts na linha 40.'],
+    ['stack trace', 'A falha: at Object.handler (/app/server.js:12:9) durante o commit.'],
+    ['chamada de método', 'A causa é a chamada repo.buscarPedido(id) retornando indefinido.'],
+    ['arquivo .sql solto', 'O script migration_0007.sql não rodou no ambiente.'],
+  ];
+  for (const [nome, texto] of tecnicas) {
+    it(`marca como técnica: ${nome}`, () => {
+      const d = detectarConteudoTecnico(texto);
+      expect(d.tecnica).toBe(true);
+      expect(d.motivos.length).toBeGreaterThan(0);
+    });
+  }
+
+  it('texto vazio não é técnico', () => {
+    expect(detectarConteudoTecnico('').tecnica).toBe(false);
+    expect(detectarConteudoTecnico('   ').tecnica).toBe(false);
+  });
+});
+
+describe('montarAvisoRespostaRebaixada', () => {
+  it('preserva o texto original e cita o aviso e os padrões', () => {
+    const aviso = montarAvisoRespostaRebaixada('O bug está em src/app.js', [
+      'caminho de arquivo',
+      'arquivo de código',
+    ]);
+    expect(aviso).toContain('rebaixada pelo validador');
+    expect(aviso).toContain('Padrões detectados: caminho de arquivo, arquivo de código.');
+    expect(aviso).toContain('src/app.js');
+  });
+
+  it('omite a linha de padrões quando não há motivos', () => {
+    const aviso = montarAvisoRespostaRebaixada('texto', []);
+    expect(aviso).not.toContain('Padrões detectados');
+    expect(aviso).toContain('texto');
   });
 });

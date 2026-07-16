@@ -349,3 +349,96 @@ export function montarNotaFalhaResolucao(motivo: string): string {
     'repositório do sistema-alvo. Um operador deve conduzir a correção.',
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Separação técnica/pública (D-015) — validador conservador de resposta ao cliente
+// ---------------------------------------------------------------------------
+
+/**
+ * Mensagem PÚBLICA genérica usada quando a resposta ao cliente proposta pela IA é
+ * REBAIXADA pelo validador (continha cara de conteúdo técnico). O detalhe técnico
+ * NÃO é publicado ao cliente — fica na nota interna.
+ */
+export const RESPOSTA_PUBLICA_FALLBACK =
+  'Analisamos seu chamado e nossa equipe já está cuidando disso; em breve retornamos com uma posição.';
+
+/** Resultado da inspeção de uma mensagem pública quanto a conteúdo técnico. */
+export interface DeteccaoTecnica {
+  /** A mensagem tem cara de conteúdo técnico (não deve ir ao cliente)? */
+  tecnica: boolean;
+  /** Rótulos dos padrões detectados (para auditar na nota interna). */
+  motivos: string[];
+}
+
+/**
+ * Padrões CONSERVADORES de "cara de técnico" numa mensagem que iria ao cliente
+ * (D-015). Foco em sinais inequívocos — blocos de código, caminhos de arquivo,
+ * nomes de arquivo de código, chamadas de função em `camelCase`/`snake_case`/
+ * método, SQL e stack traces — evitando disparar com linguagem comum de
+ * atendimento em pt-BR (acentos, `usuário(s)`, `(cinco reais)`, valores `1.000,00`).
+ */
+const PADROES_TECNICOS: ReadonlyArray<{ rotulo: string; re: RegExp }> = [
+  { rotulo: 'bloco de código', re: /```|~~~/ },
+  // Caminho com pasta de código conhecida (src/…, apps/…, packages/…, etc.).
+  {
+    rotulo: 'caminho de arquivo',
+    re: /(?:^|[\s("'`>[])(?:src|apps|packages|dist|build|node_modules|lib|migrations?|tests?|__tests__)\/[\w./-]+/i,
+  },
+  // Caminho absoluto do Windows (C:\... ou C:/...).
+  { rotulo: 'caminho windows', re: /[A-Za-z]:[\\/][\\/\w.-]+/ },
+  // Nome de arquivo com extensão de CÓDIGO (algo.js/.ts/.sql/.py/…).
+  {
+    rotulo: 'arquivo de código',
+    re: /\b[\w-]+\.(?:jsx?|tsx?|mjs|cjs|py|rb|go|rs|php|java|cs|sql|sh|json|ya?ml)\b/i,
+  },
+  // Chamada de função: método `obj.metodo(`, `camelCase(` ou `snake_case(` — nunca
+  // `usuário(s)`/`(algo)` (que têm espaço antes do parêntese ou não são identificadores de código).
+  { rotulo: 'chamada de método', re: /\b[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s*\(/ },
+  { rotulo: 'chamada camelCase', re: /\b[a-z$][\w$]*[A-Z][\w$]*\s*\(/ },
+  { rotulo: 'chamada snake_case', re: /\b[a-z$][a-z0-9$]*_[\w$]*\s*\(/i },
+  // SQL estruturado (exige a forma completa — não dispara com "delete"/"select" soltos).
+  { rotulo: 'sql', re: /\bSELECT\b[\s\S]{0,200}?\bFROM\b/i },
+  { rotulo: 'sql', re: /\bINSERT\s+INTO\b/i },
+  { rotulo: 'sql', re: /\bUPDATE\b[\s\S]{0,120}?\bSET\b/i },
+  { rotulo: 'sql', re: /\bDELETE\s+FROM\b/i },
+  { rotulo: 'sql', re: /\b(?:DROP|CREATE|ALTER)\s+(?:TABLE|DATABASE|INDEX|VIEW)\b/i },
+  // Stack trace: "at Algo (arquivo:linha:coluna)" — muito específico (evita "chat"/"até").
+  { rotulo: 'stack trace', re: /\bat\s+[^\n(]+\([^)]*:\d+:\d+\)/ },
+];
+
+/**
+ * Inspeciona uma mensagem que iria ao CLIENTE e detecta, de forma CONSERVADORA, se
+ * ela tem cara de conteúdo técnico (D-015): blocos de código, caminhos de arquivo,
+ * nomes de arquivo de código, chamadas de função, SQL ou stack trace. Projetado
+ * para NÃO gerar falso-positivo com linguagem comum de atendimento em pt-BR. Puro
+ * e determinístico — testado dos dois lados.
+ */
+export function detectarConteudoTecnico(texto: string): DeteccaoTecnica {
+  const alvo = (texto ?? '').trim();
+  if (alvo.length === 0) return { tecnica: false, motivos: [] };
+  const motivos: string[] = [];
+  for (const { rotulo, re } of PADROES_TECNICOS) {
+    if (re.test(alvo) && !motivos.includes(rotulo)) motivos.push(rotulo);
+  }
+  return { tecnica: motivos.length > 0, motivos };
+}
+
+/**
+ * Trecho a ANEXAR ao final da nota interna quando a resposta pública foi rebaixada
+ * pelo validador (D-015): registra o aviso, os padrões detectados e PRESERVA o
+ * texto original proposto pela IA (que NÃO foi ao cliente) para o operador avaliar.
+ */
+export function montarAvisoRespostaRebaixada(original: string, motivos: string[]): string {
+  return [
+    '',
+    '---',
+    'Resposta pública rebaixada pelo validador: a mensagem proposta ao cliente continha',
+    'conteúdo com cara de técnico e NÃO foi publicada — o cliente recebeu uma resposta',
+    'genérica no lugar.',
+    motivos.length > 0 ? `Padrões detectados: ${motivos.join(', ')}.` : '',
+    'Texto original proposto pela IA (mantido apenas nesta nota interna):',
+    original.trim() || '(vazio)',
+  ]
+    .filter((linha, i) => !(linha === '' && i > 0))
+    .join('\n');
+}

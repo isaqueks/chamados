@@ -12,6 +12,7 @@ import {
   ClaudeAgentProvider,
   mapearResultado,
   montarPrompt,
+  montarSystemPrompt,
   montarEnvSdk,
   validarCredenciaisClaude,
   avaliarPermissaoNativa,
@@ -37,7 +38,14 @@ function inputBase(): AIProviderInput {
       prioridadeDeclarada: Prioridade.media,
       solicitante: { nome: 'Ana Cliente', papel: Papel.cliente },
       timeline: [
-        { id: 'm1', autorPapel: 'cliente', corpo: 'Falha 500', criadaEm: '2026-07-15T00:00:00Z' },
+        {
+          id: 'm1',
+          autorPapel: 'cliente',
+          autorNome: 'Ana Cliente',
+          visibilidade: 'publica',
+          corpo: 'Falha 500',
+          criadaEm: '2026-07-15T00:00:00Z',
+        },
       ],
       sistemaAlvo: { nome: 'Loja', descricao: null, stack: 'bd: postgres' },
     },
@@ -189,6 +197,82 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
     expect(prompt).toContain('Ana Cliente');
     expect(prompt).toContain('prioridade_declarada: media');
+  });
+
+  it('montarPrompt demarca DUAS seções: conversa com o cliente e notas internas (D-015)', () => {
+    const input = inputBase();
+    input.contexto.timeline = [
+      {
+        id: 'p1',
+        autorPapel: 'cliente',
+        autorNome: 'Ana Cliente',
+        visibilidade: 'publica',
+        corpo: 'O relatório não abre',
+        criadaEm: '2026-07-15T00:00:00Z',
+      },
+      {
+        id: 'i1',
+        autorPapel: 'operador',
+        autorNome: 'Bruno Operador',
+        visibilidade: 'interna',
+        corpo: 'Priorize a hipótese de timeout no banco',
+        criadaEm: '2026-07-15T00:05:00Z',
+      },
+      {
+        id: 'i2',
+        autorPapel: 'agente_ia',
+        autorNome: 'Assistente IA',
+        visibilidade: 'interna',
+        corpo: 'Análise anterior: falha no serviço de relatórios',
+        criadaEm: '2026-07-15T00:06:00Z',
+      },
+    ];
+    const prompt = montarPrompt(input);
+    expect(prompt).toContain('Conversa com o cliente (visível ao cliente)');
+    expect(prompt).toContain('Notas internas da equipe (NUNCA visíveis ao cliente)');
+    // A mensagem pública fica na 1ª seção; as internas (orientação do operador +
+    // análise anterior da IA) ficam na 2ª — ambas dentro do bloco não confiável.
+    expect(prompt).toContain('O relatório não abre');
+    expect(prompt).toContain('Priorize a hipótese de timeout no banco');
+    expect(prompt).toContain('Análise anterior: falha no serviço de relatórios');
+    expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
+    // A seção pública vem ANTES da seção interna no prompt.
+    expect(prompt.indexOf('Conversa com o cliente')).toBeLessThan(
+      prompt.indexOf('Notas internas da equipe'),
+    );
+  });
+
+  it('montarSystemPrompt impõe a separação técnico/cliente e descreve respostaAoCliente (D-015)', () => {
+    const sp = montarSystemPrompt();
+    expect(sp).toContain('respostaAoCliente');
+    expect(sp).toMatch(
+      /JAMAIS cont[eé]m detalhes t[eé]cnicos|nunca cont[eé]m detalhes t[eé]cnicos/i,
+    );
+    expect(sp).toContain('CONTINUIDADE');
+  });
+
+  it('normaliza respostaAoCliente do structured_output (D-015)', async () => {
+    const msg: MensagemSdk = {
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0,
+      duration_ms: 10,
+      usage: { input_tokens: 5, output_tokens: 2 },
+      structured_output: {
+        compreendido: true,
+        confianca: 0.9,
+        respostaAoCliente: 'Entendi seu pedido e já estamos cuidando disso.',
+        diagnostico: 'causa X',
+      },
+    };
+    const r = mapearResultado(msg, Date.now());
+    expect(r.respostaAoCliente).toBe('Entendi seu pedido e já estamos cuidando disso.');
+    // respostaAoCliente vazia/ausente → null.
+    const semResposta = mapearResultado(
+      { type: 'result', subtype: 'success', structured_output: { compreendido: true } },
+      Date.now(),
+    );
+    expect(semResposta.respostaAoCliente).toBeNull();
   });
 
   it('montarPrompt injeta o conhecimento do sistema quando presente (D-013)', () => {

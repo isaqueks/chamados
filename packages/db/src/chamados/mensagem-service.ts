@@ -45,6 +45,16 @@ export interface EntradaMensagem {
    * entrada do cliente (a camada web constrói a `EntradaMensagem` sem ele).
    */
   execucao_ia_id?: string | null;
+  /**
+   * Sobrescreve o `created_at` da mensagem (D-015). Campo INTERNO/CONFIÁVEL: só o
+   * worker o define. O default do banco é `now()` — CONSTANTE dentro de uma
+   * transação —, então várias mensagens criadas na MESMA Tx empatariam no
+   * timestamp e a ordem cairia no `id` (UUID aleatório). O aplicador usa este
+   * override para SEQUENCIAR de forma determinística as mensagens que a IA publica
+   * numa única transação (ex.: resposta pública ANTES da nota interna). Ausente na
+   * camada web (usa o default do banco).
+   */
+  created_at?: Date;
 }
 
 export type MotivoMensagem =
@@ -146,6 +156,8 @@ export async function criarMensagem(
     corpo_json: { type: 'doc' },
     corpo_html: '',
     execucao_ia_id: entrada.execucao_ia_id ?? null,
+    // Override de ordenação (D-015, worker-only). Omitido → default do banco (now()).
+    ...(entrada.created_at ? { created_at: entrada.created_at } : {}),
   });
   const id = res.identifiers[0]!.id as string;
 

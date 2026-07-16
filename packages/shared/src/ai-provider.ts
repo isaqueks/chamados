@@ -12,20 +12,36 @@
  * `custoUsd`/`duracaoMs`/`tokensEntrada`/`tokensSaida` (specs/01 §4.1, specs/05
  * §10) — gravada em `ExecucaoIA` com esses mesmos nomes.
  */
-import type { Natureza, Prioridade, Complexidade, Papel } from './enums';
+import type { Natureza, Prioridade, Complexidade, Papel, VisibilidadeMensagem } from './enums';
 
 // ---------------------------------------------------------------------------
 // Contexto entregue ao modelo (specs/05 §4.1) — SEM credenciais do sistema-alvo
 // ---------------------------------------------------------------------------
 
 /**
- * Mensagem pública da timeline, já SANITIZADA (texto puro, sem HTML cru nem
- * dados sensíveis). A IA vê o autor por papel, não por identidade pessoal.
+ * Item da timeline entregue ao modelo (D-015), já SANITIZADO (texto puro, sem HTML
+ * cru nem dados sensíveis). Passa a incluir TODAS as mensagens do chamado —
+ * PÚBLICAS **e** INTERNAS — porque o papel `agente_ia` tem permissão de leitura
+ * pela matriz (specs/03): a IA precisa enxergar o próprio diagnóstico anterior
+ * (continuidade entre triagens) e as orientações internas de operadores/admins. O
+ * prompt DEMARCA a visibilidade em duas seções e trata tudo como conteúdo NÃO
+ * confiável. A IA vê o autor por papel + nome de exibição, nunca por PII sensível.
+ *
+ * Nota de contrato (D-015): expande e renomeia a antiga `MensagemPublica` (que só
+ * carregava mensagens públicas) — ganhou `visibilidade` e `autorNome`.
  */
-export interface MensagemPublica {
+export interface MensagemTimeline {
   id: string;
-  /** Papel do autor (cliente/operador/agente_ia) — não expõe PII. */
+  /** Papel do autor (cliente/operador/admin/agente_ia) — não expõe PII sensível. */
   autorPapel: Papel;
+  /** Nome de exibição do autor — ajuda o modelo a situar a origem de cada nota. */
+  autorNome: string;
+  /**
+   * Visibilidade da mensagem: `publica` (conversa visível ao cliente) ou `interna`
+   * (nota da equipe — NUNCA visível ao cliente). Governa em qual seção do prompt
+   * a mensagem entra.
+   */
+  visibilidade: VisibilidadeMensagem;
   /** Corpo em texto puro (projeção do HTML sanitizado). */
   corpo: string;
   /** Timestamp ISO-8601 (UTC). */
@@ -149,8 +165,13 @@ export interface AIProviderInput {
     prioridadeDeclarada: Prioridade;
     /** Solicitante do chamado (quem abriu): nome + papel — D-014. */
     solicitante: { nome: string; papel: Papel };
-    /** Apenas mensagens públicas, já sanitizadas. */
-    timeline: MensagemPublica[];
+    /**
+     * Timeline COMPLETA do chamado (D-015): TODAS as mensagens — públicas e
+     * internas — já sanitizadas, cada uma com visibilidade/autor/momento. Antes
+     * levava só as públicas; agora inclui as notas internas (diagnóstico anterior
+     * da própria IA + orientações da equipe), demarcadas no prompt por seção.
+     */
+    timeline: MensagemTimeline[];
     /** Metadados SEM credenciais (nem DSN, nem caminho de repo cru). */
     sistemaAlvo: MetadadosSistemaAlvo;
     /**
@@ -233,6 +254,18 @@ export interface AIProviderResult {
   /** 0..1 */
   confianca: number;
   perguntasAoCliente: string[] | null;
+  /**
+   * Mensagem PÚBLICA amigável ao cliente (D-015), em linguagem simples de
+   * atendimento — JAMAIS com detalhes técnicos (arquivos, código, jargão). Opcional
+   * em qualquer fluxo: no "entendeu", confirma o entendimento / dá uma posição, ou
+   * responde diretamente uma dúvida que a IA resolve sem mudar o sistema. `null`
+   * quando não há o que dizer ao cliente. No fluxo "não entendeu",
+   * `perguntasAoCliente` é o canal (não se duplica aqui). O APLICADOR publica-a
+   * como mensagem pública do `agente_ia`, mas antes passa por um validador
+   * conservador que a REBAIXA para uma genérica caso venha com cara de técnica —
+   * preservando o texto original apenas na nota interna.
+   */
+  respostaAoCliente: string | null;
   complexidade: Complexidade | null;
   naturezaAjustada: Natureza | null;
   prioridadeSugerida: Prioridade | null;

@@ -2,6 +2,7 @@ import {
   Natureza,
   Prioridade,
   Complexidade,
+  VisibilidadeMensagem,
   montarTemplateSpec,
   type AIProvider,
   type AIProviderInput,
@@ -28,12 +29,22 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  *                                     ferramentas de escrita (se presentes — só
  *                                     quando o gate do pipeline abriu) p/ gravar
  *                                     um arquivo fixo na working copy descartável.
+ *   [[responder-cliente]]           → respostaAoCliente PÚBLICA e LIMPA (sem termo
+ *                                     técnico) — o aplicador a publica como mensagem
+ *                                     pública do agente_ia (D-015).
+ *   [[responder-cliente-tecnico]]   → respostaAoCliente com cara TÉCNICA (cita
+ *                                     src/arquivo.js + função()) para exercitar o
+ *                                     validador (deve ser REBAIXADA para genérica).
  *   [[falhar]]                      → lança Error genérico (→ status falhou)
  *   [[timeout]]                     → lança ErroProviderTimeout (→ erro='timeout')
  *   [[budget]]                      → lança ErroProviderBudget (→ erro='budget_excedido')
  * Sem marcadores: compreendido=true, confiança 0.9, complexidade 'facil',
  * diagnóstico curto. A telemetria é determinística (derivada do tamanho do texto),
  * exceto `duracaoMs`, medido de fato.
+ *
+ * CONTINUIDADE (D-015): quando a timeline traz NOTAS INTERNAS (visibilidade
+ * interna), o diagnóstico ECOA um trecho da última — prova de que o contexto agora
+ * carrega as notas internas (o próprio diagnóstico anterior + orientações da equipe).
  *
  * MAPEAMENTO (D-013): `mapearSistema` produz um resumo markdown determinístico com
  * o marcador `[[mapa-fake]]` (citando o que `repo_buscar('regra')` encontra no
@@ -82,10 +93,13 @@ export class FakeProvider implements AIProvider {
       return {
         compreendido: false,
         confianca: 0.35,
+        // No fluxo "não entendeu", perguntasAoCliente é o canal (D-015): não duplica
+        // com respostaAoCliente.
         perguntasAoCliente: [
           'Você poderia detalhar em qual tela o problema acontece?',
           'Qual mensagem de erro exata aparece (se houver)?',
         ],
+        respostaAoCliente: null,
         complexidade: null,
         naturezaAjustada: null,
         prioridadeSugerida: null,
@@ -120,10 +134,17 @@ export class FakeProvider implements AIProvider {
       }
     }
 
+    // Continuidade (D-015): ecoa a última NOTA INTERNA da timeline — prova de que o
+    // contexto agora carrega as notas internas (diagnóstico anterior + orientações).
+    const notaAnterior = ultimaNotaInterna(input);
+
     return {
       compreendido: true,
       confianca: 0.9,
       perguntasAoCliente: null,
+      // respostaAoCliente PÚBLICA (D-015): dirigida por marcador. Técnica → o
+      // validador do aplicador a rebaixa; limpa → publicada como está.
+      respostaAoCliente: derivarRespostaCliente(texto),
       complexidade: compl,
       naturezaAjustada,
       prioridadeSugerida,
@@ -134,7 +155,9 @@ export class FakeProvider implements AIProvider {
         // Ecoa o conhecimento injetado (D-013): prova a injeção fim-a-fim no smoke.
         (input.contexto.conhecimento
           ? ` Conhecimento do sistema injetado: ${input.contexto.conhecimento.resumo.slice(0, 60)}`
-          : ''),
+          : '') +
+        // Ecoa a nota interna anterior (D-015): prova a continuidade no smoke.
+        (notaAnterior ? ` Continuidade: nota interna anterior observada — "${notaAnterior}".` : ''),
       // Para natureza=alteracao, gera a SPEC COMPLETA no template de specs/05 §7
       // (M7): prova determinística de que o fluxo produz uma SPEC utilizável.
       spec: ehAlteracao
@@ -202,6 +225,37 @@ export class FakeProvider implements AIProvider {
 function textoDoContexto(input: AIProviderInput): string {
   const corpos = input.contexto.timeline.map((m) => m.corpo).join('\n');
   return `${input.contexto.titulo}\n${input.contexto.descricao}\n${corpos}`;
+}
+
+/**
+ * Deriva a respostaAoCliente PÚBLICA a partir dos marcadores (D-015). `[[responder-
+ * cliente-tecnico]]` produz uma mensagem com cara técnica (caminho + função) para
+ * o validador do aplicador rebaixar; `[[responder-cliente]]` produz uma mensagem
+ * LIMPA de atendimento. Sem marcador → null.
+ */
+function derivarRespostaCliente(texto: string): string | null {
+  if (texto.includes('[[responder-cliente-tecnico]]')) {
+    return (
+      'Encontrei a origem no arquivo src/pedidos/salvar.js: a função salvarPedido() ' +
+      'não valida o valor informado. Vou ajustar esse trecho do código.'
+    );
+  }
+  if (texto.includes('[[responder-cliente]]')) {
+    return (
+      'Olá! Entendi seu pedido e já identifiquei o que precisa ser ajustado. ' +
+      'Nossa equipe está cuidando disso e retornaremos em breve. Obrigado pelo contato!'
+    );
+  }
+  return null;
+}
+
+/** Corpo da última NOTA INTERNA da timeline (ou null) — apoia o eco de continuidade. */
+function ultimaNotaInterna(input: AIProviderInput): string | null {
+  const internas = input.contexto.timeline.filter(
+    (m) => m.visibilidade === VisibilidadeMensagem.interna,
+  );
+  const ultima = internas[internas.length - 1];
+  return ultima ? ultima.corpo : null;
 }
 
 function extrairComplexidade(texto: string): Complexidade | null {

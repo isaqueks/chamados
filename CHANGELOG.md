@@ -2,6 +2,15 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-015: notas internas no contexto da IA + resposta pública sem detalhes técnicos
+
+- **Timeline completa no contexto**: a IA agora vê mensagens públicas E notas internas, demarcadas ("conversa com o cliente" vs "notas internas da equipe — NUNCA visíveis ao cliente") — continuidade com a própria análise anterior e canal operador→IA (permissão já prevista na matriz).
+- **`respostaAoCliente`**: novo canal público opcional em qualquer fluxo — a IA confirma entendimento/dá posição ao cliente em linguagem simples, publicado como mensagem pública do `agente_ia` (evento + notificação), antes da nota interna (sequenciamento determinístico de `created_at` na mesma transação).
+- **Separação técnica/pública garantida em duas camadas**: regra no prompt + validador conservador (`detectarConteudoTecnico`: blocos de código, caminhos, arquivos, chamadas de função, SQL, stack traces) que rebaixa resposta pública técnica para fallback genérico, preservando o original na nota interna com aviso.
+- **Validado ao vivo** (Opus 4.8, US$ 0,14): orientação interna do operador usada na investigação; resposta pública limpa ("Entendi o problema... nossa equipe está providenciando") + diagnóstico interno citando `src/relatorio.js` linhas 8-11; segunda execução continuou a análise anterior. 182/182 testes.
+- Specs 01/05 sincronizadas (MensagemTimeline com visibilidade, respostaAoCliente, validador); ADR D-015.
+- Ambiente: port-forward do Docker Desktop em blackhole no fim da rodada (host→Postgres) — smokes com banco deferidos; ver correção na sequência.
+
 ## 2026-07-16 — D-014: descrição do chamado no contexto (bug do M6) + exploração nível Claude Code
 
 - **Bug crítico corrigido:** o contexto enviado à IA continha título + timeline, mas **não a descrição do chamado** — desde o M6 (comprovado no banco: descrição de 287 chars, `entrada` sem ela). A IA respondia "chamado sem especificação" a pedidos claros. Agora o contexto leva descrição completa (texto plano), prioridade e solicitante; o campo `entrada` da ExecucaoIA espelha fielmente o que foi enviado (auditável); FakeProvider lê marcadores também na descrição.

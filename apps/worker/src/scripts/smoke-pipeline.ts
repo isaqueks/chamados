@@ -48,6 +48,7 @@ const {
   criarSistemaAlvo,
   criarSecretStore,
   criarChamado,
+  criarMensagem,
   atribuirOperador,
   listarMensagens,
   listarEventos,
@@ -56,8 +57,15 @@ const {
   ChamadoSchema,
   DespachanteNotificacoes,
 } = await import('@chamados/db');
-const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade } =
-  await import('@chamados/shared');
+const {
+  Papel,
+  StatusTenant,
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  VisibilidadeMensagem,
+} = await import('@chamados/shared');
 const { processarTriagem } = await import('../triagem/processador');
 const { montarInput } = await import('../triagem/contexto');
 const { resolverProvider } = await import('../ia/resolver-provider');
@@ -381,6 +389,85 @@ async function main(): Promise<void> {
         [ch5],
       );
       ok(rows[0]?.status === 'falhou', 'ExecucaoIA.status = falhou');
+    });
+
+    // ---- D-015) resposta pública + separação técnica + continuidade ------
+    console.log('\n[D-015a] resposta pública LIMPA + nota interna do operador (continuidade)');
+    const chResp = await abrir(
+      atorCli,
+      'Não consigo gerar o relatório mensal [[responder-cliente]]',
+    );
+    const NOTA_OP = 'Interno: priorize a hipótese de timeout no banco de dados.';
+    await runInTenantContext(ds, tenantA, (em) =>
+      criarMensagem(em, atorOp, {
+        chamado_id: chResp,
+        visibilidade: VisibilidadeMensagem.interna,
+        corpo: NOTA_OP,
+      }),
+    );
+    ok((await triar(chResp)).status === 'concluido', 'triagem (responder-cliente) → concluido');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const msgs = await listarMensagens(em, atorOp, chResp);
+      const pub = msgs.find((m) => vis(m) === 'publica' && m.autor_id !== cliente);
+      ok(!!pub, 'resposta PÚBLICA do agente_ia publicada');
+      ok(/Entendi seu pedido/i.test(corpo(pub)), 'resposta pública é a mensagem amigável (limpa)');
+      const diag = msgs.find((m) => vis(m) === 'interna' && /Diagn[óo]stico/i.test(corpo(m)));
+      ok(!!diag, 'nota INTERNA de diagnóstico publicada');
+      // A nota interna do operador chegou ao INPUT do provider (o fake a ecoa → continuidade).
+      ok(
+        /timeout no banco de dados/i.test(corpo(diag)),
+        'nota interna do operador apareceu no INPUT do provider (ecoada → continuidade)',
+      );
+      // Ordem: a resposta pública vem ANTES da nota interna na timeline (D-015).
+      const iPub = msgs.findIndex((m) => m.id === pub!.id);
+      const iDiag = msgs.findIndex((m) => m.id === diag!.id);
+      ok(iPub < iDiag, 'resposta pública vem ANTES da nota interna na timeline');
+      // Evento de mensagem pública gerado (dispara notificação ao cliente).
+      const evs = await listarEventos(em, atorOp, chResp);
+      ok(
+        evs.some((e) => e.tipo === 'mensagem_publicada'),
+        'evento mensagem_publicada gerado',
+      );
+      // Cliente VÊ a resposta pública e NÃO vê a orientação interna nem o diagnóstico.
+      const comoCliente = await listarMensagens(em, atorCli, chResp);
+      ok(
+        comoCliente.some((m) => /Entendi seu pedido/i.test(corpo(m))),
+        'cliente VÊ a resposta pública',
+      );
+      ok(
+        comoCliente.every((m) => !/timeout no banco/i.test(corpo(m))),
+        'cliente NÃO vê a orientação interna do operador',
+      );
+    });
+
+    console.log('\n[D-015b] resposta pública TÉCNICA é rebaixada (técnico só na nota interna)');
+    const chTec = await abrir(atorCli, 'Erro ao salvar pedido [[responder-cliente-tecnico]]');
+    ok(
+      (await triar(chTec)).status === 'concluido',
+      'triagem (responder-cliente-tecnico) → concluido',
+    );
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const msgs = await listarMensagens(em, atorOp, chTec);
+      const pub = msgs.find((m) => vis(m) === 'publica' && m.autor_id !== cliente);
+      ok(!!pub, 'resposta pública publicada (rebaixada)');
+      ok(
+        /nossa equipe/i.test(corpo(pub)) && !/salvarPedido|src\//.test(corpo(pub)),
+        'resposta pública REBAIXADA para genérica (sem termo técnico)',
+      );
+      const nota = msgs.find(
+        (m) => vis(m) === 'interna' && /rebaixada pelo validador/i.test(corpo(m)),
+      );
+      ok(!!nota, 'nota interna registra o rebaixamento pelo validador');
+      ok(
+        /src\/pedidos\/salvar\.js/.test(corpo(nota)),
+        'texto técnico ORIGINAL preservado apenas na nota interna',
+      );
+      // Cliente NÃO recebe nenhum detalhe técnico.
+      const comoCliente = await listarMensagens(em, atorCli, chTec);
+      ok(
+        comoCliente.every((m) => !/salvarPedido|src\/|\.js/.test(corpo(m))),
+        'cliente NÃO recebe nenhum detalhe técnico (só a genérica)',
+      );
     });
 
     // ---- 6) Ferramentas reais (fixtures locais) --------------------------

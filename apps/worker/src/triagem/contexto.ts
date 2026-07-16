@@ -1,10 +1,9 @@
 import type { EntityManager } from 'typeorm';
 import { IsNull } from 'typeorm';
 import {
-  VisibilidadeMensagem,
   Papel,
   type AIProviderInput,
-  type MensagemPublica,
+  type MensagemTimeline,
   type MetadadosSistemaAlvo,
 } from '@chamados/shared';
 import {
@@ -119,27 +118,39 @@ async function metadadosSistemaAlvo(
   return { nome: 'Sistema não especificado', descricao: null, stack: null };
 }
 
-async function timelinePublica(em: EntityManager, chamadoId: string): Promise<MensagemPublica[]> {
+/**
+ * Timeline COMPLETA do chamado (D-015): TODAS as mensagens — públicas E internas —,
+ * cada uma com visibilidade, autor (nome/papel) e momento. O papel `agente_ia` tem
+ * permissão de leitura pela matriz (specs/03), então a IA passa a ver o próprio
+ * diagnóstico anterior (continuidade) e as orientações internas da equipe. A ordem
+ * segue (created_at ASC, id ASC) — a mesma do painel — para o modelo ler os eventos
+ * na sequência real. A demarcação por visibilidade é feita no prompt.
+ */
+async function timelineCompleta(em: EntityManager, chamadoId: string): Promise<MensagemTimeline[]> {
   const msgs = await em.find(MensagemSchema, {
     where: {
       chamado_id: chamadoId,
-      visibilidade: VisibilidadeMensagem.publica,
       deleted_at: IsNull(),
     },
-    order: { created_at: 'ASC' },
+    order: { created_at: 'ASC', id: 'ASC' },
   });
   const autorIds = Array.from(new Set(msgs.map((m) => m.autor_id)));
-  const papeis = new Map<string, Papel>();
+  const autores = new Map<string, { nome: string; papel: Papel }>();
   if (autorIds.length > 0) {
     const usuarios = await em.find(UsuarioSchema, { where: autorIds.map((id) => ({ id })) });
-    for (const u of usuarios) papeis.set(u.id, u.papel);
+    for (const u of usuarios) autores.set(u.id, { nome: u.nome, papel: u.papel });
   }
-  return msgs.map((m) => ({
-    id: m.id,
-    autorPapel: papeis.get(m.autor_id) ?? Papel.cliente,
-    corpo: htmlParaTexto(m.corpo_html),
-    criadaEm: new Date(m.created_at).toISOString(),
-  }));
+  return msgs.map((m) => {
+    const autor = autores.get(m.autor_id);
+    return {
+      id: m.id,
+      autorPapel: autor?.papel ?? Papel.cliente,
+      autorNome: autor?.nome ?? 'Desconhecido',
+      visibilidade: m.visibilidade,
+      corpo: htmlParaTexto(m.corpo_html),
+      criadaEm: new Date(m.created_at).toISOString(),
+    };
+  });
 }
 
 /** Registrador da trilha de ações: loga a chamada da ferramenta (SEM segredos). */
@@ -166,7 +177,7 @@ export async function montarInput(
   if (!chamado) return null;
 
   const [timeline, sistemaAlvo, configFerramentas, tenant, solicitanteUsuario] = await Promise.all([
-    timelinePublica(em, chamadoId),
+    timelineCompleta(em, chamadoId),
     metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id),
     resolverConfigFerramentas(em, chamado.tenant_id, chamado.sistema_alvo_id),
     carregarTenant(em, chamado.tenant_id),

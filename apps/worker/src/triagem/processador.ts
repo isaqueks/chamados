@@ -1,7 +1,13 @@
 import type { DataSource } from 'typeorm';
 import { IsNull } from 'typeorm';
 import type Redis from 'ioredis';
-import { Papel, StatusChamado, type AIProvider, type AIProviderResult } from '@chamados/shared';
+import {
+  Papel,
+  StatusChamado,
+  VisibilidadeMensagem,
+  type AIProvider,
+  type AIProviderResult,
+} from '@chamados/shared';
 import {
   runInTenantContext,
   criarExecucao,
@@ -123,9 +129,10 @@ export async function processarTriagem(
           gatilho: job.gatilho,
           provider: provider.nome,
           modelo: provider.modelo,
-          // Espelho FIEL do contexto enviado ao provider (D-014), para auditoria:
-          // título + DESCRIÇÃO (o pedido do cliente) + nº de mensagens públicas +
-          // solicitante/natureza/prioridade. NÃO duplica o mapa de conhecimento.
+          // Espelho FIEL do contexto enviado ao provider (D-014/D-015), para
+          // auditoria: título + DESCRIÇÃO (o pedido do cliente) + contagem da
+          // timeline COMPLETA (públicas e internas) + solicitante/natureza/
+          // prioridade. NÃO duplica o mapa de conhecimento.
           entrada: {
             ultima_mensagem_id: job.ultimaMensagemId,
             gatilho: job.gatilho,
@@ -134,7 +141,13 @@ export async function processarTriagem(
             natureza_declarada: prepCtx.input.contexto.naturezaDeclarada,
             prioridade_declarada: prepCtx.input.contexto.prioridadeDeclarada,
             solicitante: prepCtx.input.contexto.solicitante,
-            mensagens_publicas: prepCtx.input.contexto.timeline.length,
+            mensagens_timeline: prepCtx.input.contexto.timeline.length,
+            mensagens_publicas: prepCtx.input.contexto.timeline.filter(
+              (m) => m.visibilidade === VisibilidadeMensagem.publica,
+            ).length,
+            mensagens_internas: prepCtx.input.contexto.timeline.filter(
+              (m) => m.visibilidade === VisibilidadeMensagem.interna,
+            ).length,
           },
         },
       );
