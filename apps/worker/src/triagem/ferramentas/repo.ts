@@ -88,6 +88,17 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
   // credencial só na URL do fetch, removida do config do cache em seguida.
   const origem = local ? normalizarRepoLocal(cfg.repoUrl) : cfg.repoUrl;
   const authed = local ? origem : urlComCredencial(cfg.repoUrl, cfg.credencial);
+
+  const clonarDoZero = async (): Promise<void> => {
+    await fs.mkdir(dir, { recursive: true });
+    await simpleGit().clone(authed, dir);
+    if (!local) {
+      await simpleGit(dir)
+        .remote(['set-url', 'origin', cfg.repoUrl])
+        .catch(() => {});
+    }
+  };
+
   try {
     if (existsSync(join(dir, '.git'))) {
       const g = simpleGit(dir);
@@ -95,25 +106,49 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
       try {
         await g.fetch(['origin']);
         await g.pull(['--ff-only']);
+      } catch (e) {
+        // O cache é DESCARTÁVEL: pull impossível (URL do sistema-alvo trocada →
+        // históricos não relacionados, branch reescrita, cache corrompido) não é
+        // fatal — apaga e re-clona do zero (autocura), mantendo a garantia de
+        // nunca analisar código velho (specs/05 §8).
+        logGitSync('cache de repo invalidado, re-clonando do zero', e, cfg, authed);
+        await fs.rm(dir, { recursive: true, force: true });
+        await clonarDoZero();
       } finally {
         // Remove a credencial do config do cache (não persistir segredo no disco).
         // Só relevante para origem remota (a local nunca teve credencial na URL).
-        if (!local) await g.remote(['set-url', 'origin', cfg.repoUrl]).catch(() => {});
+        if (!local && existsSync(join(dir, '.git'))) {
+          await simpleGit(dir)
+            .remote(['set-url', 'origin', cfg.repoUrl])
+            .catch(() => {});
+        }
       }
     } else {
-      await fs.mkdir(dir, { recursive: true });
-      await simpleGit().clone(authed, dir);
-      if (!local) {
-        await simpleGit(dir)
-          .remote(['set-url', 'origin', cfg.repoUrl])
-          .catch(() => {});
-      }
+      await clonarDoZero();
     }
     return dir;
-  } catch {
-    // Mensagem GENÉRICA: jamais vaza a URL autenticada nem o segredo.
+  } catch (e) {
+    // Loga o motivo SANITIZADO (sem URL autenticada/segredo) e lança o código
+    // GENÉRICO — o detalhe fica só no log do worker, nunca no chamado/ExecucaoIA.
+    logGitSync('git sync falhou', e, cfg, authed);
     throw new Error('git_sync_falhou');
   }
+}
+
+/** Log estruturado do sync com a mensagem do git REDIGIDA (nunca vaza segredo). */
+function logGitSync(msg: string, erro: unknown, cfg: ConfigRepo, authed: string): void {
+  let detalhe = erro instanceof Error ? erro.message : String(erro);
+  if (cfg.credencial) detalhe = detalhe.split(cfg.credencial).join('***');
+  detalhe = detalhe.split(authed).join('<origem>');
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      servico: 'worker',
+      msg,
+      sistemaAlvoId: cfg.sistemaAlvoId,
+      detalhe: detalhe.slice(0, 400),
+    }),
+  );
 }
 
 /** Resolve `caminho` DENTRO do checkout (barra traversal lexical `..`/absoluto). */

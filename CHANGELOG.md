@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Correção: cache de repositório com autocura + log sanitizado do git sync
+
+- **Bug real de produção:** ao trocar a URL/caminho do repositório de um SistemaAlvo existente, o cache do worker mantinha o clone antigo; `set-url` + `pull --ff-only` entre históricos não relacionados falhava com "Not possible to fast-forward" — e o erro era engolido como `git_sync_falhou` genérico (chamado escalado a humano em loop).
+- **Correção:** o cache é descartável — quando fetch/pull falha (URL trocada, branch reescrita, cache corrompido), o worker apaga o diretório e re-clona do zero (autocura), preservando a garantia de nunca analisar código velho (spec 05 §8).
+- **Diagnóstico:** o motivo real do git agora é registrado no log do worker com redação de segredos (credencial → `***`, URL autenticada → `<origem>`); o chamado/ExecucaoIA seguem recebendo só o código genérico.
+- **Verificado:** reprodução real contra o cache sujo (invalidação detectada + re-clone do repositório correto), 148 testes, smokes pipeline/resolucao.
+
 ## 2026-07-16 — Correção: worker também não carregava o `.env` da raiz
 
 - Mesmo bug da correção anterior, no processo do worker: `npm run dev:worker` roda com cwd em `apps/worker` e nenhum `.env` era carregado — defaults (redis localhost, provider fake) mascararam até a primeira triagem real precisar do SecretStore (`SECRET_STORE_MASTER_KEY não configurada` em loop de retry).
