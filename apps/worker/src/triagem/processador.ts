@@ -164,6 +164,9 @@ export async function processarTriagem(
             mensagens_internas: prepCtx.input.contexto.timeline.filter(
               (m) => m.visibilidade === VisibilidadeMensagem.interna,
             ).length,
+            // #16: quantas imagens inline foram COLETADAS para o contexto
+            // multimodal (o download em si é pós-Tx, best-effort).
+            imagens_contexto: prepCtx.refsImagens,
           },
         },
       );
@@ -234,6 +237,9 @@ export async function processarTriagem(
       if (ctxAtivo.input.exploracao) {
         ctxAtivo.input.exploracao.checkoutDir = ctxAtivo.checkout();
       }
+      // #16: baixa as imagens inline (prints) para o contexto MULTIMODAL —
+      // best-effort (nunca lança), fora de transação.
+      await ctxAtivo.carregarImagens();
       try {
         resultado = await provider.executarTriagem(ctxAtivo.input);
       } catch (err) {

@@ -153,6 +153,10 @@ export class FakeProvider implements AIProvider {
         `[fake] Diagnóstico determinístico de "${input.contexto.titulo}". ` +
         'Resumo: análise simulada sem execução de modelo. Evidências: (fake). ' +
         'Causa provável: cenário controlado de teste.' +
+        // Ecoa as imagens do contexto multimodal (#16): prova a injeção no smoke.
+        ((input.contexto.imagens?.length ?? 0) > 0
+          ? ` Imagens no contexto: ${input.contexto.imagens!.length}.`
+          : '') +
         // Ecoa o conhecimento injetado (D-013): prova a injeção fim-a-fim no smoke.
         (input.contexto.conhecimento
           ? ` Conhecimento do sistema injetado: ${input.contexto.conhecimento.resumo.slice(0, 60)}`

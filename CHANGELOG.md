@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Tarefa #16: imagem colada na descrição (bug de CSP) + IA lê os prints (multimodal)
+
+- **Bug real ("imagem não aparece"):** o pipeline SEMPRE persistiu a imagem colada (anexo + `/api/anexos/<id>` no HTML — comprovado por reprodução server-side), mas o download é um **302 para a URL pré-assinada do storage** e o CSP `img-src 'self' data: blob:` avalia a URL FINAL do redirect → o browser bloqueava silenciosamente TODA imagem colada (descrição e mensagens). Correção: `img-src` passa a incluir a origem do storage (espelha a resolução de endpoint de `@chamados/storage`: `STORAGE_ENDPOINT` ou `http://MINIO_HOST:MINIO_PORT`). Exige restart do dev server.
+- **IA lê os prints (multimodal):** o contexto da triagem ganha `imagens` (contrato em specs/01 §4.1): prints da DESCRIÇÃO e de mensagens PÚBLICAS (nunca notas internas), coletados na Tx1 (metadados) e baixados pós-transação (best-effort; ≤ 8 imagens, ≤ 4 MB cada). O `ClaudeAgentProvider` envia via streaming input do SDK — uma mensagem de usuário `[texto, imagem…]`; o prompt anuncia as imagens como dado não confiável. `ExecucaoIA.entrada` espelha `imagens_contexto`.
+- **Validado AO VIVO** (Opus 4.8, US$ 0,14): chamado com um print gerado programaticamente (quadrado vermelho) e a pergunta "qual a cor predominante?" — a IA respondeu **"a cor predominante da imagem é o vermelho"** (e, de quebra, exercitou o fluxo D-017: classificou como dúvida, respondeu público e resolveu sozinha). Smoke:pipeline +1 cenário (`#16`: anexo materializado + fake ecoando a contagem + espelho na entrada); 205/205 testes; typecheck.
+- Specs 01 (contrato) e 05 (§4.1) atualizadas; worker ganha dependência `@chamados/storage`.
+
 ## 2026-07-16 — Tarefa #15: respostas da IA renderizadas como markdown
 
 - **Antes**: toda saída da IA (respostas, diagnósticos, SPECs) entrava como texto plano — o cliente/operador via `# SPEC`, `**negrito**` e `- [ ]` crus.

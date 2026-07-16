@@ -514,6 +514,47 @@ async function main(): Promise<void> {
       );
     });
 
+    // ---- #16) imagem colada na descrição chega ao contexto multimodal -----
+    console.log('\n[#16] imagem colada na descrição → contexto multimodal');
+    const PNG_1x1 =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const chImg = await runInTenantContext(ds, tenantA, async (em) => {
+      const r = await criarChamado(em, atorCli, {
+        titulo: 'Erro na tela de login (print anexo)',
+        descricao: {
+          type: 'doc',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Segue o print do erro:' }] },
+            { type: 'image', attrs: { src: PNG_1x1, alt: 'print' } },
+          ],
+        },
+        natureza: Natureza.problema,
+        categoria_id: categoriaGeral,
+      });
+      if (!r.ok) throw new Error(`falha ao criar chamado com imagem: ${r.motivo}`);
+      return r.id;
+    });
+    ok((await triar(chImg)).status === 'concluido', 'triagem com imagem → concluido');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const anexos: Array<{ id: string }> = await em.query(
+        `SELECT id FROM anexo WHERE chamado_id = $1 AND content_type LIKE 'image/%'`,
+        [chImg],
+      );
+      ok(anexos.length === 1, 'imagem da descrição materializada como anexo');
+      const msgs = await listarMensagens(em, atorOp, chImg);
+      const diag = msgs.find((m) => vis(m) === 'interna' && /Imagens no contexto/i.test(corpo(m)));
+      ok(!!diag, 'imagem BAIXADA e injetada no contexto multimodal (fake ecoou a contagem)');
+      ok(/Imagens no contexto: 1/.test(corpo(diag)), 'contagem de imagens correta (1)');
+      const rows: Array<{ entrada: { imagens_contexto?: number } }> = await em.query(
+        `SELECT entrada FROM execucao_ia WHERE chamado_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [chImg],
+      );
+      ok(
+        rows[0]?.entrada?.imagens_contexto === 1,
+        'entrada da ExecucaoIA espelha imagens_contexto',
+      );
+    });
+
     // ---- 6) Ferramentas reais (fixtures locais) --------------------------
     console.log('\n[6] ferramentas reais');
     repoDir = await criarRepoFixture();

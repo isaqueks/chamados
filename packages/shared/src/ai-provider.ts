@@ -49,6 +49,19 @@ export interface MensagemTimeline {
 }
 
 /**
+ * Imagem inline do chamado pronta para envio MULTIMODAL ao provider (#16):
+ * bytes em base64 + media type real (validado por magic bytes no upload).
+ */
+export interface ImagemContexto {
+  /** De onde veio: descrição do chamado ou mensagem pública da timeline. */
+  origem: 'descricao' | 'mensagem';
+  nome: string;
+  /** Content-type REAL (image/png, image/jpeg, image/webp, image/gif). */
+  mediaType: string;
+  dadosBase64: string;
+}
+
+/**
  * Metadados do sistema-alvo entregues ao modelo — SEM credenciais (nem DSN, nem
  * caminho de repo cru, nem `*_ref` do cofre). Apenas o que orienta a análise.
  */
@@ -180,6 +193,14 @@ export interface AIProviderInput {
      * não foi gerado.
      */
     conhecimento?: ConhecimentoSistema | null;
+    /**
+     * Imagens INLINE do chamado (tarefa #16): prints colados na descrição e em
+     * mensagens PÚBLICAS (nunca notas internas — poderiam vazar num provider
+     * multi-tenant), já baixadas do storage e prontas para envio multimodal.
+     * Carregadas pelo worker pós-transação, best-effort (falha de download não
+     * derruba a triagem). Ausente/vazio = chamado sem imagens.
+     */
+    imagens?: ImagemContexto[];
   };
 
   /**

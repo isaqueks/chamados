@@ -54,6 +54,23 @@ function contentSecurityPolicy(): string {
   const connectSrc = ["'self'"];
   if (!ehProd) connectSrc.push('ws:', 'http://localhost:*', 'ws://localhost:*');
 
+  // Origem do STORAGE (MinIO/S3): o download de anexos é um 302 de /api/anexos
+  // para uma URL PRÉ-ASSINADA do storage — o CSP avalia a URL FINAL do redirect,
+  // então `img-src 'self'` sozinho BLOQUEAVA silenciosamente toda imagem colada
+  // (bug da tarefa #16). Espelha a resolução de endpoint de @chamados/storage.
+  const imgSrc = ["'self'", 'data:', 'blob:'];
+  const origemStorage = (() => {
+    const explicito = process.env.STORAGE_ENDPOINT?.trim();
+    const host = process.env.MINIO_HOST ?? process.env.POSTGRES_HOST ?? 'localhost';
+    const porta = process.env.MINIO_PORT ?? '9000';
+    try {
+      return new URL(explicito || `http://${host}:${porta}`).origin;
+    } catch {
+      return null;
+    }
+  })();
+  if (origemStorage) imgSrc.push(origemStorage);
+
   const diretivas: Record<string, string[]> = {
     'default-src': ["'self'"],
     'base-uri': ["'self'"],
@@ -63,8 +80,9 @@ function contentSecurityPolicy(): string {
     'script-src': scriptSrc,
     // Tailwind + variáveis de branding por tenant (<style> inline) + placeholder do editor.
     'style-src': ["'self'", "'unsafe-inline'"],
-    // Logos/anexos vêm de rotas próprias ('self'); imagens coladas viajam como data:/blob:.
-    'img-src': ["'self'", 'data:', 'blob:'],
+    // Logos/anexos: rotas próprias ('self') + o REDIRECT à URL assinada do
+    // storage; imagens coladas no editor viajam como data:/blob: até materializar.
+    'img-src': imgSrc,
     'font-src': ["'self'", 'data:'],
     'connect-src': connectSrc,
     'worker-src': ["'self'", 'blob:'],

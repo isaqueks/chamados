@@ -1,8 +1,10 @@
 import type { EntityManager } from 'typeorm';
 import { IsNull } from 'typeorm';
+import { obterObjeto } from '@chamados/storage';
 import {
   Papel,
   type AIProviderInput,
+  type ImagemContexto,
   type MensagemTimeline,
   type MetadadosSistemaAlvo,
 } from '@chamados/shared';
@@ -74,6 +76,63 @@ export interface PreparacaoContexto {
   resolucao: ResolucaoContexto;
   /** Sistema-alvo do chamado (ou null) — chave do mapa de conhecimento (D-013). */
   sistemaAlvoId: string | null;
+  /**
+   * Baixa do storage as imagens inline do chamado (#16) e as injeta em
+   * `input.contexto.imagens` para envio multimodal. Chamar FORA da transação
+   * (I/O de storage) e best-effort: nunca lança — falha vira log e a triagem
+   * segue sem as imagens.
+   */
+  carregarImagens(): Promise<void>;
+  /** Nº de imagens inline COLETADAS na Tx1 (#16) — espelhado em `entrada`. */
+  refsImagens: number;
+}
+
+/** Limites do contexto multimodal (#16): nº de imagens e bytes por imagem. */
+const MAX_IMAGENS_CONTEXTO = 8;
+const MAX_IMAGEM_BYTES = 4 * 1024 * 1024; // limite prático da API (5MB) com folga
+
+/** Referência de imagem inline coletada na Tx1 (download pós-transação). */
+interface RefImagem {
+  origem: 'descricao' | 'mensagem';
+  nome: string;
+  mediaType: string;
+  storageKey: string;
+}
+
+/**
+ * Coleta as REFERÊNCIAS das imagens inline do chamado (#16): as da DESCRIÇÃO
+ * (anexo sem mensagem) e as de mensagens PÚBLICAS — nunca de notas internas.
+ * Só metadados (o download acontece fora da transação); respeita o teto de
+ * quantidade/tamanho.
+ */
+async function coletarRefsImagens(em: EntityManager, chamadoId: string): Promise<RefImagem[]> {
+  const linhas: Array<{
+    nome_arquivo: string;
+    content_type: string;
+    tamanho_bytes: string;
+    storage_key: string;
+    origem: 'descricao' | 'mensagem';
+  }> = await em.query(
+    `SELECT a.nome_arquivo, a.content_type, a.tamanho_bytes, a.storage_key,
+            CASE WHEN a.mensagem_id IS NULL THEN 'descricao' ELSE 'mensagem' END AS origem
+       FROM anexo a
+       LEFT JOIN mensagem m ON m.id = a.mensagem_id
+      WHERE a.chamado_id = $1
+        AND a.deleted_at IS NULL
+        AND a.content_type LIKE 'image/%'
+        AND (a.mensagem_id IS NULL OR (m.visibilidade = 'publica' AND m.deleted_at IS NULL))
+      ORDER BY a.created_at ASC`,
+    [chamadoId],
+  );
+  return linhas
+    .filter((l) => Number(l.tamanho_bytes) <= MAX_IMAGEM_BYTES)
+    .slice(0, MAX_IMAGENS_CONTEXTO)
+    .map((l) => ({
+      origem: l.origem,
+      nome: l.nome_arquivo,
+      mediaType: l.content_type,
+      storageKey: l.storage_key,
+    }));
 }
 
 /** Converte HTML sanitizado numa projeção de texto puro (para o contexto do modelo). */
@@ -216,7 +275,11 @@ export async function montarInput(
     resolucaoHabilitada: habilitadaPreCall,
   });
 
-  return {
+  // #16: coleta as REFERÊNCIAS das imagens inline ainda na Tx1 (só metadados);
+  // o download real acontece em `carregarImagens()` (pós-transação).
+  const refsImagens = await coletarRefsImagens(em, chamadoId);
+
+  const preparacao: PreparacaoContexto = {
     input: {
       contexto: {
         titulo: chamado.titulo,
@@ -226,6 +289,7 @@ export async function montarInput(
         solicitante,
         timeline,
         sistemaAlvo,
+        imagens: [],
       },
       ferramentas: reais.ferramentas,
       limites: deps.limites,
@@ -246,5 +310,37 @@ export async function montarInput(
       numeroChamado: String(chamado.numero),
     },
     sistemaAlvoId: chamado.sistema_alvo_id,
+    refsImagens: refsImagens.length,
+    // #16: download pós-transação (best-effort) das imagens coletadas na Tx1.
+    async carregarImagens(): Promise<void> {
+      if (refsImagens.length === 0) return;
+      const carregadas: ImagemContexto[] = [];
+      for (const ref of refsImagens) {
+        try {
+          const obj = await obterObjeto(ref.storageKey);
+          if (!obj) continue;
+          carregadas.push({
+            origem: ref.origem,
+            nome: ref.nome,
+            mediaType: ref.mediaType,
+            dadosBase64: obj.corpo.toString('base64'),
+          });
+        } catch (err) {
+          deps.log('imagem do contexto não pôde ser baixada (ignorada)', {
+            chamadoId,
+            nome: ref.nome,
+            erro: (err as Error).message,
+          });
+        }
+      }
+      preparacao.input.contexto.imagens = carregadas;
+      if (carregadas.length > 0) {
+        deps.log('imagens carregadas para o contexto multimodal', {
+          chamadoId,
+          quantidade: carregadas.length,
+        });
+      }
+    },
   };
+  return preparacao;
 }

@@ -180,12 +180,13 @@ interface AIProviderInput {
   contexto: {
     titulo: string;
     descricao: string; // O PEDIDO do cliente em texto plano (D-014 — omissão era defeito)
-    naturezaDeclarada: 'problema' | 'alteracao';
+    naturezaDeclarada: 'problema' | 'alteracao' | 'duvida'; // duvida: D-017
     prioridadeDeclarada: 'baixa' | 'media' | 'alta' | 'urgente' | null;
     solicitante: { nome: string; papel: string };
     timeline: MensagemTimeline[]; // timeline COMPLETA (publica E interna), com `visibilidade` demarcada por item — D-015
     sistemaAlvo: MetadadosSistemaAlvo; // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
     conhecimento?: ConhecimentoSistema; // mapa do sistema (D-013), quando existente
+    imagens?: ImagemContexto[]; // prints inline (descrição/mensagens PÚBLICAS) p/ envio MULTIMODAL (#16)
   };
 
   // Exploração de código NATIVA (D-014): o provider real habilita Read/Grep/Glob do
