@@ -23,6 +23,7 @@ import {
   ChamadoSchema,
   UsuarioSchema,
   criarMensagem,
+  markdownParaDoc,
   transicionarStatus,
   definirComplexidade,
   alterarNatureza,
@@ -160,7 +161,9 @@ async function aplicarNaoEntendeu(
     {
       chamado_id: chamado.id,
       visibilidade: VisibilidadeMensagem.publica,
-      corpo,
+      // Saída da IA é MARKDOWN (tarefa #15): converte para o doc rico e passa
+      // pelo MESMO pipeline de validação/sanitização do editor.
+      corpo: markdownParaDoc(corpo),
       execucao_ia_id: execucaoId,
     },
     hooks,
@@ -230,7 +233,7 @@ async function aplicarEntendeu(
       {
         chamado_id: chamado.id,
         visibilidade: VisibilidadeMensagem.publica,
-        corpo: corpoPublico,
+        corpo: markdownParaDoc(corpoPublico),
         execucao_ia_id: execucaoId,
         created_at: proximoInstante(),
       },
@@ -275,7 +278,7 @@ async function aplicarEntendeu(
     {
       chamado_id: chamado.id,
       visibilidade: VisibilidadeMensagem.interna,
-      corpo: nota,
+      corpo: markdownParaDoc(nota),
       execucao_ia_id: execucaoId,
       created_at: proximoInstante(),
     },
@@ -333,7 +336,7 @@ async function aplicarEntendeu(
       {
         chamado_id: chamado.id,
         visibilidade: VisibilidadeMensagem.interna,
-        corpo: spec,
+        corpo: markdownParaDoc(spec),
         execucao_ia_id: execucaoId,
         created_at: proximoInstante(),
       },
@@ -404,12 +407,14 @@ async function aplicarResolucao(
       {
         chamado_id: chamado.id,
         visibilidade: VisibilidadeMensagem.interna,
-        corpo: montarNotaResolucaoPr({
-          branch: t.branch ?? '',
-          prUrl: t.prUrl ?? null,
-          resumo: t.resumo,
-          arquivos: t.arquivosAlterados,
-        }),
+        corpo: markdownParaDoc(
+          montarNotaResolucaoPr({
+            branch: t.branch ?? '',
+            prUrl: t.prUrl ?? null,
+            resumo: t.resumo,
+            arquivos: t.arquivosAlterados,
+          }),
+        ),
         execucao_ia_id: execucaoId,
         created_at: proximoInstante?.(),
       },
@@ -439,7 +444,7 @@ async function aplicarResolucao(
     {
       chamado_id: chamado.id,
       visibilidade: VisibilidadeMensagem.interna,
-      corpo: montarNotaFalhaResolucao(resolucao.motivo),
+      corpo: markdownParaDoc(montarNotaFalhaResolucao(resolucao.motivo)),
       execucao_ia_id: execucaoId,
       created_at: proximoInstante?.(),
     },
@@ -483,7 +488,7 @@ export async function escalarParaHumano(
     const msg = await criarMensagem(em, ator, {
       chamado_id: chamadoId,
       visibilidade: VisibilidadeMensagem.interna,
-      corpo: montarNotaEscalonamento(erro),
+      corpo: markdownParaDoc(montarNotaEscalonamento(erro)),
       execucao_ia_id: execucaoId,
     });
     if (!msg.ok) deps.log('escalonamento: nota interna falhou', { chamadoId, motivo: msg.motivo });

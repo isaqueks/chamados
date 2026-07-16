@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Tarefa #15: respostas da IA renderizadas como markdown
+
+- **Antes**: toda saída da IA (respostas, diagnósticos, SPECs) entrava como texto plano — o cliente/operador via `# SPEC`, `**negrito**` e `- [ ]` crus.
+- **Conversor `markdownParaDoc`** (packages/db, usa o LEXER do `marked` — nunca o renderer): mapeia markdown para os MESMOS nós da allowlist do pipeline de rich text, que continua sendo a fronteira (validação + sanitização + render HTML). Cobre headings (clamp 1–3), listas (incl. tarefas GFM como texto `[ ]`/`[x]`), código bloco/inline, blockquote, tabelas, hr, links (href revalidado), bold/itálico/strike. **HTML embutido nunca vira nó** (degrada para texto escapado); imagem externa degrada para o texto alternativo. Falha de parse → fallback texto plano.
+- **Aplicador**: todas as mensagens autoradas pelo `agente_ia` (perguntas, resposta pública, diagnóstico, SPEC, notas de resolução/falha/escalonamento) passam pelo conversor. Perguntas viram `<ol>`, SPEC vira headings/checklists.
+- **Web**: `classesConteudoRico` ganhou estilos de tabela; o restante (headings/listas/código) já era estilizado.
+- 12 testes novos do conversor (205/205), asserts do smoke:pipeline atualizados para o HTML renderizado (verde). Spec 05 §3.1 atualizada. Dependência nova `marked` no packages/db.
+
 ## 2026-07-16 — D-017 (parte 3, tarefa #11): triagem automática em toda mensagem do cliente
 
 - **Antes**: mensagem pública do cliente só re-disparava a triagem em `aguardando_cliente`/`em_triagem`; em `em_atendimento`/`resolvido` a IA ficava de fora.

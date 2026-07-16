@@ -133,6 +133,7 @@ export {
   type ImagemColada,
   type MotivoRichText,
 } from './chamados/rich-text';
+export { markdownParaDoc } from './chamados/markdown';
 export {
   detectarTipo,
   detectarImagemInline,

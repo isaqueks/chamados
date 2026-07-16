@@ -105,7 +105,7 @@ sequenceDiagram
 3. **Montar contexto** (§4) com separação estrita entre instruções do sistema e dados não confiáveis.
 4. **Invocar o provider** com as ferramentas read-only habilitadas (§4.2), timeout e budget (§7).
 5. **Parsear a saída estruturada** (JSON validado por schema). Saída inválida → 1 retry de reformatação; persistindo, escalona.
-6. **Aplicar efeitos**: publicar mensagem/nota interna — incluindo, quando presente e validada, a mensagem pública `respostaAoCliente` (§5.4) —, ajustar `complexidade`/`natureza`/`prioridade`, transicionar status, gerar `EventoChamado`.
+6. **Aplicar efeitos**: publicar mensagem/nota interna — incluindo, quando presente e validada, a mensagem pública `respostaAoCliente` (§5.4) —, ajustar `complexidade`/`natureza`/`prioridade`, transicionar status, gerar `EventoChamado`. A saída textual da IA é **markdown** e é convertida para o doc rico canônico (`markdownParaDoc`, tarefa #15) antes de entrar no MESMO pipeline de validação/sanitização do editor (allowlist de nós, href seguro, HTML embutido degrada para texto) — perguntas viram listas, SPECs viram headings/checklists, código vira bloco de código.
 7. **Fechar `ExecucaoIA`** com `resultado`, ações executadas, custo (tokens/USD) e duração.
 
 ### 3.2 Ciclo de vida da working copy

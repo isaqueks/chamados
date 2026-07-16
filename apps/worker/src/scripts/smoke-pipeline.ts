@@ -274,7 +274,8 @@ async function main(): Promise<void> {
       const msgs = await listarMensagens(em, atorOp, ch1);
       const publica = msgs.find((m) => vis(m) === 'publica' && m.autor_id !== cliente);
       ok(!!publica, 'existe mensagem PÚBLICA da IA');
-      ok(/1\./.test(corpo(publica)), 'perguntas ao cliente são NUMERADAS');
+      // #15: a saída da IA agora é renderizada como markdown → lista ordenada.
+      ok(/<ol|1\./.test(corpo(publica)), 'perguntas ao cliente são NUMERADAS');
       const evs = await listarEventos(em, atorOp, ch1);
       ok(
         evs.some((e) => e.tipo === 'ia_pediu_info'),
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
       // Cliente VÊ a pergunta pública.
       const comoCliente = await listarMensagens(em, atorCli, ch1);
       ok(
-        comoCliente.some((m) => /1\./.test(corpo(m))),
+        comoCliente.some((m) => /<ol|1\./.test(corpo(m))),
         'cliente vê a pergunta pública',
       );
     });
@@ -355,7 +356,8 @@ async function main(): Promise<void> {
       const ch = await em.findOne(ChamadoSchema, { where: { id: ch4 } });
       ok(ch?.natureza === Natureza.alteracao, 'natureza reclassificada para alteracao');
       const msgs = await listarMensagens(em, atorOp, ch4);
-      const spec = msgs.find((m) => vis(m) === 'interna' && /# SPEC/.test(corpo(m)));
+      // #15: SPEC renderizada como markdown → o "# SPEC" vira <h1>SPEC …</h1>.
+      const spec = msgs.find((m) => vis(m) === 'interna' && /<h1>SPEC|# SPEC/.test(corpo(m)));
       ok(!!spec, 'nota interna com SPEC publicada');
       ok(
         /Crit[ée]rios de aceite/i.test(corpo(spec)) && /Estimativa/i.test(corpo(spec)),
@@ -488,7 +490,7 @@ async function main(): Promise<void> {
         'resposta pública da IA publicada (a resposta da dúvida)',
       );
       ok(
-        !msgs.some((m) => vis(m) === 'interna' && /# SPEC/.test(corpo(m))),
+        !msgs.some((m) => vis(m) === 'interna' && /<h1>SPEC|# SPEC/.test(corpo(m))),
         'dúvida NUNCA gera SPEC',
       );
       const evs = await listarEventos(em, atorOp, chDuv);
