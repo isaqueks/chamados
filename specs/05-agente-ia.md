@@ -355,6 +355,15 @@ Requisitos da abstração (complementam as "Notas de contrato" de `01-arquitetur
 
 > DECISÃO PENDENTE: estratégia de sessão/contexto longo (uma execução stateless por job vs. sessão persistente por chamado) e uso de prompt caching do repositório para reduzir custo.
 
+### 10.1 Autenticação do `ClaudeAgentProvider` (D-012)
+
+O `ClaudeAgentProvider` suporta duas formas de autenticação junto ao Claude Agent SDK/CLI:
+
+- **`ANTHROPIC_API_KEY`** — caminho conforme para produto/produção (inclusive atendendo outros tenants). Tem **precedência** sobre `CLAUDE_CODE_OAUTH_TOKEN` na cadeia de resolução do CLI.
+- **`CLAUDE_CODE_OAUTH_TOKEN`** — token de assinatura Claude, gerado via `claude setup-token`; validade de aproximadamente 1 ano, **sem renovação automática**.
+
+A documentação oficial do Agent SDK traz a ressalva: produtos de terceiros não podem oferecer login `claude.ai`/limites de assinatura aos próprios usuários salvo aprovação prévia da Anthropic. Por isso, o uso do token de assinatura fica a critério e risco do operador da instalação, indicado para uso próprio/dev; a recomendação registrada para produção/multi-tenant é `ANTHROPIC_API_KEY`. Decisão e responsabilidade documentadas em D-012 (`specs/decisoes.md`).
+
 ---
 
 ## 11. Custos estimados

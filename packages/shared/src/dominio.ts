@@ -68,3 +68,55 @@ export function repoUrlValida(url: string): boolean {
     return false;
   }
 }
+
+/**
+ * O caminho informado é um repositório LOCAL de formato válido (D-011)? Aceita
+ * caminho absoluto do Windows (`X:\...` ou `X:/...`), absoluto POSIX (`/...`) e
+ * `file://`. Recusa relativos, vazios e acima de 2048 chars. Puro/testável.
+ *
+ * NÃO verifica existência no disco — só o formato. O gate de PERMISSÃO (a flag
+ * `SISTEMAS_PERMITIR_REPO_LOCAL`) fica no serviço server-side, nunca nesta função
+ * pura (que também roda no cliente).
+ */
+export function repoLocalValido(caminho: string): boolean {
+  const c = (caminho ?? '').trim();
+  if (c.length === 0 || c.length > 2048) return false;
+  // file:// (Windows: file:///C:/… ; POSIX: file:///…) — precisa de algo após.
+  if (/^file:\/\/./i.test(c)) return true;
+  // Absoluto Windows: letra de unidade + ':' + barra ou contrabarra.
+  if (/^[a-zA-Z]:[\\/]/.test(c)) return true;
+  // Absoluto POSIX: começa com '/'.
+  if (c.startsWith('/')) return true;
+  return false;
+}
+
+/** Motivo de recusa da validação de repositório de um SistemaAlvo. */
+export type MotivoRepoSistema = 'invalido' | 'local_desabilitado';
+
+/** Resultado da validação combinada (remoto | local-atrás-de-flag) do repo. */
+export interface ResultadoRepoSistema {
+  ok: boolean;
+  /** O caminho tem formato de repositório LOCAL (mesmo quando recusado pela flag). */
+  local: boolean;
+  motivo?: MotivoRepoSistema;
+}
+
+/**
+ * Valida o `git_repo_url` de um SistemaAlvo considerando a permissão de repo
+ * LOCAL (D-011). Remoto (`https`/SSH) é sempre aceito; caminho local só quando
+ * `permitirLocal` (a flag `SISTEMAS_PERMITIR_REPO_LOCAL`, lida server-side). Puro
+ * para poder ser usado tanto no cliente (form) quanto no servidor (service).
+ */
+export function validarRepoSistema(
+  url: string,
+  opts: { permitirLocal: boolean },
+): ResultadoRepoSistema {
+  const u = (url ?? '').trim();
+  if (repoLocalValido(u)) {
+    return opts.permitirLocal
+      ? { ok: true, local: true }
+      : { ok: false, local: true, motivo: 'local_desabilitado' };
+  }
+  if (repoUrlValida(u)) return { ok: true, local: false };
+  return { ok: false, local: false, motivo: 'invalido' };
+}

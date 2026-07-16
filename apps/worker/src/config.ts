@@ -20,6 +20,12 @@ export const iaConfig = {
   /** Modelo do provider real (specs/05 §10 — Opus 4.8). */
   modelo: process.env.IA_MODELO ?? 'claude-opus-4-8',
   apiKey: process.env.ANTHROPIC_API_KEY,
+  /**
+   * Token de assinatura (D-012): `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
+   * Alternativa à API key para uso próprio/dev; `ANTHROPIC_API_KEY` tem precedência
+   * na cadeia do CLI. Ao menos uma das duas é exigida quando IA_PROVIDER=claude.
+   */
+  oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
   limites: {
     timeoutMs: num('IA_TIMEOUT_MS', 600_000),
     budgetUsd: num('IA_BUDGET_USD', 5),

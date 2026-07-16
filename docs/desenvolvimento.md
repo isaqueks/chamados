@@ -163,6 +163,32 @@ Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com
 `status='falhou'` e `erro='timeout'` / `erro='budget_excedido'`
 (`specs/05-agente-ia.md` §8).
 
+#### Autenticação do provider `claude` (D-012)
+
+Quando `IA_PROVIDER=claude`, o worker precisa de **uma** de duas credenciais
+(defina em variável de ambiente; se nenhuma estiver presente, o provider falha na
+inicialização com mensagem acionável):
+
+| Variável                  | Como obter                                   | Quando usar                                                 |
+| ------------------------- | -------------------------------------------- | ----------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`       | Console da Anthropic (chave de API)          | **Recomendada para produção / multi-tenant**                |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` (máquina com navegador) | Token de assinatura, para uso próprio / dev / CI de scripts |
+
+- **Precedência:** se as duas estiverem definidas, `ANTHROPIC_API_KEY` vence o
+  token de assinatura na cadeia do CLI. Ambas são repassadas ao subprocesso do SDK
+  (que parte de `process.env` — o `options.env` do SDK **substitui** o ambiente, não
+  mescla; por isso o merge é explícito no provider).
+- **Token de assinatura:** gere com `claude setup-token` numa máquina com navegador
+  e copie o token para `CLAUDE_CODE_OAUTH_TOKEN`. Vale **~1 ano** e **não renova
+  sozinho** — troque antes de expirar. Por ser variável de ambiente, funciona em
+  **serviço headless**, independente da conta Windows logada (útil no worker rodando
+  como serviço).
+- **Aviso de termos (D-012):** a documentação oficial do Agent SDK direciona
+  produtos a usar `ANTHROPIC_API_KEY`; o token de assinatura é documentado para
+  CI/scripts próprios. O uso do token de assinatura fica a critério e risco do
+  operador, para instalação própria (ver `specs/decisoes.md` D-012). A recomendação
+  registrada para produção/multi-tenant é a **API key**.
+
 Para rodar o worker isoladamente:
 
 ```bash

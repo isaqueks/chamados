@@ -1,12 +1,14 @@
 import { ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
 import { Papel } from '@chamados/shared';
+import { permitirRepoLocal } from '@chamados/db';
 import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent } from '@/components/ui/card';
 import { SistemaForm } from '../sistema-form';
 
 export default async function NovoSistemaPage() {
   await exigirPapel(Papel.admin);
+  const repoLocalHabilitado = permitirRepoLocal();
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -23,7 +25,7 @@ export default async function NovoSistemaPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <SistemaForm />
+          <SistemaForm permitirRepoLocal={repoLocalHabilitado} />
         </CardContent>
       </Card>
     </div>

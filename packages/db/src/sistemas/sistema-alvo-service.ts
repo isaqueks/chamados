@@ -1,7 +1,9 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
+import { validarRepoSistema } from '@chamados/shared';
 import { SistemaAlvoSchema, type SistemaAlvo, type LogsConfig } from '../entities/sistema-alvo';
 import type { SecretStore } from '../secrets/secret-store';
+import { permitirRepoLocal } from '../config';
 
 /**
  * CRUD de SistemaAlvo (specs/07 §5). Regras de ouro:
@@ -129,6 +131,42 @@ async function aplicarSegredo(
   return store.guardar(em, tenantId, v);
 }
 
+/**
+ * Valida o `git_repo_url` (D-011). Repo REMOTO é sempre aceito; caminho LOCAL só
+ * quando `SISTEMAS_PERMITIR_REPO_LOCAL=true`. Lança erro de validação com
+ * mensagem clara (mencionando a flag) caso contrário. Retorna se o repo é local
+ * — o chamador então DISPENSA a credencial git (repo local não a usa).
+ */
+function validarRepoOuFalhar(gitRepoUrl: string): { local: boolean } {
+  const permitir = permitirRepoLocal();
+  const r = validarRepoSistema(gitRepoUrl, { permitirLocal: permitir });
+  if (r.ok) return { local: r.local };
+  if (r.motivo === 'local_desabilitado') {
+    throw new Error(
+      'Repositório local não permitido: o caminho informado aponta para um diretório local ' +
+        'do servidor, mas a flag SISTEMAS_PERMITIR_REPO_LOCAL não está ativa. Defina ' +
+        'SISTEMAS_PERMITIR_REPO_LOCAL=true para habilitar repositórios locais (D-011).',
+    );
+  }
+  throw new Error(
+    'URL de repositório inválida. Use https:// ou git@host:org/repo.git' +
+      (permitir ? ' ou um caminho absoluto local (ex.: C:\\repos\\meu-sistema).' : '.'),
+  );
+}
+
+/**
+ * Ajusta a entrada de segredos para repo LOCAL: a credencial git é dispensável
+ * (D-011) — ignora qualquer valor enviado e limpa uma eventual credencial já
+ * gravada (o worker nunca injeta credencial numa origem local).
+ */
+function dispensarCredencialSeLocal(
+  entrada: EntradaSegredos,
+  local: boolean,
+): EntradaSegredos & { git_credencial?: string; git_credencial_limpar?: boolean } {
+  if (!local) return entrada;
+  return { ...entrada, git_credencial: undefined, git_credencial_limpar: true };
+}
+
 /** Cria um sistema-alvo, gravando eventuais segredos no cofre. Retorna o id. */
 export async function criarSistemaAlvo(
   em: EntityManager,
@@ -136,12 +174,15 @@ export async function criarSistemaAlvo(
   tenantId: string,
   entrada: EntradaSistemaAlvo,
 ): Promise<string> {
+  const { local } = validarRepoOuFalhar(entrada.git_repo_url);
+  const segredos = dispensarCredencialSeLocal(entrada, local);
+
   const git_credencial_ref = await aplicarSegredo(
     em,
     store,
     tenantId,
     null,
-    entrada.git_credencial,
+    segredos.git_credencial,
     false,
   );
   const logs_credencial_ref = await aplicarSegredo(
@@ -194,13 +235,16 @@ export async function atualizarSistemaAlvo(
   });
   if (!atual) return false;
 
+  const { local } = validarRepoOuFalhar(entrada.git_repo_url);
+  const segredos = dispensarCredencialSeLocal(entrada, local);
+
   const git_credencial_ref = await aplicarSegredo(
     em,
     store,
     tenantId,
     atual.git_credencial_ref,
-    entrada.git_credencial,
-    entrada.git_credencial_limpar,
+    segredos.git_credencial,
+    segredos.git_credencial_limpar,
   );
   const logs_credencial_ref = await aplicarSegredo(
     em,

@@ -30,6 +30,9 @@ import { carregarEnvRaiz } from './carregar-env';
 carregarEnvRaiz();
 process.env.IA_PROVIDER = 'fake';
 process.env.TRIAGEM_DEBOUNCE_S = '0';
+// D-011: os fixtures usam repos bare em CAMINHO LOCAL como origin — a criação do
+// SistemaAlvo exige a flag ligada (default OFF na oferta SaaS).
+process.env.SISTEMAS_PERMITIR_REPO_LOCAL = 'true';
 if (!process.env.SECRET_STORE_MASTER_KEY || process.env.SECRET_STORE_MASTER_KEY.trim() === '') {
   process.env.SECRET_STORE_MASTER_KEY = randomBytes(32).toString('base64');
 }

@@ -63,9 +63,46 @@ export interface OpcoesClaudeProvider {
   modelo?: string;
   /** Chave de API (env `ANTHROPIC_API_KEY`); só usada pelo transporte real. */
   apiKey?: string;
+  /**
+   * Token de assinatura (env `CLAUDE_CODE_OAUTH_TOKEN`, via `claude setup-token`) —
+   * alternativa à API key (D-012). Só usado pelo transporte real.
+   */
+  oauthToken?: string;
   /** Fronteira do SDK. Default: transporte real (import dinâmico do SDK). */
   queryFn?: QueryFn;
   log?: (msg: string, extra?: Record<string, unknown>) => void;
+}
+
+/**
+ * Monta o `options.env` do subprocesso do SDK (D-012). A doc do Agent SDK avisa
+ * que `options.env` SUBSTITUI o ambiente inteiro do subprocesso (não mescla), então
+ * espalhamos `process.env` para preservar `PATH`, `HOME`, etc. PRECEDÊNCIA (cadeia
+ * do CLI): quando ambas presentes, `ANTHROPIC_API_KEY` vence o token de assinatura
+ * (`CLAUDE_CODE_OAUTH_TOKEN`). Ambas são repassadas; o CLI resolve a precedência.
+ */
+export function montarEnvSdk(opts: {
+  apiKey?: string;
+  oauthToken?: string;
+}): Record<string, string | undefined> {
+  return {
+    ...process.env,
+    ...(opts.apiKey ? { ANTHROPIC_API_KEY: opts.apiKey } : {}),
+    ...(opts.oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: opts.oauthToken } : {}),
+  };
+}
+
+/**
+ * Exige ao menos uma credencial de IA (D-012) para o transporte real. Sem NENHUMA
+ * das duas variáveis, o provider `claude` não pode autenticar — falha cedo, na
+ * inicialização, com mensagem acionável.
+ */
+export function validarCredenciaisClaude(opts: { apiKey?: string; oauthToken?: string }): void {
+  if (!opts.apiKey && !opts.oauthToken) {
+    throw new Error(
+      'IA_PROVIDER=claude requer credencial: configure ANTHROPIC_API_KEY (recomendado para ' +
+        "produção) ou CLAUDE_CODE_OAUTH_TOKEN (token de assinatura via 'claude setup-token').",
+    );
+  }
 }
 
 export class ClaudeAgentProvider implements AIProvider {
@@ -260,6 +297,8 @@ export function montarPrompt(input: AIProviderInput): string {
  */
 function criarQueryFnSdk(opts: OpcoesClaudeProvider): QueryFn {
   const log = opts.log ?? (() => {});
+  // Falha CEDO (na construção do provider) se nenhuma credencial foi fornecida.
+  validarCredenciaisClaude(opts);
   return async function* (params: ParametrosQuery): AsyncIterable<MensagemSdk> {
     const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as SdkModulo;
     const { z } = (await import('zod')) as unknown as { z: ZodLike };
@@ -326,7 +365,10 @@ function criarQueryFnSdk(opts: OpcoesClaudeProvider): QueryFn {
       maxBudgetUsd: params.input.limites.budgetUsd,
       abortController: params.abortController,
       mcpServers: { 'ferramentas-triagem': servidor },
-      ...(opts.apiKey ? { env: { ANTHROPIC_API_KEY: opts.apiKey } } : {}),
+      // `options.env` SUBSTITUI o ambiente do subprocesso do SDK (não mescla): sempre
+      // partimos de `process.env` para não perder PATH/HOME e sobrepomos as credenciais
+      // (D-012). ANTHROPIC_API_KEY vence o token de assinatura na cadeia do CLI.
+      env: montarEnvSdk({ apiKey: opts.apiKey, oauthToken: opts.oauthToken }),
     };
 
     log('claude-agent-sdk: iniciando query', { modelo: params.modelo });

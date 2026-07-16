@@ -36,3 +36,15 @@ export const credenciaisApp = {
   username: env('APP_DB_USER', 'chamados_app'),
   password: env('APP_DB_PASSWORD', 'chamados_app'),
 };
+
+/**
+ * Flag `SISTEMAS_PERMITIR_REPO_LOCAL` (D-011): habilita apontar o `git_repo_url`
+ * de um SistemaAlvo para um DIRETÓRIO LOCAL do servidor (caminho absoluto ou
+ * `file://`), em vez de um git remoto. Default `false` — a oferta SaaS mantém
+ * desligada (um admin de tenant não pode apontar para qualquer repo do host);
+ * instalações self-hosted ligam. Lida SEMPRE server-side (é a fronteira de
+ * segurança). Aceita apenas o literal `'true'` (case-insensitive, com trim).
+ */
+export function permitirRepoLocal(): boolean {
+  return (process.env.SISTEMAS_PERMITIR_REPO_LOCAL ?? '').trim().toLowerCase() === 'true';
+}

@@ -4,6 +4,8 @@ import {
   ClaudeAgentProvider,
   mapearResultado,
   montarPrompt,
+  montarEnvSdk,
+  validarCredenciaisClaude,
   type MensagemSdk,
   type QueryFn,
 } from './claude-agent-provider';
@@ -138,5 +140,48 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     const prompt = montarPrompt(inputBase());
     expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
     expect(prompt).toContain('Erro ao salvar');
+  });
+});
+
+describe('ClaudeAgentProvider — autenticação (D-012)', () => {
+  it('montarEnvSdk MESCLA com process.env (não substitui): preserva PATH', () => {
+    // O env do subprocesso do SDK substitui o ambiente inteiro — por isso o merge
+    // com process.env é obrigatório (senão o subprocesso perderia PATH etc.).
+    const env = montarEnvSdk({ apiKey: 'sk-teste' });
+    expect(env.PATH ?? env.Path).toBe(process.env.PATH ?? process.env.Path);
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-teste');
+  });
+
+  it('montarEnvSdk injeta a API key e o token de assinatura quando presentes', () => {
+    const env = montarEnvSdk({ apiKey: 'sk-teste', oauthToken: 'oauth-xyz' });
+    // Ambas repassadas; a precedência (API key vence) é resolvida pela cadeia do CLI.
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-teste');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-xyz');
+  });
+
+  it('montarEnvSdk aceita só o token de assinatura', () => {
+    const env = montarEnvSdk({ oauthToken: 'oauth-xyz' });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-xyz');
+    expect(env.ANTHROPIC_API_KEY).toBe(process.env.ANTHROPIC_API_KEY);
+  });
+
+  it('validarCredenciaisClaude falha sem NENHUMA credencial (mensagem acionável)', () => {
+    expect(() => validarCredenciaisClaude({})).toThrow(/ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN/);
+    expect(() => validarCredenciaisClaude({ apiKey: 'sk' })).not.toThrow();
+    expect(() => validarCredenciaisClaude({ oauthToken: 'oauth' })).not.toThrow();
+  });
+
+  it('construir o provider REAL (sem queryFn) sem credencial falha na inicialização', () => {
+    // Sem `queryFn` injetada → monta o transporte real → valida credenciais (via opts)
+    // já na construção. O guard checa as opções, não o ambiente do processo de teste.
+    expect(() => new ClaudeAgentProvider({ modelo: 'claude-opus-4-8' })).toThrow(
+      /IA_PROVIDER=claude requer credencial/,
+    );
+  });
+
+  it('construir o provider REAL com apiKey NÃO lança (constrói o transporte)', () => {
+    expect(
+      () => new ClaudeAgentProvider({ modelo: 'claude-opus-4-8', apiKey: 'sk' }),
+    ).not.toThrow();
   });
 });

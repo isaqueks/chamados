@@ -135,6 +135,48 @@ async function main(): Promise<void> {
       ok(bd === BD_CRED_NOVA, 'credencial de BD foi rotacionada');
     });
 
+    // 5b) Repositório local atrás de flag (D-011) ---------------------------
+    // Garante o estado default (flag desligada) para o primeiro cenário.
+    delete process.env.SISTEMAS_PERMITIR_REPO_LOCAL;
+    const CAMINHO_LOCAL = `/srv/repos/erp-local-${sufixo}`;
+    await runInTenantContext(ds, tenantA, async (em) => {
+      // Flag OFF → caminho local é REJEITADO com mensagem mencionando a flag.
+      let erroFlag: Error | null = null;
+      await criarSistemaAlvo(em, store, tenantA, {
+        nome: `Local OFF ${sufixo}`,
+        git_repo_url: CAMINHO_LOCAL,
+      }).catch((e: unknown) => (erroFlag = e as Error));
+      ok(erroFlag !== null, 'flag OFF: criar sistema com repo local é REJEITADO');
+      ok(
+        erroFlag !== null && /SISTEMAS_PERMITIR_REPO_LOCAL/.test((erroFlag as Error).message),
+        'a mensagem de erro menciona a flag SISTEMAS_PERMITIR_REPO_LOCAL',
+      );
+    });
+
+    // Flag ON → caminho local é ACEITO; credencial git é DISPENSADA (limpa mesmo
+    // se enviada — o worker nunca injeta credencial numa origem local).
+    process.env.SISTEMAS_PERMITIR_REPO_LOCAL = 'true';
+    const localId = await runInTenantContext(ds, tenantA, (em) =>
+      criarSistemaAlvo(em, store, tenantA, {
+        nome: `Local ON ${sufixo}`,
+        git_repo_url: CAMINHO_LOCAL,
+        git_credencial: 'ghp_deveria_ser_ignorada', // enviada, mas dispensada
+      }),
+    );
+    ok(!!localId, 'flag ON: criar sistema com repo local retorna um id');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const linha = await em.findOne(SistemaAlvoSchema, { where: { id: localId } });
+      ok(linha!.git_repo_url === CAMINHO_LOCAL, 'o caminho local foi persistido como git_repo_url');
+      ok(
+        linha!.git_credencial_ref === null,
+        'credencial git DISPENSADA no repo local (nenhuma referência gravada)',
+      );
+      const resumo = await buscarSistemaAlvo(em, localId);
+      ok(resumo!.tem_git_credencial === false, 'resumo confirma ausência de credencial git');
+    });
+    // Restaura o default para não vazar a flag para outras verificações.
+    delete process.env.SISTEMAS_PERMITIR_REPO_LOCAL;
+
     // 6) Proteção da categoria geral ----------------------------------------
     await runInTenantContext(ds, tenantA, async (em) => {
       const cats = await listarCategorias(em, { incluirInativas: true });

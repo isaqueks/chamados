@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Repositório local no SistemaAlvo (D-011) + autenticação por assinatura na IA (D-012)
+
+- **Repositório local (D-011):** o campo de repositório do SistemaAlvo aceita caminho absoluto (`C:\...`, `/...`) ou `file://` quando `SISTEMAS_PERMITIR_REPO_LOCAL=true` (default `false` — risco em SaaS multi-tenant, ver spec 09 §7). Credencial git dispensável para repo local (ignorada/limpa); worker clona/faz `pull --ff-only` de origem local sem credencial; hint no formulário quando a flag está ativa; validação com mensagem clara quando desligada. Normalização `file:///C:/...` no Windows.
+- **Autenticação da IA (D-012):** `ClaudeAgentProvider` aceita `ANTHROPIC_API_KEY` (recomendado para produção/produto — a doc oficial do Agent SDK exige API key para produtos, salvo aprovação prévia) **ou** `CLAUDE_CODE_OAUTH_TOKEN` (token de assinatura via `claude setup-token`, ~1 ano, headless); API key tem precedência; erro acionável na inicialização quando `IA_PROVIDER=claude` sem nenhuma das duas.
+- **Correção de bug latente:** `options.env` do Agent SDK substitui o ambiente inteiro do subprocesso — o provider passava só `ANTHROPIC_API_KEY` (perderia `PATH` etc. na primeira execução real); agora mescla `process.env` + credenciais.
+- Specs 05 (§10.1 autenticação), 07 (§5.1 repo local) e 09 (§7 risco) atualizadas; ADRs D-011/D-012; `.env.example` e guia de desenvolvimento documentados.
+- **Verificado:** format, typecheck, lint, build, 148 testes, smokes sistemas/pipeline/resolucao/triagem/rls/auth.
+
 ## 2026-07-15 — Marco M10 (final): busca, auto-fechamento, hardening e polimento — MVP M0–M10 concluído
 
 ### Frente A — busca e manutenção

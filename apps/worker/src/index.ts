@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     provider: iaConfig.provider,
     modelo: iaConfig.modelo,
     apiKey: iaConfig.apiKey,
+    oauthToken: iaConfig.oauthToken,
     log,
   });
   log('provider de IA resolvido', { nome: provider.nome, modelo: provider.modelo });

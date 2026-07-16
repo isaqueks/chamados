@@ -9,9 +9,10 @@ import {
   criarSistemaAlvo,
   atualizarSistemaAlvo,
   definirAtivoSistemaAlvo,
+  permitirRepoLocal,
   type EntradaSistemaAlvo,
 } from '@chamados/db';
-import { autorizar, repoUrlValida } from '@chamados/shared';
+import { autorizar, validarRepoSistema } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 
 export interface EstadoSistema {
@@ -26,10 +27,16 @@ function lerEntrada(
   if (nome.length < 2) return { ok: false, erro: 'Informe o nome do sistema.' };
 
   const git_repo_url = String(formData.get('git_repo_url') ?? '').trim();
-  if (!repoUrlValida(git_repo_url)) {
+  const permitirLocal = permitirRepoLocal();
+  const repo = validarRepoSistema(git_repo_url, { permitirLocal });
+  if (!repo.ok) {
     return {
       ok: false,
-      erro: 'URL de repositório inválida. Use https:// ou git@host:org/repo.git.',
+      erro:
+        repo.motivo === 'local_desabilitado'
+          ? 'Repositório local não permitido nesta instalação (SISTEMAS_PERMITIR_REPO_LOCAL desativada).'
+          : 'URL de repositório inválida. Use https:// ou git@host:org/repo.git' +
+            (permitirLocal ? ' ou um caminho absoluto local.' : '.'),
     };
   }
 

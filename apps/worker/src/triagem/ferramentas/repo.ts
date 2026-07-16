@@ -1,7 +1,7 @@
 import { promises as fs, existsSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import simpleGit from 'simple-git';
-import type { ResultadoBusca } from '@chamados/shared';
+import { repoLocalValido, type ResultadoBusca } from '@chamados/shared';
 import { ferramentasConfig, type Registrar } from './config';
 
 /**
@@ -46,6 +46,30 @@ export function urlComCredencial(repoUrl: string, credencial: string | null): st
   return repoUrl;
 }
 
+/**
+ * A origem é um repositório LOCAL (D-011: caminho absoluto ou `file://`)? Nesse
+ * caso o git clona/faz fetch nativamente e NENHUMA credencial é injetada.
+ */
+export function origemLocal(repoUrl: string): boolean {
+  return repoLocalValido(repoUrl);
+}
+
+/**
+ * Normaliza uma origem LOCAL para o git (D-011). No Windows um `file://` com
+ * contrabarras ou sem a 3ª barra antes da unidade (`file://C:/…`) confunde o git:
+ * troca `\` por `/` e garante a forma canônica `file:///C:/…` (autoridade vazia).
+ * Caminho simples (`C:\repos\x`, `/srv/x`) o git aceita como está — passa direto.
+ */
+export function normalizarRepoLocal(repoUrl: string): string {
+  let u = repoUrl.trim();
+  if (/^file:\/\//i.test(u)) {
+    u = u.replace(/\\/g, '/');
+    // file://C:/… (unidade logo após as duas barras) → file:///C:/… (3ª barra).
+    u = u.replace(/^file:\/\/([a-zA-Z]:)/i, 'file:///$1');
+  }
+  return u;
+}
+
 /** Diretório de checkout no cache persistente (chaveado tenant + sistema). */
 export function dirCheckout(cfg: ConfigRepo): string {
   return join(ferramentasConfig.repoCacheDir, cfg.tenantId, cfg.sistemaAlvoId);
@@ -58,7 +82,12 @@ export function dirCheckout(cfg: ConfigRepo): string {
  */
 export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
   const dir = dirCheckout(cfg);
-  const authed = urlComCredencial(cfg.repoUrl, cfg.credencial);
+  const local = origemLocal(cfg.repoUrl);
+  // Origem LOCAL (D-011): git clona/faz fetch nativamente; NUNCA injeta credencial
+  // (nem faz a dança de set-url para removê-la — não há segredo na URL). Remoto:
+  // credencial só na URL do fetch, removida do config do cache em seguida.
+  const origem = local ? normalizarRepoLocal(cfg.repoUrl) : cfg.repoUrl;
+  const authed = local ? origem : urlComCredencial(cfg.repoUrl, cfg.credencial);
   try {
     if (existsSync(join(dir, '.git'))) {
       const g = simpleGit(dir);
@@ -68,14 +97,17 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
         await g.pull(['--ff-only']);
       } finally {
         // Remove a credencial do config do cache (não persistir segredo no disco).
-        await g.remote(['set-url', 'origin', cfg.repoUrl]).catch(() => {});
+        // Só relevante para origem remota (a local nunca teve credencial na URL).
+        if (!local) await g.remote(['set-url', 'origin', cfg.repoUrl]).catch(() => {});
       }
     } else {
       await fs.mkdir(dir, { recursive: true });
       await simpleGit().clone(authed, dir);
-      await simpleGit(dir)
-        .remote(['set-url', 'origin', cfg.repoUrl])
-        .catch(() => {});
+      if (!local) {
+        await simpleGit(dir)
+          .remote(['set-url', 'origin', cfg.repoUrl])
+          .catch(() => {});
+      }
     }
     return dir;
   } catch {

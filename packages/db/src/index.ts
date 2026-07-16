@@ -1,4 +1,4 @@
-export { conexaoBase, credenciaisAdmin, credenciaisApp } from './config';
+export { conexaoBase, credenciaisAdmin, credenciaisApp, permitirRepoLocal } from './config';
 export { criarAppDataSource, criarAdminDataSource, obterAppDataSource } from './data-source';
 export { runInTenantContext } from './rls';
 export { verificarPostgres } from './health';

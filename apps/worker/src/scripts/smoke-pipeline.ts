@@ -28,6 +28,9 @@ import { carregarEnvRaiz } from './carregar-env';
 carregarEnvRaiz();
 process.env.IA_PROVIDER = 'fake';
 process.env.TRIAGEM_DEBOUNCE_S = '0';
+// D-011: o fixture aponta o SistemaAlvo para um repo em CAMINHO LOCAL direto — a
+// criação exige a flag ligada (default é OFF na oferta SaaS).
+process.env.SISTEMAS_PERMITIR_REPO_LOCAL = 'true';
 // Chave mestra do cofre (para guardar/decifrar a credencial de BD do fixture).
 if (!process.env.SECRET_STORE_MASTER_KEY || process.env.SECRET_STORE_MASTER_KEY.trim() === '') {
   process.env.SECRET_STORE_MASTER_KEY = randomBytes(32).toString('base64');
@@ -416,14 +419,20 @@ async function main(): Promise<void> {
       montarInput(em, chTool, { acoes: [], log, limites: LIMITES }),
     );
     if (!prep) throw new Error('montarInput devolveu null');
-    await prep.sincronizar(); // git clone do fixture
+    // D-011: o git_repo_url é um CAMINHO LOCAL DIRETO (não http, não file://). O
+    // worker clona nativamente, sem injetar credencial.
+    ok(
+      !/^https?:\/\//i.test(repoDir) && !/^file:\/\//i.test(repoDir),
+      'fixture usa caminho local DIRETO como git_repo_url (D-011)',
+    );
+    await prep.sincronizar(); // git clone do fixture a partir do caminho local direto
     const f = prep.input.ferramentas;
     try {
-      // repo_buscar / repo_ler_arquivo
+      // repo_buscar / repo_ler_arquivo — provam que o clone do caminho local funcionou.
       const busca = await f.repo_buscar('erro 500');
       ok(
         busca.some((r) => r.caminho === 'app.js'),
-        'repo_buscar encontra "erro 500" em app.js',
+        'repo_buscar encontra "erro 500" em app.js (clone do caminho local direto)',
       );
       const conteudo = await f.repo_ler_arquivo('app.js');
       ok(conteudo.includes('salvarPedido'), 'repo_ler_arquivo lê o arquivo do checkout');

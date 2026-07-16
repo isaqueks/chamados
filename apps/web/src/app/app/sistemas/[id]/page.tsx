@@ -1,7 +1,12 @@
 import { ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { obterAppDataSource, runInTenantContext, buscarSistemaAlvo } from '@chamados/db';
+import {
+  obterAppDataSource,
+  runInTenantContext,
+  buscarSistemaAlvo,
+  permitirRepoLocal,
+} from '@chamados/db';
 import { Papel } from '@chamados/shared';
 import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +18,7 @@ export default async function EditarSistemaPage({ params }: { params: Promise<{ 
   const ds = await obterAppDataSource();
   const sistema = await runInTenantContext(ds, tenant.id, (em) => buscarSistemaAlvo(em, id));
   if (!sistema) notFound();
+  const repoLocalHabilitado = permitirRepoLocal();
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -29,7 +35,7 @@ export default async function EditarSistemaPage({ params }: { params: Promise<{ 
 
       <Card>
         <CardContent className="pt-6">
-          <SistemaForm sistema={sistema} />
+          <SistemaForm sistema={sistema} permitirRepoLocal={repoLocalHabilitado} />
         </CardContent>
       </Card>
     </div>

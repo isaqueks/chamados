@@ -11,13 +11,20 @@ export interface ConfigProvider {
   provider: 'fake' | 'claude';
   modelo: string;
   apiKey?: string;
+  /** Token de assinatura (D-012): `CLAUDE_CODE_OAUTH_TOKEN`. Alternativa à API key. */
+  oauthToken?: string;
   log?: (msg: string, extra?: Record<string, unknown>) => void;
 }
 
 export function resolverProvider(cfg: ConfigProvider): AIProvider {
   switch (cfg.provider) {
     case 'claude':
-      return new ClaudeAgentProvider({ modelo: cfg.modelo, apiKey: cfg.apiKey, log: cfg.log });
+      return new ClaudeAgentProvider({
+        modelo: cfg.modelo,
+        apiKey: cfg.apiKey,
+        oauthToken: cfg.oauthToken,
+        log: cfg.log,
+      });
     case 'fake':
       return new FakeProvider();
     default:

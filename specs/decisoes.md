@@ -57,3 +57,17 @@
 **Contexto:** na implementação do M1, o better-auth mostrou-se incompatível com três requisitos canônicos: não tem adapter oficial para TypeORM (apenas Drizzle/Prisma/Kysely/Mongo); seu modelo de identidade é global por e-mail, colidindo com a identidade **por-tenant** (`UNIQUE(tenant_id, email)`, specs 02/03); e sua camada de dados não roda dentro de `runInTenantContext` (RLS).
 **Decisão:** implementar diretamente o modelo da spec 03: Argon2id (`@node-rs/argon2`), sessões server-side revogáveis com cookie opaco (apenas `token_hash` no banco), respostas anti-enumeração, invalidação de todas as sessões em troca/reset de senha.
 **Consequências:** tabela adicional `redefinicao_senha` (tokens de reset, uso único); função `chamados_resolver_tenant` (SECURITY DEFINER) para resolver o tenant por slug/domínio antes de estabelecer o contexto RLS (a app conecta sem BYPASSRLS); 2FA/SSO permanecem no roadmap da spec 03.
+
+## D-011 — Repositório do SistemaAlvo pode ser diretório local, atrás de flag (2026-07-16)
+
+**Status:** aceita.
+**Contexto:** o usuário quer apontar a IA para o código-fonte num diretório local do servidor, sem passar por um git remoto. Em uma instalação SaaS multi-tenant isso seria um risco (um admin de tenant poderia apontar para qualquer repositório git do host), então não pode ser o comportamento padrão.
+**Decisão:** a validação de repositório aceita caminho local absoluto (ou `file://`) **somente** quando `SISTEMAS_PERMITIR_REPO_LOCAL=true` (default `false`). Para repositório local, credencial git é dispensável. Em produção com Docker, o diretório precisa estar montado como volume no container do worker.
+**Consequências:** instalações self-hosted (caso do usuário) habilitam a flag; a oferta SaaS mantém `false`. Nota de segurança na spec 09.
+
+## D-012 — Autenticação da IA: API key ou token de assinatura, com ressalva de termos (2026-07-16)
+
+**Status:** aceita.
+**Contexto:** o usuário quer usar a assinatura Claude dele (a mesma do Claude Code) no worker de IA, em vez de pagar API por token. A documentação oficial do Agent SDK afirma: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK" — ou seja, para o produto (especialmente atendendo outros tenants), o caminho conforme é `ANTHROPIC_API_KEY`; o token de assinatura (`claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`) é documentado para CI/scripts próprios.
+**Decisão:** o `ClaudeAgentProvider` suporta ambas as variáveis (`ANTHROPIC_API_KEY` tem precedência na cadeia do CLI). O uso do token de assinatura fica a critério e risco do operador da instalação, para uso próprio/dev; a recomendação registrada para produção/multi-tenant é API key. O aviso consta em `.env.example` e no guia de desenvolvimento.
+**Consequências:** token de `setup-token` vale ~1 ano e não renova sozinho; por ser variável de ambiente, funciona em serviço headless independente da conta Windows logada.

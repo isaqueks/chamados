@@ -60,7 +60,14 @@ function CampoSegredo({
   );
 }
 
-export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
+export function SistemaForm({
+  sistema,
+  permitirRepoLocal = false,
+}: {
+  sistema?: SistemaAlvoResumo;
+  /** D-011: quando `true`, o repositório aceita caminho local absoluto/`file://`. */
+  permitirRepoLocal?: boolean;
+}) {
   const edicao = !!sistema;
   const [estado, acao, pendente] = useActionState(
     edicao ? acaoAtualizarSistema : acaoCriarSistema,
@@ -109,6 +116,15 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
       {/* Repositório git */}
       <fieldset className="flex flex-col gap-4 rounded-lg border p-4">
         <legend className="px-1 text-sm font-semibold">Repositório git</legend>
+        {permitirRepoLocal && (
+          <Alert>
+            <AlertDescription>
+              Repositório local habilitado: você pode informar um caminho absoluto (ex.:{' '}
+              <code>C:\repos\meu-sistema</code>). Credencial git é dispensável nesse caso. Em
+              produção com Docker, monte o diretório como volume no worker.
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
             <Label htmlFor="git_repo_url">URL do repositório *</Label>
@@ -116,7 +132,11 @@ export function SistemaForm({ sistema }: { sistema?: SistemaAlvoResumo }) {
               id="git_repo_url"
               name="git_repo_url"
               defaultValue={sistema?.git_repo_url}
-              placeholder="https://github.com/empresa/erp.git"
+              placeholder={
+                permitirRepoLocal
+                  ? 'https://github.com/empresa/erp.git ou C:\\repos\\meu-sistema'
+                  : 'https://github.com/empresa/erp.git'
+              }
               required
             />
           </div>
