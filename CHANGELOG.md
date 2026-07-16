@@ -2,6 +2,11 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Correção: worker também não carregava o `.env` da raiz
+
+- Mesmo bug da correção anterior, no processo do worker: `npm run dev:worker` roda com cwd em `apps/worker` e nenhum `.env` era carregado — defaults (redis localhost, provider fake) mascararam até a primeira triagem real precisar do SecretStore (`SECRET_STORE_MASTER_KEY não configurada` em loop de retry).
+- Correção: `apps/worker/src/env.ts` carrega o `.env` da raiz como **primeiro import** do entrypoint (as configs leem `process.env` no momento do import), sem sobrescrever o ambiente. Verificado: entrypoint enxerga `SECRET_STORE_MASTER_KEY`, flag de repo local, `IA_PROVIDER` e token. 148 testes.
+
 ## 2026-07-16 — Correção: web app não carregava o `.env` da raiz do monorepo
 
 - **Bug:** o Next.js só lê `apps/web/.env*` — variáveis compartilhadas definidas no `.env` da raiz (`SISTEMAS_PERMITIR_REPO_LOCAL`, `SECRET_STORE_MASTER_KEY`, `NOTIFICACOES_*` etc.) nunca chegavam ao processo do web app (worker e scripts sempre carregaram a raiz explicitamente, por isso os testes passavam). Sintoma relatado: flag setada no `.env` e o formulário de sistemas seguia recusando repositório local.

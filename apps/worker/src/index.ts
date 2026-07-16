@@ -7,6 +7,7 @@
  * as filas. O M9 adiciona `src/filas/notificacoes.ts` chamando outro `registrar()`
  * aqui, sem tocar na triagem.
  */
+import './env'; // PRIMEIRO import: carrega o .env da raiz antes de qualquer config.
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { criarAppDataSource } from '@chamados/db';
