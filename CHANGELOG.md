@@ -2,6 +2,12 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-017 (parte 2, tarefa #13): natureza opcional na abertura — a IA identifica
+
+- **Portal do cliente**: o bloco proeminente "Qual é a natureza do chamado?" saiu do formulário; a escolha agora vive em **"Opções avançadas"** como select opcional com default **"Automático — nossa assistente identifica"** (inclui Dúvida). Menos atrito na abertura; o caminho normal é não escolher.
+- **Server action**: `natureza` ausente/vazia → default `problema` no servidor; a IA reclassifica na triagem via `naturezaAjustada` (comportamento já existente do aplicador). Painel do operador (abrir em nome de cliente) continua com natureza explícita.
+- Specs 04 (§2 formulário, §3.1) atualizadas; typecheck/lint verdes. ADR D-017 (parte 2).
+
 ## 2026-07-16 — D-017 (parte 1, tarefa #12): natureza "dúvida" — a IA responde e resolve sozinha
 
 - **Novo valor de enum `duvida`** (migration 0009, `ALTER TYPE natureza ADD VALUE`; down remapeia para `problema` e recria o tipo — aplicada/revertida/reaplicada com sucesso): o cliente só quer ENTENDER algo; nada muda no sistema.

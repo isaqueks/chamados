@@ -96,7 +96,10 @@ export async function acaoCriarChamado(
   const descricaoRaw = String(formData.get('descricao') ?? '');
   const sistemaAlvoRaw = String(formData.get('sistema_alvo_id') ?? '').trim();
 
-  if (!ehNatureza(naturezaRaw)) return { erro: 'Selecione a natureza do chamado.' };
+  // D-017 (parte 2): natureza é OPCIONAL na abertura pelo portal — sem escolha,
+  // abre com o default do servidor e a IA classifica na triagem (naturezaAjustada).
+  const natureza = naturezaRaw === '' ? Natureza.problema : naturezaRaw;
+  if (!ehNatureza(natureza)) return { erro: 'Natureza inválida.' };
 
   const prioridade =
     prioridadeRaw === '' ? undefined : ehPrioridade(prioridadeRaw) ? prioridadeRaw : null;
@@ -113,7 +116,7 @@ export async function acaoCriarChamado(
       {
         titulo,
         descricao: doc,
-        natureza: naturezaRaw,
+        natureza,
         prioridade,
         sistema_alvo_id: sistemaAlvoRaw || undefined,
       },

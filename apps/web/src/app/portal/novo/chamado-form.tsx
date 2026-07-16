@@ -84,30 +84,6 @@ export function ChamadoNovoForm({
         </div>
       )}
 
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm font-medium">Qual é a natureza do chamado?</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {NATUREZAS.map((n, i) => (
-            <label
-              key={n.valor}
-              className="flex cursor-pointer items-start gap-3 rounded-lg border border-input p-3 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5 hover:bg-muted/50"
-            >
-              <input
-                type="radio"
-                name="natureza"
-                value={n.valor}
-                defaultChecked={i === 0}
-                className="mt-0.5 size-4 accent-primary"
-              />
-              <span className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium">{n.titulo}</span>
-                <span className="text-xs text-muted-foreground">{n.descricao}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
       <div className="flex flex-col gap-2">
         <Label htmlFor="titulo">Título</Label>
         <Input
@@ -141,23 +117,37 @@ export function ChamadoNovoForm({
           Opções avançadas
           <span className="text-xs transition-transform group-open:rotate-90">›</span>
         </summary>
-        <div className="flex flex-col gap-2 border-t border-input p-3">
-          <Label htmlFor="prioridade">Prioridade (opcional)</Label>
-          <select
-            id="prioridade"
-            name="prioridade"
-            className={SELECT_CLS}
-            defaultValue={Prioridade.media}
-          >
-            {Object.values(Prioridade).map((p) => (
-              <option key={p} value={p}>
-                {ROTULO_PRIORIDADE[p]}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground">
-            Não tem certeza? Deixe como está — nossa assistente ajusta a prioridade na triagem.
-          </p>
+        <div className="flex flex-col gap-4 border-t border-input p-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="natureza">Tipo do chamado (opcional)</Label>
+            <select id="natureza" name="natureza" className={SELECT_CLS} defaultValue="">
+              <option value="">Automático — nossa assistente identifica</option>
+              {NATUREZAS.map((n) => (
+                <option key={n.valor} value={n.valor}>
+                  {n.titulo} — {n.descricao}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="prioridade">Prioridade (opcional)</Label>
+            <select
+              id="prioridade"
+              name="prioridade"
+              className={SELECT_CLS}
+              defaultValue={Prioridade.media}
+            >
+              {Object.values(Prioridade).map((p) => (
+                <option key={p} value={p}>
+                  {ROTULO_PRIORIDADE[p]}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Não tem certeza? Deixe como está — nossa assistente identifica o tipo e ajusta a
+              prioridade na triagem.
+            </p>
+          </div>
         </div>
       </details>
 

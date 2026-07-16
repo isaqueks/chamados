@@ -99,7 +99,7 @@ Campos do formulário do cliente:
 | Campo                        | Obrigatório | Regra                                                                                                                                                                  |
 | ---------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sistema-alvo (`SistemaAlvo`) | Condicional | Exibido e obrigatório **apenas** se o tenant tiver mais de um sistema-alvo. Com um único, é preenchido automaticamente. Alternativamente, a categoria geral do tenant. |
-| Natureza                     | Sim         | `problema` ou `alteracao`. Default sugerido na UI: `problema`.                                                                                                         |
+| Natureza                     | Não (D-017) | `problema`, `alteracao` ou `duvida`. No portal do cliente fica em "Opções avançadas" com default "Automático": sem escolha, abre como `problema` e a IA classifica na triagem (`naturezaAjustada`). No painel (operador em nome de cliente), continua explícita. |
 | Título                       | Sim         | Texto curto (ver limites na seção 4).                                                                                                                                  |
 | Descrição                    | Sim         | Rich text com imagens/anexos inline (seção 4).                                                                                                                         |
 | Prioridade                   | Não         | Se omitida, entra como `media` (default) e pode ser ajustada pela IA/operador.                                                                                         |
@@ -119,12 +119,12 @@ Quem pode criar: `cliente` (para si), `operador`/`admin` (em nome de um cliente,
 
 ## 3. Natureza, prioridade e complexidade
 
-### 3.1 Natureza — enum `problema` | `alteracao`
+### 3.1 Natureza — enum `problema` | `alteracao` | `duvida`
 
-- Definida pelo cliente **apenas na criação** do chamado; após criado, o cliente não pode mais alterá-la (ver matriz de permissões em `03-autenticacao-perfis-permissoes.md` §8.1).
-- A IA **valida/ajusta** a natureza durante a triagem (ex.: cliente marcou `problema`, mas o pedido é uma mudança de comportamento → `alteracao`). O ajuste gera `EventoChamado` e nota interna.
+- Opcional na criação pelo portal (D-017): o cliente PODE escolher em "Opções avançadas", mas o caminho normal é deixar "Automático" — a IA identifica a natureza na triagem. Após criado, o cliente não pode mais alterá-la (ver matriz de permissões em `03-autenticacao-perfis-permissoes.md` §8.1).
+- A IA **valida/ajusta** a natureza durante a triagem (ex.: cliente marcou `problema`, mas o pedido é uma mudança de comportamento → `alteracao`; ou é só uma pergunta → `duvida`). O ajuste gera `EventoChamado` e nota interna.
 - Operador pode alterar manualmente.
-- Efeito no pipeline: `alteracao` nunca dispara resolução automática de código; a IA produz uma SPEC (nota interna). `problema` pode disparar tentativa de correção sob os guardrails de `05-agente-ia.md`.
+- Efeito no pipeline: `alteracao` nunca dispara resolução automática de código; a IA produz uma SPEC (nota interna). `problema` pode disparar tentativa de correção sob os guardrails de `05-agente-ia.md`. `duvida` é respondida pela IA (specs/05 §5.5) — nunca SPEC nem PR.
 
 ### 3.2 Prioridade — enum `baixa` | `media` | `alta` | `urgente`
 
