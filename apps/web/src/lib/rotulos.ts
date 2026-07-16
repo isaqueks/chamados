@@ -45,6 +45,7 @@ export const VARIANTE_STATUS: Record<StatusChamado, 'default' | 'secondary' | 'o
 export const ROTULO_NATUREZA: Record<Natureza, string> = {
   [Natureza.problema]: 'Problema',
   [Natureza.alteracao]: 'Alteração',
+  [Natureza.duvida]: 'Dúvida',
 };
 
 /** Rótulos amigáveis da prioridade. */

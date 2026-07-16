@@ -2,6 +2,15 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-017 (parte 1, tarefa #12): natureza "dúvida" — a IA responde e resolve sozinha
+
+- **Novo valor de enum `duvida`** (migration 0009, `ALTER TYPE natureza ADD VALUE`; down remapeia para `problema` e recria o tipo — aplicada/revertida/reaplicada com sucesso): o cliente só quer ENTENDER algo; nada muda no sistema.
+- **Fluxo (specs/05 §5.5)**: a IA investiga o código, escreve a resposta completa em `respostaAoCliente` (linguagem simples) e, com resposta REAL publicada (não vazia e não rebaixada pelo validador D-015), transiciona `em_triagem → resolvido` — **exceção única e deliberada ao guardrail "agente_ia nunca resolve"** (nova aresta na máquina de estados, restrita pelo aplicador à dúvida respondida). Resposta rebaixada/ausente → `em_atendimento` (humano responde); não entendeu → perguntas (fluxo normal). Dúvida NUNCA gera SPEC nem PR (gates continuam problema-only).
+- **Prompt do provider real**: definição das três naturezas + protocolo de dúvida (responder completo, capichar, nunca spec/tentativa); validação aceita `duvida` em `naturezaAjustada`. FakeProvider: marcador `[[natureza:duvida]]`.
+- **UI**: rótulo "Dúvida" (badges/filtros pegam automático); opção no formulário do portal (some na parte 2 do D-017, tarefa #13).
+- **Validado AO VIVO** (Opus 4.8, US$ 0,29): dúvida real sobre a régua de cobrança do sistema-alvo, declarada de propósito como `problema` — a IA reclassificou para `duvida`, publicou resposta amigável completa (sem jargão) e RESOLVEU sozinha; diagnóstico técnico citando arquivos/linhas ficou na nota interna. Smoke:pipeline com 2 cenários novos (D-017a resolvido / D-017b rebaixada → humano); 193/193 testes (guardrail da máquina atualizado); migrations zero/incremental/revert.
+- Specs 02/04/05 e ADR D-017 (cobre também as tarefas #13 e #11, partes 2 e 3).
+
 ## 2026-07-16 — bd_consultar: suporte a MySQL/MariaDB (tarefa #14)
 
 - **Bug real:** o `bd_consultar` sempre usava o driver `pg`, independentemente do `bd_tipo` do sistema-alvo — contra um MySQL, o handshake falhava com `received invalid response: 5b` (visto na triagem real do sistema Solving, MySQL 3306).

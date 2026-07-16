@@ -23,7 +23,8 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  * Marcadores reconhecidos (case-insensitive), no título ou em qualquer mensagem:
  *   [[nao-entendeu]]                → compreendido=false + perguntasAoCliente
  *   [[complexidade:facil|medio|dificil]]
- *   [[natureza:problema|alteracao]] → naturezaAjustada (+ spec quando alteracao)
+ *   [[natureza:problema|alteracao|duvida]] → naturezaAjustada (+ spec quando alteracao;
+ *                                     duvida + [[responder-cliente]] → IA resolve sozinha, D-017)
  *   [[prioridade:baixa|media|alta|urgente]]
  *   [[resolver]]                    → tentativaResolucao determinística: USA as
  *                                     ferramentas de escrita (se presentes — só
@@ -264,7 +265,7 @@ function extrairComplexidade(texto: string): Complexidade | null {
 }
 
 function extrairNatureza(texto: string): Natureza | null {
-  const m = /\[\[natureza:(problema|alteracao)\]\]/.exec(texto);
+  const m = /\[\[natureza:(problema|alteracao|duvida)\]\]/.exec(texto);
   return m ? (m[1] as Natureza) : null;
 }
 

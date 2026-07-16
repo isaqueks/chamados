@@ -22,10 +22,15 @@ export const StatusChamado = {
 } as const;
 export type StatusChamado = (typeof StatusChamado)[keyof typeof StatusChamado];
 
-/** Natureza do chamado. */
+/**
+ * Natureza do chamado. `duvida` (D-017): o cliente só quer ENTENDER algo — nada
+ * muda no sistema; a IA responde sozinha e resolve, escalando a humano apenas
+ * quando não consegue (nunca gera SPEC nem PR para dúvida).
+ */
 export const Natureza = {
   problema: 'problema',
   alteracao: 'alteracao',
+  duvida: 'duvida',
 } as const;
 export type Natureza = (typeof Natureza)[keyof typeof Natureza];
 

@@ -227,7 +227,7 @@ Caso contrário → **não entendeu** → fluxo de perguntas (§5.3).
   - `facil`: causa localizada, correção pontual (1 arquivo/poucas linhas), sem migração de dados nem mudança de contrato.
   - `medio`: múltiplos arquivos/módulos, ou requer teste não trivial, ou toca integração.
   - `dificil`: mudança arquitetural, migração de schema, risco alto, ou causa não isolável com o acesso atual.
-- **Natureza**: o cliente escolhe `problema` ou `alteracao`, mas a IA pode **sugerir reclassificação** (ex.: "problema" que é na verdade pedido de comportamento novo = `alteracao`). A IA nunca troca a natureza sozinha em silêncio: registra a sugestão na nota interna e aplica via `chamado_classificar` apenas se o tenant permitir auto-ajuste; caso contrário deixa para o operador.
+- **Natureza**: o cliente escolhe `problema`, `alteracao` ou `duvida`, mas a IA pode **sugerir reclassificação** (ex.: "problema" que é na verdade pedido de comportamento novo = `alteracao`, ou um pedido que é só uma pergunta = `duvida`). A IA nunca troca a natureza sozinha em silêncio: registra a sugestão na nota interna e aplica via `chamado_classificar` apenas se o tenant permitir auto-ajuste; caso contrário deixa para o operador.
 - **Prioridade**: a IA **sugere** `baixa`/`media`/`alta`/`urgente` na nota interna. A prioridade efetiva final é decisão do operador (a menos que o tenant autorize auto-aplicação).
 
 ### 5.3 Formato das perguntas ao cliente
@@ -250,6 +250,16 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 - **Regra de linguagem (inegociável)**: mensagens públicas ao cliente **nunca** contêm detalhes técnicos — caminhos de arquivo, nomes de função/classe, trechos de código, stack traces, nomes de tabela/coluna ou qualquer jargão de implementação. Tudo isso pertence exclusivamente à nota interna (`diagnostico`, §3.1 passo 6). `respostaAoCliente` fala a língua do cliente, do mesmo jeito que as perguntas de §5.3.
 - **Validador conservador**: antes de publicar, o worker valida `respostaAoCliente` contra sinais de conteúdo técnico (ex.: caminhos com `/`, extensões de arquivo, blocos de código/crase, nomes em `camelCase`/`snake_case` típicos de identificador, termos como "função", "classe", "arquivo", "commit", "branch", "endpoint", "query"). Encontrado qualquer sinal, o worker **rebaixa** a resposta pública para uma mensagem genérica de fallback (ex.: "Analisamos seu chamado e já temos um diagnóstico; nossa equipe vai dar sequência.") — o texto original gerado pelo provider é preservado **na nota interna**, marcado com um aviso (ex.: "resposta pública rebaixada pelo validador — conteúdo técnico detectado") para o operador revisar e, se quiser, publicar manualmente uma versão adequada.
 - **Ausência**: `respostaAoCliente = null` é o caso normal quando o diagnóstico não gera nada relevante para comunicar ainda (ex.: aguardando decisão do operador); nesse caso não há mensagem pública nova e o chamado segue para `em_atendimento` só com a nota interna, como antes de D-015.
+
+### 5.5 Natureza `duvida`: a IA responde sozinha (D-017)
+
+`duvida` = o cliente só quer **entender** algo (como usar, por que um comportamento é assim, o que um campo significa) — nada precisa mudar no sistema. Fluxo:
+
+- A IA investiga o código até ter certeza e escreve a resposta **completa** em `respostaAoCliente`, em linguagem simples (explica o comportamento, nunca a implementação); o detalhe técnico da investigação vai no `diagnostico` (nota interna).
+- **Resposta publicada e válida** (não vazia e **não rebaixada** pelo validador de §5.4): o aplicador transiciona `em_triagem` → `resolvido` — a única situação em que o `agente_ia` marca `resolvido` (aresta exclusiva da máquina de estados, `04-chamados.md` §1.3). O prazo de auto-fechamento corre normalmente; o cliente pode reabrir.
+- **Sem resposta utilizável** (rebaixada pelo validador ou ausente): o chamado vai a `em_atendimento` — um humano responde. Dúvida com o fallback genérico NÃO conta como respondida.
+- **Não entendeu a dúvida**: fluxo normal de perguntas (§5.3) → `aguardando_cliente`.
+- Para `duvida` a IA **nunca** gera SPEC (§7) nem tentativa de resolução/PR (§6) — não há mudança de sistema envolvida.
 
 ---
 

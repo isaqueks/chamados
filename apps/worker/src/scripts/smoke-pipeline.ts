@@ -470,6 +470,48 @@ async function main(): Promise<void> {
       );
     });
 
+    // ---- D-017) natureza dúvida: IA responde sozinha e resolve ------------
+    console.log('\n[D-017a] dúvida respondida → resolvido (IA sozinha)');
+    const chDuv = await abrir(
+      atorCli,
+      'Como funciona o cálculo do frete? [[natureza:duvida]][[responder-cliente]]',
+    );
+    ok((await triar(chDuv)).status === 'concluido', 'triagem (duvida) → concluido');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const ch = await em.findOne(ChamadoSchema, { where: { id: chDuv } });
+      ok(ch?.natureza === Natureza.duvida, 'natureza reclassificada para duvida');
+      ok(ch?.status === StatusChamado.resolvido, 'dúvida respondida → RESOLVIDO pela IA (D-017)');
+      ok(ch?.resolvido_em != null, 'resolvido_em preenchido');
+      const msgs = await listarMensagens(em, atorOp, chDuv);
+      ok(
+        msgs.some((m) => vis(m) === 'publica' && /Entendi seu pedido/i.test(corpo(m))),
+        'resposta pública da IA publicada (a resposta da dúvida)',
+      );
+      ok(
+        !msgs.some((m) => vis(m) === 'interna' && /# SPEC/.test(corpo(m))),
+        'dúvida NUNCA gera SPEC',
+      );
+      const evs = await listarEventos(em, atorOp, chDuv);
+      ok(
+        evs.some((e) => e.tipo === 'chamado_resolvido'),
+        'evento chamado_resolvido registrado',
+      );
+    });
+
+    console.log('\n[D-017b] dúvida com resposta TÉCNICA (rebaixada) → NÃO resolve, humano assume');
+    const chDuvTec = await abrir(
+      atorCli,
+      'Por que o pedido trava? [[natureza:duvida]][[responder-cliente-tecnico]]',
+    );
+    ok((await triar(chDuvTec)).status === 'concluido', 'triagem (duvida técnica) → concluido');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const ch = await em.findOne(ChamadoSchema, { where: { id: chDuvTec } });
+      ok(
+        ch?.status === StatusChamado.em_atendimento,
+        'resposta rebaixada NÃO resolve a dúvida → em_atendimento (humano responde)',
+      );
+    });
+
     // ---- 6) Ferramentas reais (fixtures locais) --------------------------
     console.log('\n[6] ferramentas reais');
     repoDir = await criarRepoFixture();

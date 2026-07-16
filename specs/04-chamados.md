@@ -42,6 +42,7 @@ stateDiagram-v2
     novo --> em_triagem: job de triagem inicia (sistema)
     em_triagem --> aguardando_cliente: IA não entendeu, pede dados (agente_ia)
     em_triagem --> em_atendimento: IA entendeu / operador assume (agente_ia, operador)
+    em_triagem --> resolvido: dúvida respondida pela IA (agente_ia — D-017)
     aguardando_cliente --> em_triagem: cliente responde (sistema re-enfileira)
     em_atendimento --> aguardando_cliente: operador/IA solicita dados (operador, agente_ia)
     aguardando_cliente --> em_atendimento: operador assume manualmente (operador)
@@ -64,6 +65,7 @@ stateDiagram-v2
 | `novo`               | `cancelado`          | Cancelamento imediato                         | cliente (autor), operador                   |
 | `em_triagem`         | `aguardando_cliente` | IA pede informações objetivas                 | agente_ia, operador                         |
 | `em_triagem`         | `em_atendimento`     | IA compreendeu; ou operador assume            | agente_ia, operador                         |
+| `em_triagem`         | `resolvido`          | Dúvida respondida pela IA (D-017)             | agente_ia, operador                         |
 | `em_triagem`         | `cancelado`          | Cancelamento                                  | operador                                    |
 | `aguardando_cliente` | `em_triagem`         | Cliente responde (re-enfileira triagem)       | sistema (disparado por mensagem do cliente) |
 | `aguardando_cliente` | `em_atendimento`     | Operador decide assumir sem nova rodada de IA | operador                                    |
@@ -80,7 +82,7 @@ Regras invariantes:
 - Toda transição gera um `EventoChamado` (ver seção 8). Transições inválidas (fora desta tabela) são rejeitadas pela camada de serviço com erro de domínio, sem tocar no banco.
 - `fechado` e `cancelado` não aceitam novas mensagens, transições ou atribuições.
 - Reenfileiramento da triagem (`aguardando_cliente` → `em_triagem`) só ocorre para chamados ainda não resolvidos; ver `05-agente-ia.md` para as condições exatas do pipeline.
-- **Guardrail humano-no-circuito**: apenas `operador`/`admin` transicionam para `resolvido`. O `agente_ia` **nunca** marca um chamado como `resolvido` por conta própria — mesmo quando abre um PR de correção, ele permanece em `em_atendimento` e aguarda merge/deploy aprovado por humano. Ver `05-agente-ia.md` (pipeline) e `09-seguranca-lgpd.md` §5 (guardrails de IA).
+- **Guardrail humano-no-circuito**: para `problema`/`alteracao`, apenas `operador`/`admin` transicionam para `resolvido` — mesmo quando a IA abre um PR de correção, o chamado permanece em `em_atendimento` e aguarda merge/deploy aprovado por humano. **Exceção única (D-017)**: natureza `duvida` respondida pela IA na triagem — a resposta pública é publicada e o chamado vai direto a `resolvido` (`em_triagem` → `resolvido`; o aplicador só usa essa aresta com resposta real, não rebaixada pelo validador). Nada muda no sistema numa dúvida — o guardrail de produção continua intacto. Ver `05-agente-ia.md` (pipeline) e `09-seguranca-lgpd.md` §5 (guardrails de IA).
 
 > DECIDIDO (2026-07-15): valor padrão de N = 3 dias para auto-fechamento de `resolvido`, configurável por tenant — ver §8.1 (implementado no M10).
 

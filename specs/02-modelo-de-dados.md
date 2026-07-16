@@ -359,7 +359,7 @@ Entidade central.
 | descricao_json                       | jsonb          | NOT NULL                 | documento do editor (ver Rich text)                                            |
 | descricao_html                       | text           | NOT NULL                 | HTML sanitizado (ver Rich text)                                                |
 | status                               | status_chamado | NOT NULL default 'novo'  |                                                                                |
-| natureza                             | natureza       | NOT NULL                 | problema/alteracao                                                             |
+| natureza                             | natureza       | NOT NULL                 | problema/alteracao/duvida (duvida: D-017, migration 0009)                      |
 | prioridade                           | prioridade     | NOT NULL default 'media' | cliente pode sugerir                                                           |
 | complexidade                         | complexidade   | NULL                     | interna; definida pela IA/operador                                             |
 | resolvido_em                         | timestamptz    | NULL                     | marca início da janela de auto-fechamento                                      |

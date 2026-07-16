@@ -6,8 +6,10 @@
  * A tabela de transições (§1.3) codifica QUEM (papel) pode disparar cada
  * transição status→status. Invariantes cobertas:
  *  - `fechado`/`cancelado` são terminais: nenhuma transição parte deles.
- *  - Guardrail humano-no-circuito: `agente_ia` NUNCA marca `resolvido`
- *    (em_atendimento → resolvido é só de operador/admin).
+ *  - Guardrail humano-no-circuito: `agente_ia` só marca `resolvido` a partir de
+ *    `em_triagem` (dúvida respondida sozinha — D-017; o APLICADOR garante que a
+ *    aresta só é usada para natureza `duvida` com resposta publicada);
+ *    `em_atendimento → resolvido` continua exclusivo de operador/admin.
  *  - Reabertura: `resolvido` → `em_atendimento` (cliente autor ou operador).
  *  - `admin ⊇ operador`: toda transição de operador vale também para admin.
  *  - Cancelamento e suas regras: cliente (autor) cancela `novo`/`aguardando_cliente`;
@@ -46,6 +48,9 @@ export const TRANSICOES: readonly Transicao[] = [
   { de: novo, para: cancelado, papeis: [cliente, operador] },
   { de: em_triagem, para: aguardando_cliente, papeis: [agente_ia, operador] },
   { de: em_triagem, para: em_atendimento, papeis: [agente_ia, operador] },
+  // D-017: dúvida respondida pela IA na triagem → resolvido (o aplicador restringe
+  // o uso desta aresta à natureza `duvida` com resposta pública publicada).
+  { de: em_triagem, para: resolvido, papeis: [agente_ia, operador] },
   { de: em_triagem, para: cancelado, papeis: [operador] },
   { de: aguardando_cliente, para: em_triagem, papeis: [ATOR_SISTEMA] },
   { de: aguardando_cliente, para: em_atendimento, papeis: [operador] },

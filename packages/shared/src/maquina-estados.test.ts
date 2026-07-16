@@ -40,7 +40,7 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
     });
   });
 
-  describe('guardrail humano-no-circuito (§1.3): agente_ia NUNCA resolve', () => {
+  describe('guardrail humano-no-circuito (§1.3, D-017): agente_ia só resolve na triagem', () => {
     it('agente_ia não marca em_atendimento → resolvido', () => {
       const r = transicaoValida(
         Papel.agente_ia,
@@ -51,9 +51,11 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
       if (!r.ok) expect(r.motivo).toBe('papel_nao_autorizado');
     });
 
-    it('nenhum caminho leva agente_ia a resolvido', () => {
+    it('agente_ia marca resolvido SOMENTE a partir de em_triagem (dúvida — D-017)', () => {
       for (const de of TODOS_STATUS) {
-        expect(podeTransicionar(Papel.agente_ia, de, StatusChamado.resolvido)).toBe(false);
+        expect(podeTransicionar(Papel.agente_ia, de, StatusChamado.resolvido)).toBe(
+          de === StatusChamado.em_triagem,
+        );
       }
     });
 

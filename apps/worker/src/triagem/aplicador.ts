@@ -48,7 +48,9 @@ import {
  *  - natureza só é reclassificada quando a IA diverge da declarada;
  *  - prioridade sugerida só é APLICADA se o chamado ainda não foi tocado por
  *    operador; caso contrário vira apenas sugestão na nota interna;
- *  - o `agente_ia` nunca marca `resolvido` (garantido pela máquina de estados).
+ *  - o `agente_ia` só marca `resolvido` para DÚVIDA respondida na triagem
+ *    (D-017 — resposta pública real, não rebaixada); nos demais fluxos, nunca
+ *    (máquina de estados + este aplicador).
  */
 
 /**
@@ -353,18 +355,27 @@ async function aplicarEntendeu(
   //     diagnóstico acima permanece intacto de qualquer forma (specs/05 §6/§8).
   await aplicarResolucao(em, ctx, deps, proximoInstante);
 
-  // 5) Transição para em_atendimento (só a partir de em_triagem; reprocesso a
-  //    partir de em_atendimento não precisa transicionar).
+  // 5) Transição final (só a partir de em_triagem; reprocesso a partir de
+  //    em_atendimento não precisa transicionar).
+  //    DÚVIDA respondida (D-017): a IA resolve sozinha — exige resposta pública
+  //    REAL publicada (não vazia e NÃO rebaixada pelo validador; uma dúvida
+  //    "respondida" com o fallback genérico deixaria o cliente sem resposta) →
+  //    `resolvido` (o prazo de auto-fechamento corre; o cliente pode reabrir).
+  //    Demais casos (problema/alteracao, dúvida sem resposta utilizável) →
+  //    `em_atendimento` (humano assume).
   if (chamado.status === StatusChamado.em_triagem) {
+    const respondeuDuvida =
+      naturezaEfetiva === Natureza.duvida && respostaCru.length > 0 && avisoRebaixamento === '';
+    const destino = respondeuDuvida ? StatusChamado.resolvido : StatusChamado.em_atendimento;
     const t = await transicionarStatus(
       em,
       ator,
       chamado.id,
-      StatusChamado.em_atendimento,
-      { motivo: 'ia_diagnosticou' },
+      destino,
+      { motivo: respondeuDuvida ? 'ia_respondeu_duvida' : 'ia_diagnosticou' },
       hooks,
     );
-    exigir(t.ok, 'transicao_em_atendimento');
+    exigir(t.ok, respondeuDuvida ? 'transicao_resolvido_duvida' : 'transicao_em_atendimento');
   }
   deps.log('ia diagnosticou', { chamadoId: chamado.id, complexidade, natureza: naturezaEfetiva });
 }

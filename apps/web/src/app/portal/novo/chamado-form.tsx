@@ -29,6 +29,11 @@ const NATUREZAS: { valor: Natureza; titulo: string; descricao: string }[] = [
     titulo: 'Alteração',
     descricao: 'Quero solicitar uma mudança ou melhoria.',
   },
+  {
+    valor: Natureza.duvida,
+    titulo: 'Dúvida',
+    descricao: 'Quero entender como algo funciona.',
+  },
 ];
 
 export function ChamadoNovoForm({
