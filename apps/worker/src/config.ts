@@ -29,7 +29,9 @@ export const iaConfig = {
   limites: {
     timeoutMs: num('IA_TIMEOUT_MS', 600_000),
     budgetUsd: num('IA_BUDGET_USD', 5),
-    maxTurnos: num('IA_MAX_TURNOS', 20),
+    // D-014: exploração nível Claude Code (Read/Grep/Glob) usa mais turnos —
+    // default elevado de 20 → 50 (o usuário aceitou o custo maior por triagem).
+    maxTurnos: num('IA_MAX_TURNOS', 50),
   },
   /**
    * Mapeamento de conhecimento do sistema (D-013): execução dedicada, mais cara e

@@ -165,12 +165,24 @@ export async function montarInput(
   });
   if (!chamado) return null;
 
-  const [timeline, sistemaAlvo, configFerramentas, tenant] = await Promise.all([
+  const [timeline, sistemaAlvo, configFerramentas, tenant, solicitanteUsuario] = await Promise.all([
     timelinePublica(em, chamadoId),
     metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id),
     resolverConfigFerramentas(em, chamado.tenant_id, chamado.sistema_alvo_id),
     carregarTenant(em, chamado.tenant_id),
+    em.findOne(UsuarioSchema, { where: { id: chamado.cliente_id } }),
   ]);
+
+  // D-014: a DESCRIÇÃO do chamado (o pedido do cliente) — projeção de texto puro
+  // do HTML sanitizado — passa a integrar o contexto (antes omitida: o bug do M6).
+  const descricao = htmlParaTexto(chamado.descricao_html);
+  const solicitante = {
+    nome: solicitanteUsuario?.nome ?? 'Solicitante',
+    papel: solicitanteUsuario?.papel ?? Papel.cliente,
+  };
+  // Um ÚNICO registrador alimenta a trilha `acoes`: usado pelos handles MCP e,
+  // via `exploracao.auditar`, pelas ferramentas NATIVAS (Read/Grep/Glob — D-014).
+  const registrar = registradorDe(deps);
 
   // Gate PRÉ-call da resolução automática (specs/05 §6): decide se as ferramentas
   // de escrita são sequer injetadas. O gate PÓS-call (natureza efetiva/complexidade/
@@ -182,7 +194,7 @@ export async function montarInput(
     repoConfigurado: configFerramentas.repo !== null,
   });
 
-  const reais = montarFerramentasReais(configFerramentas, registradorDe(deps), {
+  const reais = montarFerramentasReais(configFerramentas, registrar, {
     resolucaoHabilitada: habilitadaPreCall,
   });
 
@@ -190,12 +202,19 @@ export async function montarInput(
     input: {
       contexto: {
         titulo: chamado.titulo,
+        descricao,
         naturezaDeclarada: chamado.natureza,
+        prioridadeDeclarada: chamado.prioridade,
+        solicitante,
         timeline,
         sistemaAlvo,
       },
       ferramentas: reais.ferramentas,
       limites: deps.limites,
+      // D-014: exploração NATIVA (Read/Grep/Glob). `checkoutDir` é preenchido pelo
+      // processador APÓS o git sync (aqui a working copy ainda não existe); a
+      // `auditar` é o mesmo registrador da trilha `acoes`.
+      exploracao: { checkoutDir: null, auditar: registrar },
     },
     sincronizar: reais.sincronizar,
     prepararResolucao: reais.prepararResolucao,

@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-014: descrição do chamado no contexto (bug do M6) + exploração nível Claude Code
+
+- **Bug crítico corrigido:** o contexto enviado à IA continha título + timeline, mas **não a descrição do chamado** — desde o M6 (comprovado no banco: descrição de 287 chars, `entrada` sem ela). A IA respondia "chamado sem especificação" a pedidos claros. Agora o contexto leva descrição completa (texto plano), prioridade e solicitante; o campo `entrada` da ExecucaoIA espelha fielmente o que foi enviado (auditável); FakeProvider lê marcadores também na descrição.
+- **Exploração nativa (a pedido do usuário: "como o Claude Code")**: o provider real habilita as ferramentas nativas do Agent SDK `Read`, `Grep` e `Glob` (as mesmas do Claude Code) com `cwd` no checkout e `canUseTool` como fronteira única — nega qualquer caminho fora do checkout (`..`, absolutos, glob com base externa), audita permitidas e negadas em `acoes`, e mantém Bash/Write/Edit/Web*/Task desabilitadas; `permissionMode` voltou a `default` (o gate é o `canUseTool`); handles MCP seguem para logs/BD/escrita-gated; `repo_*` caseiros viram fallback do fake. Descoberta documentada: entradas em `allowedTools` auto-aprovam ANTES do `canUseTool`.
+- `IA_MAX_TURNOS` default 20 → 50 (decisão do usuário: sem economia de tokens na triagem).
+- **Validado ao vivo** (Opus 4.8, ~US$ 0,53): triagem com descrição presente reagiu ao pedido específico citando arquivo/linhas (`src/regua-cobranca.js:4-6`) e gerou SPEC; nativas usadas (Read×4, Glob); `Read ../../../../etc/passwd` NEGADO. 163/163 testes (incl. 7 de segurança do canUseTool). Smokes de fila e build web deferidos por ambiente compartilhado com o dev ativo do usuário (typecheck da web passou; smokes pipeline/resolucao/conhecimento ✓).
+- Specs 01 (contrato com `descricao`/`solicitante`/`exploracao`) e 05 (contexto, ferramentas nativas, protocolo) atualizadas; ADR D-014.
+
 ## 2026-07-16 — D-013: mapa de conhecimento do sistema + investigação obrigatória + fiação real das tools
 
 - **Causa-raiz do "IA não investiga" (produção):** as ferramentas MCP eram registradas mas **não permitidas** — o modo headless do Agent SDK (`permissionMode: 'default'`) nega silenciosamente toda chamada de tool sem handler interativo; o modelo respondia sem tocar no código (0 ações auditadas). Correção: tools em `allowedTools` (prefixo `mcp__triagem__*`) + `bypassPermissions`, com **menor privilégio por construção**: `tools: []` desliga TODAS as built-in do SDK (sem Bash/Read/Web — só os handles escopados do worker) e `settingSources: []` isola do host. Os testes unitários mockavam a fronteira e não pegavam — a fiação agora é validada ao vivo.

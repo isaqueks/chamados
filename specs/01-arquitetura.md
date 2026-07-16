@@ -179,12 +179,24 @@ interface AIProviderInput {
   // Contexto do chamado — SEM credenciais do sistema-alvo.
   contexto: {
     titulo: string;
+    descricao: string; // O PEDIDO do cliente em texto plano (D-014 — omissão era defeito)
     naturezaDeclarada: 'problema' | 'alteracao';
+    prioridadeDeclarada: 'baixa' | 'media' | 'alta' | 'urgente' | null;
+    solicitante: { nome: string; papel: string };
     timeline: MensagemPublica[]; // apenas mensagens públicas, já sanitizadas
     sistemaAlvo: MetadadosSistemaAlvo; // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
+    conhecimento?: ConhecimentoSistema; // mapa do sistema (D-013), quando existente
   };
 
+  // Exploração de código NATIVA (D-014): o provider real habilita Read/Grep/Glob do
+  // Agent SDK (mesmas ferramentas do Claude Code) com cwd no checkout sincronizado e
+  // guarda canUseTool negando qualquer caminho fora dele; Bash/Write/Edit/Web*/Task
+  // permanecem desabilitadas. O worker fornece o diretório e o auditor:
+  exploracao?: { checkoutDir: string; auditar(ferramenta: string, args: unknown): void };
+
   // Handles de ferramentas JÁ escopadas, injetados pelo worker (nunca conexões/credenciais cruas).
+  // repo_buscar/repo_ler_arquivo permanecem como fallback (provider fake); no provider
+  // real a exploração de repo é feita pelas ferramentas nativas acima (D-014).
   ferramentas: {
     repo_buscar(consulta: string): Promise<ResultadoBusca[]>;
     repo_ler_arquivo(caminho: string): Promise<string>;

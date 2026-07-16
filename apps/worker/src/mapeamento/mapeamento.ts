@@ -112,6 +112,9 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
         maxTurnos: limites.maxTurnos,
       },
       maxChars: limites.maxChars,
+      // D-014: exploração NATIVA (Read/Grep/Glob) escopada ao checkout já
+      // sincronizado; a `auditar` alimenta a mesma trilha `acoes`.
+      exploracao: { checkoutDir, auditar: registrar },
     });
 
     const geradoEm = new Date();

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
 import {
   Natureza,
   Prioridade,
+  Papel,
   Complexidade,
   type AIProviderInput,
   type AIMapeamentoInput,
@@ -12,6 +14,9 @@ import {
   montarPrompt,
   montarEnvSdk,
   validarCredenciaisClaude,
+  avaliarPermissaoNativa,
+  criarCanUseTool,
+  FERRAMENTAS_NATIVAS,
   type MensagemSdk,
   type QueryFn,
   type QueryMapFn,
@@ -27,7 +32,10 @@ function inputBase(): AIProviderInput {
   return {
     contexto: {
       titulo: 'Erro ao salvar',
+      descricao: 'Ao clicar em salvar o pedido aparece um erro 500 e nada é gravado.',
       naturezaDeclarada: Natureza.problema,
+      prioridadeDeclarada: Prioridade.media,
+      solicitante: { nome: 'Ana Cliente', papel: Papel.cliente },
       timeline: [
         { id: 'm1', autorPapel: 'cliente', corpo: 'Falha 500', criadaEm: '2026-07-15T00:00:00Z' },
       ],
@@ -167,6 +175,20 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     const prompt = montarPrompt(inputBase());
     expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
     expect(prompt).toContain('Erro ao salvar');
+  });
+
+  it('montarPrompt inclui a DESCRIÇÃO do chamado (o pedido do cliente) — D-014', () => {
+    const input = inputBase();
+    input.contexto.descricao = 'Adicionar envio de mensagem também para clientes com agendamento.';
+    const prompt = montarPrompt(input);
+    // A descrição é O pedido do cliente — precisa aparecer no input do provider
+    // (antes de D-014 ela era omitida: entrada_tem_descricao=false).
+    expect(prompt).toContain('DESCRIÇÃO DO CHAMADO');
+    expect(prompt).toContain('clientes com agendamento');
+    // Continua demarcada como conteúdo não confiável + traz solicitante/prioridade.
+    expect(prompt).toContain('<chamado_dados_nao_confiaveis>');
+    expect(prompt).toContain('Ana Cliente');
+    expect(prompt).toContain('prioridade_declarada: media');
   });
 
   it('montarPrompt injeta o conhecimento do sistema quando presente (D-013)', () => {
@@ -326,5 +348,92 @@ describe('ClaudeAgentProvider — autenticação (D-012)', () => {
     expect(
       () => new ClaudeAgentProvider({ modelo: 'claude-opus-4-8', apiKey: 'sk' }),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-014 — fronteira das ferramentas NATIVAS (Read/Grep/Glob) via canUseTool
+// ---------------------------------------------------------------------------
+
+describe('ClaudeAgentProvider — canUseTool / avaliarPermissaoNativa (D-014)', () => {
+  const CWD = join(process.cwd(), 'checkout-fake'); // base absoluta do "checkout"
+
+  it('só Read/Grep/Glob são as nativas habilitadas (Bash/Write/Edit fora)', () => {
+    expect([...FERRAMENTAS_NATIVAS].sort()).toEqual(['Glob', 'Grep', 'Read']);
+    for (const proibida of ['Bash', 'Write', 'Edit', 'WebFetch', 'WebSearch', 'Task']) {
+      expect(avaliarPermissaoNativa(proibida, {}, CWD).permitido).toBe(false);
+    }
+  });
+
+  it('Read ACEITA caminho DENTRO do checkout (relativo e absoluto)', () => {
+    expect(avaliarPermissaoNativa('Read', { file_path: 'src/regua.ts' }, CWD).permitido).toBe(true);
+    expect(
+      avaliarPermissaoNativa('Read', { file_path: join(CWD, 'src/regua.ts') }, CWD).permitido,
+    ).toBe(true);
+  });
+
+  it('Read NEGA path traversal (..), caminho absoluto fora e sem file_path', () => {
+    expect(avaliarPermissaoNativa('Read', { file_path: '../../etc/passwd' }, CWD).permitido).toBe(
+      false,
+    );
+    expect(avaliarPermissaoNativa('Read', { file_path: '/etc/passwd' }, CWD).permitido).toBe(false);
+    expect(
+      avaliarPermissaoNativa('Read', { file_path: 'a/../../../fora.txt' }, CWD).permitido,
+    ).toBe(false);
+    expect(avaliarPermissaoNativa('Read', {}, CWD).permitido).toBe(false);
+  });
+
+  it('Grep: sem path usa o cwd (aceita); path/glob fora do checkout NEGA', () => {
+    expect(avaliarPermissaoNativa('Grep', { pattern: 'regua' }, CWD).permitido).toBe(true);
+    expect(avaliarPermissaoNativa('Grep', { pattern: 'x', path: 'src' }, CWD).permitido).toBe(true);
+    expect(
+      avaliarPermissaoNativa('Grep', { pattern: 'x', path: '../../outro' }, CWD).permitido,
+    ).toBe(false);
+    // `glob` é filtro de CAMINHO: um `..` no filtro é negado.
+    expect(
+      avaliarPermissaoNativa('Grep', { pattern: 'x', glob: '../**/*.ts' }, CWD).permitido,
+    ).toBe(false);
+  });
+
+  it('Glob: pattern seguro aceita; pattern absoluto/.. ou path fora NEGA', () => {
+    expect(avaliarPermissaoNativa('Glob', { pattern: '**/*.ts' }, CWD).permitido).toBe(true);
+    expect(avaliarPermissaoNativa('Glob', { pattern: '../secret/*' }, CWD).permitido).toBe(false);
+    expect(avaliarPermissaoNativa('Glob', { pattern: '/etc/*' }, CWD).permitido).toBe(false);
+    expect(
+      avaliarPermissaoNativa('Glob', { pattern: '**/*.ts', path: '../fora' }, CWD).permitido,
+    ).toBe(false);
+  });
+
+  it('sem checkout (cwd null) as nativas são NEGADAS (fail-closed)', () => {
+    expect(avaliarPermissaoNativa('Read', { file_path: 'x' }, null).permitido).toBe(false);
+    expect(avaliarPermissaoNativa('Grep', { pattern: 'x' }, null).permitido).toBe(false);
+  });
+
+  it('canUseTool: MCP permitido (sem auditar); Read dentro permite+audita; fora nega+audita', async () => {
+    const acoes: Array<{ f: string; a: unknown }> = [];
+    const auditar = (f: string, a: unknown): void => void acoes.push({ f, a });
+    const canUseTool = criarCanUseTool(CWD, auditar);
+
+    // MCP: permitido, e NÃO audita aqui (o próprio handle MCP já se audita).
+    const mcp = await canUseTool('mcp__triagem__repo_buscar', { consulta: 'x' });
+    expect(mcp.behavior).toBe('allow');
+
+    // Read dentro: permite + registra na trilha `acoes`.
+    const dentro = await canUseTool('Read', { file_path: 'src/regua.ts' });
+    expect(dentro.behavior).toBe('allow');
+
+    // Read fora: NEGA (com mensagem) + registra a tentativa negada.
+    const fora = await canUseTool('Read', { file_path: '../../etc/passwd' });
+    expect(fora.behavior).toBe('deny');
+    if (fora.behavior === 'deny') expect(fora.message).toMatch(/fora do checkout/);
+
+    expect(acoes.map((x) => x.f)).toEqual(['Read', 'Read']); // MCP não auditado aqui
+    expect((acoes[1]!.a as { _negado?: string })._negado).toMatch(/fora do checkout/);
+  });
+
+  it('canUseTool: ferramenta não permitida (Bash) é negada', async () => {
+    const canUseTool = criarCanUseTool(CWD);
+    const r = await canUseTool('Bash', { command: 'rm -rf /' });
+    expect(r.behavior).toBe('deny');
   });
 });

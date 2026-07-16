@@ -194,10 +194,14 @@ export class FakeProvider implements AIProvider {
   }
 }
 
-/** Concatena título + corpos da timeline (a fonte dos marcadores). */
+/**
+ * Concatena título + DESCRIÇÃO + corpos da timeline (a fonte dos marcadores).
+ * D-014: a descrição passa a ser considerada — antes os marcadores embutidos na
+ * descrição do chamado eram ignorados (limitação conhecida do fake).
+ */
 function textoDoContexto(input: AIProviderInput): string {
   const corpos = input.contexto.timeline.map((m) => m.corpo).join('\n');
-  return `${input.contexto.titulo}\n${corpos}`;
+  return `${input.contexto.titulo}\n${input.contexto.descricao}\n${corpos}`;
 }
 
 function extrairComplexidade(texto: string): Complexidade | null {

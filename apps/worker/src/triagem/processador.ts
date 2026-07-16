@@ -123,11 +123,17 @@ export async function processarTriagem(
           gatilho: job.gatilho,
           provider: provider.nome,
           modelo: provider.modelo,
+          // Espelho FIEL do contexto enviado ao provider (D-014), para auditoria:
+          // título + DESCRIÇÃO (o pedido do cliente) + nº de mensagens públicas +
+          // solicitante/natureza/prioridade. NÃO duplica o mapa de conhecimento.
           entrada: {
             ultima_mensagem_id: job.ultimaMensagemId,
             gatilho: job.gatilho,
             titulo: prepCtx.input.contexto.titulo,
+            descricao: prepCtx.input.contexto.descricao,
             natureza_declarada: prepCtx.input.contexto.naturezaDeclarada,
+            prioridade_declarada: prepCtx.input.contexto.prioridadeDeclarada,
+            solicitante: prepCtx.input.contexto.solicitante,
             mensagens_publicas: prepCtx.input.contexto.timeline.length,
           },
         },
@@ -194,6 +200,11 @@ export async function processarTriagem(
       }
     }
     if (!erro) {
+      // D-014: agora que o git sync terminou, aponta a exploração NATIVA
+      // (Read/Grep/Glob) para o checkout — `cwd` + fronteira do canUseTool.
+      if (ctxAtivo.input.exploracao) {
+        ctxAtivo.input.exploracao.checkoutDir = ctxAtivo.checkout();
+      }
       try {
         resultado = await provider.executarTriagem(ctxAtivo.input);
       } catch (err) {

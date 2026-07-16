@@ -156,7 +156,7 @@ Variáveis de ambiente da triagem (ver `.env.example` para os defaults reais):
 | `IA_MODELO`          | `claude-opus-4-8` | modelo do provider real; ignorado pelo `fake`                                                                                                                              |
 | `IA_TIMEOUT_MS`      | `600000`          | timeout por execução (honrado via abort)                                                                                                                                   |
 | `IA_BUDGET_USD`      | `5`               | teto de custo por execução                                                                                                                                                 |
-| `IA_MAX_TURNOS`      | `20`              | limite de turnos/chamadas de ferramenta por execução                                                                                                                       |
+| `IA_MAX_TURNOS`      | `50`              | limite de turnos/chamadas de ferramenta por execução (D-014: exploração nível Claude Code com Read/Grep/Glob nativas, restritas ao checkout)                               |
 | `TRIAGEM_DEBOUNCE_S` | `45`              | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
 
 Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com

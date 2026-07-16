@@ -112,11 +112,43 @@ export interface FerramentasEscrita {
   repo_criar_arquivo(caminho: string, conteudo: string): Promise<void>;
 }
 
+/**
+ * Suporte às ferramentas NATIVAS de exploração de código do provider (D-014): as
+ * built-ins `Read`/`Grep`/`Glob` do Agent SDK (as mesmas do Claude Code). É
+ * preenchido pelo WORKER; providers sem ferramentas nativas (ex.: fake) o
+ * ignoram. NÃO é conteúdo do modelo — o `checkoutDir` é caminho de worker usado
+ * SÓ como `cwd`/fronteira, jamais renderizado no prompt.
+ */
+export interface ExploracaoNativa {
+  /**
+   * Diretório ABSOLUTO do checkout sincronizado — usado como `cwd` das
+   * ferramentas nativas e como FRONTEIRA do `canUseTool` (nega qualquer caminho
+   * fora dele). `null` antes do git sync ou quando não há repositório.
+   */
+  checkoutDir: string | null;
+  /**
+   * Auditoria das chamadas nativas (`Read`/`Grep`/`Glob`) — ligada ao mesmo
+   * `registrar` que alimenta `ExecucaoIA.acoes`. Os handles MCP já se auditam nos
+   * próprios wrappers; esta callback cobre as nativas, que passam pelo SDK.
+   */
+  auditar?: (ferramenta: string, args: unknown) => void;
+}
+
 export interface AIProviderInput {
   /** Contexto do chamado — SEM credenciais do sistema-alvo. */
   contexto: {
     titulo: string;
+    /**
+     * Descrição COMPLETA do chamado em TEXTO PLANO (projeção do HTML sanitizado):
+     * é O PEDIDO do cliente (D-014). Antes omitida do contexto — o bug desde o M6.
+     * Conteúdo NÃO confiável (dado a analisar, nunca instrução).
+     */
+    descricao: string;
     naturezaDeclarada: Natureza;
+    /** Prioridade declarada no chamado (a IA pode sugerir outra). */
+    prioridadeDeclarada: Prioridade;
+    /** Solicitante do chamado (quem abriu): nome + papel — D-014. */
+    solicitante: { nome: string; papel: Papel };
     /** Apenas mensagens públicas, já sanitizadas. */
     timeline: MensagemPublica[];
     /** Metadados SEM credenciais (nem DSN, nem caminho de repo cru). */
@@ -151,6 +183,13 @@ export interface AIProviderInput {
     budgetUsd: number;
     maxTurnos: number;
   };
+
+  /**
+   * Ferramentas NATIVAS de exploração (D-014). Preenchido pelo worker para o
+   * `ClaudeAgentProvider` (habilita `Read`/`Grep`/`Glob` escopadas ao checkout);
+   * ausente/ignorado nos providers sem exploração nativa (fake).
+   */
+  exploracao?: ExploracaoNativa;
 }
 
 /** Telemetria OBRIGATÓRIA em toda resposta (specs/01 §4.1, specs/05 §10). */
@@ -228,6 +267,12 @@ export interface AIMapeamentoInput {
   };
   /** Teto de caracteres do resumo (env `IA_MAPA_MAX_CHARS`). */
   maxChars: number;
+  /**
+   * Ferramentas NATIVAS de exploração (D-014): habilita `Read`/`Grep`/`Glob`
+   * escopadas ao checkout também no MAPEAMENTO. Preenchido pelo worker; ignorado
+   * pelo provider fake.
+   */
+  exploracao?: ExploracaoNativa;
 }
 
 export interface AIMapeamentoResult {

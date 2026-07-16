@@ -124,7 +124,7 @@ Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efême
 
 Ler o repositório inteiro em cada triagem é proibitivo em custo/latência. Por isso existe uma **execução de IA dedicada ao `SistemaAlvo`**, com `gatilho = 'mapeamento'`, separada de uma triagem de chamado: diferente do job `triagem_ia` de §2 (que sempre carrega um `chamado_id`), o mapeamento roda como execução própria do `SistemaAlvo`, enfileirada na mesma infraestrutura de filas (`01-arquitetura.md` §3.5). D-013 (`specs/decisoes.md`) é a decisão de origem.
 
-**O que a execução de mapeamento faz**: sobre a working copy já sincronizada (§3.2), o provider explora o repositório com as mesmas ferramentas read-only de §4.2 (`repo_buscar`, `repo_ler_arquivo`; `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas) e produz um **resumo estruturado** cobrindo:
+**O que a execução de mapeamento faz**: sobre a working copy já sincronizada (§3.2), o provider explora o repositório com as mesmas ferramentas read-only de §4.2 (`Read`, `Grep`, `Glob` nativas do SDK; `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas) e produz um **resumo estruturado** cobrindo:
 
 - **Stack**: linguagens, frameworks, principais dependências.
 - **Módulos**: organização de pastas/serviços e a responsabilidade de cada um.
@@ -141,7 +141,7 @@ Ler o repositório inteiro em cada triagem é proibitivo em custo/latência. Por
 2. **Commit divergente**: o commit da working copy sincronizada em §3.2 é diferente de `conhecimento_commit` (o repositório evoluiu desde o último mapa). Também roda dentro do pipeline de triagem, no mesmo ponto do item 1.
 3. **Manual pelo admin**: ação "Mapear agora" no painel do admin, a qualquer momento — roda fora do contexto de qualquer chamado específico, bastando o `SistemaAlvo` e o commit atual do repositório.
 
-**Uso do mapa**: `conhecimento_resumo` é injetado como contexto de fundo em **toda** triagem (§4.1), reduzindo a chance de a IA perguntar ao cliente algo que o código já responde e ancorando o protocolo investigação-primeiro (§5.1) com conhecimento prévio do sistema — sem substituir a investigação pontual do chamado, que continua via `repo_buscar`/`repo_ler_arquivo`.
+**Uso do mapa**: `conhecimento_resumo` é injetado como contexto de fundo em **toda** triagem (§4.1), reduzindo a chance de a IA perguntar ao cliente algo que o código já responde e ancorando o protocolo investigação-primeiro (§5.1) com conhecimento prévio do sistema — sem substituir a investigação pontual do chamado, que continua via `Grep`/`Glob`/`Read` (D-014).
 
 **Auditoria**: como qualquer execução de IA, o mapeamento grava um `ExecucaoIA` — mas sem `chamado_id` (pertence ao `SistemaAlvo`, não a um chamado; ver `execucao_ia.sistema_alvo_id` e o CHECK correspondente em `02-modelo-de-dados.md`, D-013).
 
@@ -163,25 +163,31 @@ Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem ant
 
 ### 4.1 Contexto entregue ao modelo
 
-- **Metadados do chamado**: `natureza`, `prioridade`, `status`, `SistemaAlvo` (nome, stack), `Categoria`.
+- **Metadados do chamado**: `título`, `natureza`, `prioridade`, `status`, `solicitante`, `SistemaAlvo` (nome, stack), `Categoria`.
+- **Descrição completa do chamado**: o texto pleno (texto plano) informado na abertura do chamado, enviado **integralmente** ao provider — não apenas um resumo ou o título. _(Defeito corrigido em 2026-07-16, D-014: desde o M6 o contexto montado para o provider incluía título e timeline, mas **omitia a descrição do chamado** — comprovado em produção com `entrada_tem_descricao=false` para um chamado com descrição de 287 caracteres já presente no banco. A triagem respondia sem conhecer o pedido real do cliente.)_
 - **Timeline**: mensagens `publica` e `interna` (a IA vê ambas), em ordem, com autor e papel.
 - **Anexos**: texto/imagens relevantes (imagens via visão do modelo quando suportado; ver limites em §7).
 - **Conhecimento do sistema-alvo**: o mapa de conhecimento (`conhecimento_resumo`, §3.3) é injetado como contexto de fundo em toda triagem; a investigação do caso específico do chamado é sob demanda via ferramentas (não se despeja o repo inteiro no prompt).
 
 ### 4.2 Ferramentas (read-only sobre o SistemaAlvo, exceto a dupla de escrita gated)
 
-| Ferramenta                  | Descrição                                                        | Restrições                                                                                   |
-| --------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `repo_buscar`               | grep/semantic search no código sincronizado                      | apenas working copy do tenant                                                                |
-| `repo_ler_arquivo`          | lê arquivo por caminho                                           | dentro do repo; sem symlink para fora                                                        |
-| `logs_consultar`            | consulta fontes/caminhos de log configurados                     | janela temporal limitada; read-only                                                          |
-| `bd_consultar`              | executa SELECT na conexão read-only                              | somente `SELECT`; timeout curto; sem DDL/DML                                                 |
-| `chamado_publicar_mensagem` | publica mensagem `publica` ou `interna`                          | visibilidade obrigatória                                                                     |
-| `chamado_classificar`       | grava complexidade/natureza/prioridade sugeridas                 | valores dos enums canônicos                                                                  |
-| `repo_escrever_arquivo`     | sobrescreve (ou cria) um arquivo na working copy **descartável** | só injetada com o gate de resolução aberto (§6); nunca toca o cache persistente nem produção |
-| `repo_criar_arquivo`        | cria um arquivo novo na working copy descartável                 | idem acima; falha se o caminho já existir                                                    |
+**Exploração de código no nível do Claude Code (D-014)**: o `ClaudeAgentProvider` (implementação real, §10.1) explora o repositório com as ferramentas **nativas do Claude Agent SDK** — `Read`, `Grep` e `Glob`, as mesmas usadas pelo Claude Code — em vez de ferramentas caseiras de busca por substring/leitura integral. Elas rodam com `cwd` fixado no checkout descartável já sincronizado (§3.2), sob uma guarda `canUseTool` que **nega qualquer caminho fora desse checkout**; essa guarda é a fronteira de segurança do repo (validada por teste). `Bash`, `Write`, `Edit`, `Web*` (`WebFetch`/`WebSearch`) e `Task` permanecem **desabilitadas** — a IA nunca executa comandos, escreve fora do fluxo gated abaixo, nem acessa a rede livremente. Os handles `repo_buscar`/`repo_ler_arquivo` do contrato `AIProvider` (`01-arquitetura.md` §4.1) passam a ser o **fallback do provider fake** (usado em testes/dev sem o SDK real); o `ClaudeAgentProvider` de produção não os invoca para exploração de código. `logs_consultar`, `bd_consultar` e a dupla de escrita gated seguem como **handles MCP do worker** — o worker detém a conexão/credencial real e os expõe ao provider já escopados.
 
-A conexão `bd_consultar` usa a credencial SOMENTE LEITURA do `SistemaAlvo` (ver `07-multitenancy-whitelabel.md`). Nenhuma ferramenta do provider permite escrita em produção nem acesso a git/rede: `repo_escrever_arquivo`/`repo_criar_arquivo` só escrevem numa working copy **descartável** (clone efêmero do cache, destruído ao fim do job — §6); não existe ferramenta de branch/commit/push/PR no provider. Essa etapa é do **worker**: depois que o provider devolve a tentativa, é o worker — o único que detém a credencial do repositório — quem valida, cria a branch, comita, faz push e (GitHub) abre o PR (menor privilégio; ver §6 e `09-seguranca-lgpd.md` §4).
+| Ferramenta                             | Descrição                                                        | Restrições                                                                                   |
+| -------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Read` _(nativa SDK)_                  | lê arquivo por caminho, leitura paginada como no Claude Code     | `cwd` = checkout descartável do job; `canUseTool` nega caminho fora dele                     |
+| `Grep` _(nativa SDK)_                  | busca por regex no código sincronizado, como no Claude Code      | idem acima                                                                                   |
+| `Glob` _(nativa SDK)_                  | lista arquivos por padrão de caminho, como no Claude Code        | idem acima                                                                                   |
+| `logs_consultar` _(MCP)_               | consulta fontes/caminhos de log configurados                     | janela temporal limitada; read-only                                                          |
+| `bd_consultar` _(MCP)_                 | executa SELECT na conexão read-only                              | somente `SELECT`; timeout curto; sem DDL/DML                                                 |
+| `chamado_publicar_mensagem`            | publica mensagem `publica` ou `interna`                          | visibilidade obrigatória                                                                     |
+| `chamado_classificar`                  | grava complexidade/natureza/prioridade sugeridas                 | valores dos enums canônicos                                                                  |
+| `repo_escrever_arquivo` _(MCP)_        | sobrescreve (ou cria) um arquivo na working copy **descartável** | só injetada com o gate de resolução aberto (§6); nunca toca o cache persistente nem produção |
+| `repo_criar_arquivo` _(MCP)_           | cria um arquivo novo na working copy descartável                 | idem acima; falha se o caminho já existir                                                    |
+| `repo_buscar` _(fallback, D-014)_      | grep/semantic search — só no provider fake                       | não usado pelo `ClaudeAgentProvider` real; ver nota acima                                    |
+| `repo_ler_arquivo` _(fallback, D-014)_ | lê arquivo por caminho — só no provider fake                     | não usado pelo `ClaudeAgentProvider` real; ver nota acima                                    |
+
+A conexão `bd_consultar` usa a credencial SOMENTE LEITURA do `SistemaAlvo` (ver `07-multitenancy-whitelabel.md`). Nenhuma ferramenta do provider permite escrita em produção nem acesso a git/rede: `Read`/`Grep`/`Glob` são só leitura dentro do checkout, sob a guarda `canUseTool`; `repo_escrever_arquivo`/`repo_criar_arquivo` só escrevem numa working copy **descartável** (clone efêmero do cache, destruído ao fim do job — §6); não existe ferramenta de branch/commit/push/PR no provider. Essa etapa é do **worker**: depois que o provider devolve a tentativa, é o worker — o único que detém a credencial do repositório — quem valida, cria a branch, comita, faz push e (GitHub) abre o PR (menor privilégio; ver §6 e `09-seguranca-lgpd.md` §4).
 
 ---
 
@@ -200,7 +206,7 @@ A saída do modelo deve incluir um objeto de avaliação; o worker aplica os lim
 }
 ```
 
-**Protocolo investigação-primeiro (D-013)**: antes de decidir `compreendido = false`, a IA É OBRIGADA a investigar — buscar os termos do chamado no código com `repo_buscar`/`repo_ler_arquivo` (§4.2) e ler os arquivos relevantes, além de consultar `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas. Perguntas ao cliente (§5.3) são reservadas a **fatos do lado do cliente** — passos executados, tela/funcionalidade usada, usuário/conta envolvida, quando o problema começou — nunca ao que o código, log ou BD já respondem: `compreendido = false` motivado só por não ter investigado é falha de protocolo, não lacuna legítima. O `diagnostico`, entendido ou não, cita as evidências investigadas (arquivo/trecho, log, consulta), coerente com o array `evidencias` abaixo.
+**Protocolo investigação-primeiro (D-013, mecânica atualizada por D-014)**: antes de decidir `compreendido = false`, a IA É OBRIGADA a investigar — buscar os termos do chamado no código com `Grep`/`Glob` (§4.2, ferramentas nativas do SDK) e ler os arquivos relevantes com `Read`, além de consultar `logs_consultar`/`bd_consultar` quando o `SistemaAlvo` tiver essas fontes configuradas. Perguntas ao cliente (§5.3) são reservadas a **fatos do lado do cliente** — passos executados, tela/funcionalidade usada, usuário/conta envolvida, quando o problema começou — nunca ao que o código, log ou BD já respondem: `compreendido = false` motivado só por não ter investigado é falha de protocolo, não lacuna legítima. O `diagnostico`, entendido ou não, cita as evidências investigadas (arquivo/trecho, log, consulta), coerente com o array `evidencias` abaixo.
 
 Considera-se **entendido** quando TODAS as condições valem:
 
