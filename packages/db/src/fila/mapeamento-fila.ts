@@ -19,6 +19,8 @@ export const NOME_JOB_MAPEAMENTO = 'mapeamento';
 export interface JobMapeamento {
   tenantId: string;
   sistemaAlvoId: string;
+  /** Contador interno do worker: reagendamentos por lock de tenant ocupado (D-016). */
+  esperasLock?: number;
 }
 
 /** Conexão Redis (defaults batem com o docker-compose). */

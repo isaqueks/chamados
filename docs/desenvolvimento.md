@@ -384,11 +384,11 @@ Todas as portas são configuráveis via `.env`.
      Windows escutar a mesma porta em IPv6 (`[::1]`), e `localhost` resolve
      primeiro para `::1`. Por isso os `*_HOST` do `.env` devem ser `127.0.0.1`,
      nunca `localhost`.
-  Diagnóstico rápido: `netstat -ano | findstr :5432` e veja qual PID detém a
-  porta (`tasklist /fi "pid eq <PID>"`).
-  ⚠️ Ao recriar o `.env` a partir do `.env.example`, preserve o `POSTGRES_PORT`
-  customizado — voltar para 5432 reintroduz o `ECONNRESET` se o portproxy ainda
-  existir.
+     Diagnóstico rápido: `netstat -ano | findstr :5432` e veja qual PID detém a
+     porta (`tasklist /fi "pid eq <PID>"`).
+     ⚠️ Ao recriar o `.env` a partir do `.env.example`, preserve o `POSTGRES_PORT`
+     customizado — voltar para 5432 reintroduz o `ECONNRESET` se o portproxy ainda
+     existir.
 
 - **Fim de linha (CRLF/LF)**
   O repositório usa `LF` (`.editorconfig` + `.gitattributes` implícito via

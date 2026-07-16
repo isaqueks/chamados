@@ -42,7 +42,7 @@ Não dispara triagem: resposta do cliente em chamado `em_atendimento`, `resolvid
 Regras de fila:
 
 - **Deduplicação**: no máximo um job de triagem ativo por `Chamado`. Nova mensagem enquanto um job roda marca o chamado como "sujo"; ao terminar, se sujo, reenfileira uma vez.
-- **Chave de concorrência**: por tenant, limite configurável de jobs simultâneos (evita um tenant esgotar o worker e o budget).
+- **Chave de concorrência**: por tenant, limite configurável de jobs simultâneos (evita um tenant esgotar o worker e o budget). Implementação (D-016): lock Redis por tenant com **TTL curto (90 s) renovado por heartbeat (30 s)** enquanto a execução vive — se o processo do worker morrer sem liberar (kill/crash; no Windows o Ctrl+C mata sem sinal), o lock órfão expira em ≤ TTL. **Lock ocupado não é falha**: o job é reagendado (30–45 s, com jitter) via `moveToDelayed` + `DelayedError`, sem consumir tentativa, até um teto de reagendamentos (20); só então a espera passa a contar como tentativa.
 - **Idempotência**: cada job carrega `chamado_id` + `ultima_mensagem_id`; se já existir `ExecucaoIA` concluída para esse par, descarta.
 
 > DECISÃO PENDENTE: aplicar debounce (ex.: 30–60 s) após a última mensagem do cliente antes de enfileirar, para agrupar mensagens em rajada em uma única análise.
@@ -362,18 +362,24 @@ Todos os limites abaixo são configuráveis por tenant e auditados em `ExecucaoI
 
 Os motivos de encerramento (timeout, budget excedido, erro de git/provider) **não** são valores de status: o status de `ExecucaoIA` usa sempre o enum canônico `status_execucao_ia` (`na_fila`, `executando`, `concluido`, `falhou`, `cancelado`, ver `02-modelo-de-dados.md`). O motivo detalhado vai nos campos `erro`/`resultado`.
 
-| Guardrail                       | Default                 | Comportamento ao exceder                                                         |
-| ------------------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| Timeout por execução            | 10 min                  | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador |
-| Budget de tokens/execução       | ex.: 200k in / 50k out  | corta a execução, `status = falhou` com `erro = "budget_excedido"`, escalona     |
-| Budget de custo/execução        | teto em USD por tenant  | idem acima                                                                       |
-| Budget diário/tenant            | teto configurável       | novos jobs pausados; alerta admin                                                |
-| Máx. tentativas do job          | 3 (backoff exponencial) | após esgotar → `status = falhou`, escalona                                       |
-| Rounds de perguntas ao cliente  | 3                       | escalona a operador em vez de reperguntar                                        |
-| Tentativas de resolução (PR)    | 1                       | falhou → nota interna + escalona                                                 |
-| Chamadas de ferramenta/execução | limite configurável     | corta e conclui com o que tem                                                    |
+| Guardrail                       | Default                 | Comportamento ao exceder                                                                |
+| ------------------------------- | ----------------------- | --------------------------------------------------------------------------------------- |
+| Timeout por execução            | 10 min                  | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador        |
+| Budget de tokens/execução       | ex.: 200k in / 50k out  | corta a execução, `status = falhou` com `erro = "budget_excedido"`, escalona            |
+| Budget de custo/execução        | teto em USD por tenant  | idem acima                                                                              |
+| Budget diário/tenant            | teto configurável       | novos jobs pausados; alerta admin                                                       |
+| Máx. tentativas do job          | 3 (backoff exponencial) | após esgotar → `status = falhou`, escalona (lock ocupado NÃO consome tentativa — D-016) |
+| Rounds de perguntas ao cliente  | 3                       | escalona a operador em vez de reperguntar                                               |
+| Tentativas de resolução (PR)    | 1                       | falhou → nota interna + escalona                                                        |
+| Chamadas de ferramenta/execução | limite configurável     | corta e conclui com o que tem                                                           |
 
 **Escalonamento a operador humano**: publica nota interna explicando o motivo (timeout/budget/baixa confiança/falha de git/erro do provider), mantém o chamado em `em_triagem` ou move para `em_atendimento` conforme o caso, e gera `EventoChamado`. O chamado nunca fica "preso" sem responsável: se a IA não resolve, o humano assume.
+
+A promessa "nunca preso" é garantida em **três camadas** (D-016):
+
+1. **Dentro do pipeline** (falha pós-Tx1: git, provider, aplicação): o próprio processador registra `ExecucaoIA.falhou` + `ia_falhou` e escalona.
+2. **No nível da fila** (erro que escapou do processador — lock além do teto, banco fora na Tx1): quando o job esgota as tentativas do BullMQ, o handler de falha final cria uma `ExecucaoIA` já `falhou` (compensação, auditável) e escalona.
+3. **Varredura de manutenção** (rede de segurança final, cobre worker morto no meio e job perdido): a cada ciclo, `ExecucaoIA` presa em `na_fila`/`executando` além do limiar (default 30 min) vira `falhou` (`erro = "execucao_orfa"`) com escalonamento do chamado; e chamado parado em `em_triagem` sem execução ativa **e sem job pendente na fila** além do limiar é escalado (`erro = "triagem_nao_executada"`).
 
 **Tratamento de falhas**:
 

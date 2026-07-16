@@ -176,13 +176,20 @@ export async function montarInput(
   });
   if (!chamado) return null;
 
-  const [timeline, sistemaAlvo, configFerramentas, tenant, solicitanteUsuario] = await Promise.all([
-    timelineCompleta(em, chamadoId),
-    metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id),
-    resolverConfigFerramentas(em, chamado.tenant_id, chamado.sistema_alvo_id),
-    carregarTenant(em, chamado.tenant_id),
-    em.findOne(UsuarioSchema, { where: { id: chamado.cliente_id } }),
-  ]);
+  // SEQUENCIAL de propósito: o `em` transacional usa UM único cliente pg —
+  // `Promise.all` aqui dispararia queries concorrentes no mesmo cliente
+  // (paralelismo ilusório: o driver serializa, warna no pg@8 e LANÇA no pg@9).
+  const timeline = await timelineCompleta(em, chamadoId);
+  const sistemaAlvo = await metadadosSistemaAlvo(em, chamado.sistema_alvo_id, chamado.categoria_id);
+  const configFerramentas = await resolverConfigFerramentas(
+    em,
+    chamado.tenant_id,
+    chamado.sistema_alvo_id,
+  );
+  const tenant = await carregarTenant(em, chamado.tenant_id);
+  const solicitanteUsuario = await em.findOne(UsuarioSchema, {
+    where: { id: chamado.cliente_id },
+  });
 
   // D-014: a DESCRIÇÃO do chamado (o pedido do cliente) — projeção de texto puro
   // do HTML sanitizado — passa a integrar o contexto (antes omitida: o bug do M6).

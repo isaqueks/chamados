@@ -7,7 +7,13 @@ import { resolverConfigFerramentas } from '../triagem/ferramentas';
 import { sincronizarRepo } from '../triagem/ferramentas/repo';
 import { executarMapeamento, type MapaLimites } from '../mapeamento/mapeamento';
 import { motivoErro } from '../ia/erros';
-import { adquirirLockComEspera, liberarLockTenant, type OpcoesEspera } from '../lock-tenant';
+import {
+  adquirirLockComEspera,
+  liberarLockTenant,
+  manterLockVivo,
+  type OpcoesEspera,
+} from '../lock-tenant';
+import { ERRO_LOCK_TENANT, reagendarPorLockOcupado } from './espera-lock';
 
 /**
  * Consumidor da fila `mapeamento-ia` (D-013 — "Mapear agora"). Sincroniza o repo do
@@ -38,7 +44,16 @@ export async function processarMapeamentoJob(
   const { ds, redis, provider, limites, lock, log } = deps;
 
   const token = await adquirirLockComEspera(redis, job.tenantId, lock);
-  if (!token) throw new Error('lock_tenant_indisponivel');
+  if (!token) throw new Error(ERRO_LOCK_TENANT); // o registrador reagenda (D-016)
+  // Heartbeat (D-016): mesmo contrato da triagem — lock órfão morre em ≤ ttlMs.
+  const pararRenovacao = manterLockVivo(redis, job.tenantId, token, {
+    ttlMs: lock.ttlMs,
+    renovacaoMs: lock.renovacaoMs,
+    onPerda: () =>
+      log('lock de tenant PERDIDO durante o mapeamento (renovação falhou)', {
+        sistemaAlvoId: job.sistemaAlvoId,
+      }),
+  });
 
   try {
     const cfg = await runInTenantContext(ds, job.tenantId, (em) =>
@@ -66,6 +81,7 @@ export async function processarMapeamentoJob(
     log('mapeamento (job) falhou', { sistemaAlvoId: job.sistemaAlvoId, erro });
     return { status: 'falhou', erro };
   } finally {
+    pararRenovacao();
     await liberarLockTenant(redis, job.tenantId, token).catch(() => {});
   }
 }
@@ -78,13 +94,29 @@ export interface DepsRegistrarMapeamento extends DepsMapeamentoJob {
 export function registrarMapeamentoIA(deps: DepsRegistrarMapeamento): Worker<JobMapeamento> {
   const worker = new Worker<JobMapeamento>(
     NOME_FILA_MAPEAMENTO,
-    async (job: Job<JobMapeamento>) => processarMapeamentoJob(job.data, deps),
+    async (job: Job<JobMapeamento>, token?: string) => {
+      try {
+        return await processarMapeamentoJob(job.data, deps);
+      } catch (err) {
+        if (err instanceof Error && err.message === ERRO_LOCK_TENANT) {
+          // Lança DelayedError quando reagendou (não consome tentativa — D-016).
+          await reagendarPorLockOcupado(job, token, deps.log);
+        }
+        throw err;
+      }
+    },
     { connection: deps.connection, concurrency: deps.concorrencia },
   );
   worker.on('ready', () => deps.log('fila mapeamento-ia pronta'));
-  worker.on('failed', (job, err) =>
-    deps.log('job mapeamento falhou (retry via BullMQ)', { jobId: job?.id, erro: err.message }),
-  );
+  worker.on('failed', (job, err) => {
+    const final = job != null && job.attemptsMade >= (job.opts.attempts ?? 1);
+    // Sem compensação em chamado (mapeamento pertence ao SISTEMA): a triagem
+    // que o disparou segue sem o mapa (best-effort) — basta o log distinto.
+    deps.log(
+      final ? 'job mapeamento falhou DEFINITIVAMENTE' : 'job mapeamento falhou (retry via BullMQ)',
+      { jobId: job?.id, tentativas: job?.attemptsMade, erro: err.message },
+    );
+  });
   worker.on('error', (err) => deps.log('erro na fila mapeamento-ia', { erro: err.message }));
   return worker;
 }

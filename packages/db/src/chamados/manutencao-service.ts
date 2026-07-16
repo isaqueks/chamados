@@ -1,7 +1,8 @@
 import type { DataSource, EntityManager } from 'typeorm';
 import { LessThanOrEqual, IsNull } from 'typeorm';
-import { StatusChamado } from '@chamados/shared';
+import { StatusChamado, StatusExecucaoIA } from '@chamados/shared';
 import { ChamadoSchema, type Chamado } from '../entities/chamado';
+import { ExecucaoIASchema } from '../entities/execucao-ia';
 import { atorSistema, transicionarStatus } from './chamado-service';
 import type { HooksChamado } from './auditoria';
 
@@ -68,4 +69,70 @@ export async function fecharChamadosResolvidosVencidos(
     if (r.ok) fechados.push(c.id);
   }
   return { fechados };
+}
+
+// --- Redes de segurança contra estado preso (D-016, specs/05 §8) -------------
+
+export interface ExecucaoOrfa {
+  id: string;
+  chamado_id: string | null;
+}
+
+/**
+ * Marca como `falhou` (erro `execucao_orfa`) as `ExecucaoIA` presas em
+ * `na_fila`/`executando` há mais de `limiarMs` — sobras de um processo de worker
+ * MORTO no meio da execução (kill/crash: nenhum handler de fila roda; o
+ * incidente de 2026-07-16 deixou uma `executando` eterna). Retorna as execuções
+ * marcadas para o orquestrador (worker) escalonar os chamados afetados.
+ *
+ * O limiar deve exceder com folga a execução legítima mais longa (mapa e
+ * triagem têm timeout de 10 min cada + git sync/PR) — default do worker: 30 min.
+ */
+export async function marcarExecucoesOrfas(
+  em: EntityManager,
+  limiarMs: number,
+  agora: Date = new Date(),
+): Promise<ExecucaoOrfa[]> {
+  const corte = new Date(agora.getTime() - limiarMs);
+  const res = await em
+    .createQueryBuilder()
+    .update(ExecucaoIASchema)
+    .set({ status: StatusExecucaoIA.falhou, erro: 'execucao_orfa', finalizado_em: () => 'now()' })
+    .where('status IN (:...presos)', {
+      presos: [StatusExecucaoIA.na_fila, StatusExecucaoIA.executando],
+    })
+    // `iniciado_em` cobre `executando`; `created_at` cobre `na_fila` (nunca iniciou).
+    .andWhere('COALESCE(iniciado_em, created_at) < :corte', { corte })
+    .returning(['id', 'chamado_id'])
+    .execute();
+  return res.raw as ExecucaoOrfa[];
+}
+
+/**
+ * Chamados presos em `em_triagem` sem NENHUMA execução de IA ativa (`na_fila`/
+ * `executando`) e sem atualização há mais de `limiarMs` — tipicamente um job de
+ * triagem perdido (Redis fora no flush pós-commit da criação) ou uma
+ * compensação de falha que também falhou. O orquestrador (worker) exclui os que
+ * ainda têm job pendente na fila e escala o restante para humano ("o chamado
+ * nunca fica preso sem responsável" — specs/05 §8).
+ */
+export async function listarChamadosEncalhadosEmTriagem(
+  em: EntityManager,
+  limiarMs: number,
+  agora: Date = new Date(),
+): Promise<string[]> {
+  const corte = new Date(agora.getTime() - limiarMs);
+  const linhas: Array<{ id: string }> = await em
+    .createQueryBuilder(ChamadoSchema, 'c')
+    .select('c.id', 'id')
+    .where('c.status = :st', { st: StatusChamado.em_triagem })
+    .andWhere('c.updated_at < :corte', { corte })
+    .andWhere('c.deleted_at IS NULL')
+    .andWhere(
+      `NOT EXISTS (SELECT 1 FROM execucao_ia e
+        WHERE e.chamado_id = c.id AND e.status IN (:...ativos))`,
+      { ativos: [StatusExecucaoIA.na_fila, StatusExecucaoIA.executando] },
+    )
+    .getRawMany();
+  return linhas.map((l) => l.id);
 }

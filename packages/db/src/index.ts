@@ -300,5 +300,8 @@ export {
 export {
   listarTenantsAtivos,
   fecharChamadosResolvidosVencidos,
+  marcarExecucoesOrfas,
+  listarChamadosEncalhadosEmTriagem,
   type ResultadoAutoFechamento,
+  type ExecucaoOrfa,
 } from './chamados/manutencao-service';

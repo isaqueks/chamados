@@ -241,7 +241,14 @@ async function main(): Promise<void> {
     // Lock ocupado por outra instância → não varre.
     const tokenAlheio = randomUUID();
     await redis.set(CHAVE_LOCK_MANUTENCAO, tokenAlheio, 'PX', 30_000, 'NX');
-    const resTravado = await executarManutencao({ ds, redis, lockTtlMs: 30_000, log: () => {} });
+    const resTravado = await executarManutencao({
+      ds,
+      redis,
+      lockTtlMs: 30_000,
+      execucaoOrfaMs: 3_600_000,
+      triagemEncalhadaMs: 3_600_000,
+      log: () => {},
+    });
     ok(resTravado.executou === false, 'lock ocupado: instância concorrente NÃO varre');
     const aindaResolvido = await runInTenantContext(ds, tenantA, (em) =>
       em.findOne(ChamadoSchema, { where: { id: chVencido2.id } }),
@@ -253,7 +260,14 @@ async function main(): Promise<void> {
 
     // Libera o lock e varre de verdade.
     await redis.del(CHAVE_LOCK_MANUTENCAO);
-    const resVarreu = await executarManutencao({ ds, redis, lockTtlMs: 30_000, log: () => {} });
+    const resVarreu = await executarManutencao({
+      ds,
+      redis,
+      lockTtlMs: 30_000,
+      execucaoOrfaMs: 3_600_000,
+      triagemEncalhadaMs: 3_600_000,
+      log: () => {},
+    });
     ok(resVarreu.executou === true, 'lock livre: a varredura executa');
     ok(resVarreu.fechados >= 1, 'a varredura fechou ao menos o chamado vencido');
     const fechado2 = await runInTenantContext(ds, tenantA, (em) =>

@@ -1,4 +1,5 @@
 import { Queue, Worker, type Job } from 'bullmq';
+import { NOME_FILA_TRIAGEM } from '@chamados/db';
 import { executarManutencao, type DepsManutencao } from '../manutencao/processador';
 
 /**
@@ -34,10 +35,25 @@ export async function registrarManutencao(deps: DepsRegistrarManutencao): Promis
   );
   await queue.close();
 
-  const worker = new Worker(NOME_FILA_MANUTENCAO, async (_job: Job) => executarManutencao(deps), {
-    connection: deps.connection,
-    concurrency: 1,
-  });
+  // Handle read-only da fila de triagem (D-016): a varredura de "encalhados"
+  // precisa saber quais chamados AINDA têm job pendente/ativo (debounce,
+  // reagendamento por lock) para não escalá-los por engano.
+  const filaTriagem = new Queue(NOME_FILA_TRIAGEM, { connection: deps.connection });
+  const chamadosComTriagemPendente = async (): Promise<Set<string>> => {
+    const jobs = await filaTriagem.getJobs(['delayed', 'wait', 'paused', 'prioritized', 'active']);
+    // jobId = `${chamadoId}__...` (contrato de `jobIdTriagem`/`prefixoJobChamado`
+    // em @chamados/db) — extrai o chamadoId.
+    return new Set(
+      jobs.map((j) => String(j.id ?? '').split('__')[0] ?? '').filter((id) => id.length > 0),
+    );
+  };
+
+  const worker = new Worker(
+    NOME_FILA_MANUTENCAO,
+    async (_job: Job) => executarManutencao({ ...deps, chamadosComTriagemPendente }),
+    { connection: deps.connection, concurrency: 1 },
+  );
+  worker.on('closed', () => void filaTriagem.close().catch(() => {}));
 
   worker.on('ready', () => deps.log('fila manutencao pronta', { intervaloMs: deps.intervaloMs }));
   worker.on('completed', (job, ret) =>
@@ -55,7 +71,12 @@ export async function registrarManutencao(deps: DepsRegistrarManutencao): Promis
 }
 
 /** Lê a config da fila `manutencao` do ambiente (defaults de dev). */
-export function manutencaoConfigEnv(): { intervaloMs: number; lockTtlMs: number } {
+export function manutencaoConfigEnv(): {
+  intervaloMs: number;
+  lockTtlMs: number;
+  execucaoOrfaMs: number;
+  triagemEncalhadaMs: number;
+} {
   const num = (nome: string, padrao: number): number => {
     const v = Number(process.env[nome]);
     return Number.isFinite(v) && v > 0 ? v : padrao;
@@ -65,5 +86,9 @@ export function manutencaoConfigEnv(): { intervaloMs: number; lockTtlMs: number 
     intervaloMs: num('MANUTENCAO_INTERVALO_MS', 300_000),
     // TTL do lock global: menor que o intervalo, maior que uma varredura típica.
     lockTtlMs: num('MANUTENCAO_LOCK_TTL_MS', 240_000),
+    // D-016: limiares das redes de segurança. 30 min > pior execução legítima
+    // (mapa 10 min + triagem 10 min + git/PR) e > janela de reagendamento por lock.
+    execucaoOrfaMs: num('MANUTENCAO_EXECUCAO_ORFA_MS', 1_800_000),
+    triagemEncalhadaMs: num('MANUTENCAO_TRIAGEM_ENCALHADA_MS', 1_800_000),
   };
 }

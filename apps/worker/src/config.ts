@@ -61,9 +61,16 @@ export const iaConfig = {
 export const triagemConfig = {
   concorrencia: num('TRIAGEM_CONCURRENCY', 2),
   lock: {
-    /** TTL do lock por tenant (renovado a cada execução; > timeout do provider). */
-    ttlMs: num('TRIAGEM_LOCK_TTL_MS', 900_000),
-    /** Espera máxima por lock antes de devolver o job à fila (retry). */
+    /**
+     * TTL CURTO renovado por heartbeat durante a execução (D-016): se o worker
+     * morrer sem liberar (kill/crash — no Windows o Ctrl+C mata sem sinal), o
+     * lock órfão expira em ≤ este TTL. A renovação contínua cobre execuções
+     * legítimas longas (mapa + triagem podem passar de 20 min).
+     */
+    ttlMs: num('TRIAGEM_LOCK_TTL_MS', 90_000),
+    /** Intervalo do heartbeat de renovação (≈ TTL/3 — duas renovações de folga). */
+    renovacaoMs: num('TRIAGEM_LOCK_RENOVACAO_MS', 30_000),
+    /** Espera máxima por lock dentro do processador antes de devolver o job. */
     esperaMaxMs: num('TRIAGEM_LOCK_ESPERA_MS', 30_000),
     intervaloMs: num('TRIAGEM_LOCK_INTERVALO_MS', 500),
   },

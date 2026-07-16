@@ -454,7 +454,9 @@ async function aplicarResolucao(
  */
 export async function escalarParaHumano(
   em: EntityManager,
-  args: { tenantId: string; chamadoId: string; execucaoId: string; erro: string },
+  // `execucaoId` nulo: escalonamento SEM execução de IA associada (ex.: triagem
+  // que nunca rodou, detectada pela varredura de manutenção — D-016).
+  args: { tenantId: string; chamadoId: string; execucaoId: string | null; erro: string },
   deps: DepsAplicador,
 ): Promise<void> {
   const { tenantId, chamadoId, execucaoId, erro } = args;

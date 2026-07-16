@@ -64,11 +64,11 @@ export async function resolverConfigFerramentas(
     return { repo: null, logs: { tipo: null, config: {}, credencial: null }, bd: emptyBd() };
   }
 
-  const [gitCred, logsCred, bdCred] = await Promise.all([
-    s.git_credencial_ref ? store.ler(em, s.git_credencial_ref) : Promise.resolve(null),
-    s.logs_credencial_ref ? store.ler(em, s.logs_credencial_ref) : Promise.resolve(null),
-    s.bd_credencial_ref ? store.ler(em, s.bd_credencial_ref) : Promise.resolve(null),
-  ]);
+  // SEQUENCIAL de propósito: mesmo cliente pg do `em` transacional (ver
+  // contexto.ts) — `Promise.all` aqui quebraria no pg@9.
+  const gitCred = s.git_credencial_ref ? await store.ler(em, s.git_credencial_ref) : null;
+  const logsCred = s.logs_credencial_ref ? await store.ler(em, s.logs_credencial_ref) : null;
+  const bdCred = s.bd_credencial_ref ? await store.ler(em, s.bd_credencial_ref) : null;
 
   return {
     repo: s.git_repo_url

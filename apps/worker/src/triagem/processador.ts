@@ -29,7 +29,12 @@ import { deveTentarResolver, executarResolucao } from './resolucao';
 import { ferramentasConfig } from './ferramentas/config';
 import type { FetchImpl } from './github-pr';
 import { motivoErro } from '../ia/erros';
-import { adquirirLockComEspera, liberarLockTenant, type OpcoesEspera } from '../lock-tenant';
+import {
+  adquirirLockComEspera,
+  liberarLockTenant,
+  manterLockVivo,
+  type OpcoesEspera,
+} from '../lock-tenant';
 import { garantirConhecimento, type MapaLimites } from '../mapeamento/mapeamento';
 
 /**
@@ -88,9 +93,20 @@ export async function processarTriagem(
 
   const token = await adquirirLockComEspera(redis, job.tenantId, deps.lock);
   if (!token) {
-    // Devolve o job à fila (BullMQ faz retry com backoff) — não fura o limite.
+    // O registrador da fila intercepta este erro e REAGENDA o job sem consumir
+    // tentativa (moveToDelayed + DelayedError — D-016). Não fura o limite.
     throw new Error('lock_tenant_indisponivel');
   }
+  // Heartbeat (D-016): renova o TTL curto do lock enquanto a execução vive; se
+  // o processo morrer (kill/crash), o lock órfão expira em ≤ ttlMs.
+  const pararRenovacao = manterLockVivo(redis, job.tenantId, token, {
+    ttlMs: deps.lock.ttlMs,
+    renovacaoMs: deps.lock.renovacaoMs,
+    onPerda: () =>
+      log('lock de tenant PERDIDO durante a execução (renovação falhou)', {
+        chamadoId: job.chamadoId,
+      }),
+  });
 
   let ctx: PreparacaoContexto | null = null;
   try {
@@ -308,6 +324,7 @@ export async function processarTriagem(
     log('triagem concluída', { chamadoId: job.chamadoId, execucaoId: prep.execucaoId });
     return { status: 'concluido', execucaoId: prep.execucaoId };
   } finally {
+    pararRenovacao();
     if (ctx) await ctx.encerrar().catch(() => {});
     await liberarLockTenant(redis, job.tenantId, token).catch(() => {});
   }

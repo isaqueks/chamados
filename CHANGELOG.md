@@ -2,6 +2,18 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — D-016: robustez do pipeline de triagem (lock com heartbeat + espera sem consumir tentativas + redes de segurança)
+
+- **Incidente real (causa-raiz confirmada por investigação):** worker morto no meio de uma triagem (Windows mata sem sinal) deixou o lock por tenant órfão por 15 min; os retries do job (3 × backoff 5s ≈ 105s) esgotaram antes do TTL → job em `failed` permanente e chamado preso em `em_triagem` sem registro algum. Bugs correlatos: TTL sem renovação (o comentário da config prometia "renovado a cada execução" — não existia), TTL menor que o pior caso legítimo (mapa+triagem > 15 min), `ExecucaoIA` eterna em `executando`, e `Promise.all` sobre o mesmo cliente pg transacional (erro no pg@9).
+- **Lock com heartbeat** (`lock-tenant.ts`): TTL 90s renovado a cada 30s (Lua compare-and-pexpire); worker morto → lock órfão expira em ≤ 90s; perda confirmada loga e para o heartbeat (`manterLockVivo`/`renovarLockTenant`).
+- **Lock ocupado não consome tentativa** (`filas/espera-lock.ts`): reagendamento via `moveToDelayed` + `DelayedError` (30–45s com jitter), teto de 20 reagendamentos (guard-rail); aplicado às filas `triagem-ia` e `mapeamento-ia`.
+- **Compensação de falha final** (`filas/triagem-ia.ts`): esgotadas as tentativas com erro que escapou do processador, o handler `failed` cria `ExecucaoIA.falhou` (auditável) e escala a humano — cumpre specs/05 §8 também no nível da fila.
+- **Varredura de manutenção (redes de segurança)**: `ExecucaoIA` órfã (`na_fila`/`executando` > 30 min) → `falhou` (`execucao_orfa`) + escalonamento; chamado encalhado em `em_triagem` sem execução ativa nem job pendente na fila (> 30 min) → escalonamento (`triagem_nao_executada`). `escalarParaHumano` aceita `execucaoId` nulo.
+- **pg@9-proof**: queries do contexto da triagem e das credenciais agora sequenciais (o `em` transacional usa um único cliente pg — o paralelismo era ilusório e virava DeprecationWarning/erro futuro).
+- **Boot do worker**: aviso quando outra instância ativa é detectada (presença com heartbeat no Redis — dois `npm run dev` foi o gatilho do incidente); `uncaughtException`/`unhandledRejection` fecham os workers como defesa secundária.
+- Novas envs: `TRIAGEM_LOCK_RENOVACAO_MS` (30000), `MANUTENCAO_EXECUCAO_ORFA_MS`/`MANUTENCAO_TRIAGEM_ENCALHADA_MS` (1800000); `TRIAGEM_LOCK_TTL_MS` default 900000 → 90000. `.env.example` também corrige `NOTIFICACOES_SMTP_HOST` para `127.0.0.1`.
+- Verificado: typecheck, lint, 193/193 testes (11 novos: heartbeat e reagendamento), smoke:pipeline e smoke:manutencao. Spec 05 (§2, §8) e ADR D-016.
+
 ## 2026-07-16 — Infra: causa-raiz do blackhole host→Postgres (portproxy órfão + wslrelay) e workaround sem admin
 
 - **Sintoma:** conexões do host aos containers (Postgres, depois tudo) caíam com `ECONNRESET` — TCP conectava, mas era resetado antes do handshake; log do Postgres vazio; reiniciar Docker Desktop não resolvia.

@@ -25,6 +25,8 @@ export interface JobTriagem {
   /** `null` na abertura do chamado (ainda não há mensagem). */
   ultimaMensagemId: string | null;
   gatilho: GatilhoIA;
+  /** Contador interno do worker: reagendamentos por lock de tenant ocupado (D-016). */
+  esperasLock?: number;
 }
 
 /** Nome do job dentro da fila (BullMQ `name`). */
