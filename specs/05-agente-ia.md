@@ -182,7 +182,7 @@ Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem ant
 | `Grep` _(nativa SDK)_                  | busca por regex no código sincronizado, como no Claude Code      | idem acima                                                                                   |
 | `Glob` _(nativa SDK)_                  | lista arquivos por padrão de caminho, como no Claude Code        | idem acima                                                                                   |
 | `logs_consultar` _(MCP)_               | consulta fontes/caminhos de log configurados                     | janela temporal limitada; read-only                                                          |
-| `bd_consultar` _(MCP)_                 | executa SELECT na conexão read-only                              | somente `SELECT`; timeout curto; sem DDL/DML                                                 |
+| `bd_consultar` _(MCP)_                 | executa SELECT na conexão read-only (postgres e mysql/mariadb)   | somente `SELECT`; timeout curto; sem DDL/DML; sessão READ ONLY no servidor; LIMIT forçado    |
 | `chamado_publicar_mensagem`            | publica mensagem `publica` ou `interna`                          | visibilidade obrigatória                                                                     |
 | `chamado_classificar`                  | grava complexidade/natureza/prioridade sugeridas                 | valores dos enums canônicos                                                                  |
 | `repo_escrever_arquivo` _(MCP)_        | sobrescreve (ou cria) um arquivo na working copy **descartável** | só injetada com o gate de resolução aberto (§6); nunca toca o cache persistente nem produção |

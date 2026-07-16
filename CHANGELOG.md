@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — bd_consultar: suporte a MySQL/MariaDB (tarefa #14)
+
+- **Bug real:** o `bd_consultar` sempre usava o driver `pg`, independentemente do `bd_tipo` do sistema-alvo — contra um MySQL, o handshake falhava com `received invalid response: 5b` (visto na triagem real do sistema Solving, MySQL 3306).
+- **Correção:** executor por SGBD atrás da mesma fachada — `bd_tipo` `mysql`/`mariadb` usa **mysql2** (pool preguiçoso, `connectionLimit: 2`); demais continuam no `pg`. Semântica idêntica nos dois: validação léxica (só `SELECT`/`WITH`, sem `;`), **sessão `READ ONLY` no servidor**, timeout de statement (`MAX_EXECUTION_TIME` no MySQL, fallback `max_statement_time` no MariaDB, best-effort) e **LIMIT forçado por envelope**. Credencial aceita `user:senha`, só senha ou URI (`mysql://`).
+- **Validado ao vivo** contra o MySQL real do sistema-alvo do usuário (pelo caminho de produção: cofre → `resolverConfigFerramentas` → `criarFerramentaBd`): `SELECT 1` ok, `information_schema` listou tabelas reais, `DELETE` rejeitado antes de conectar. 193/193 testes; typecheck/lint.
+- Spec 05 §4.2 atualizada (SGBDs suportados e garantias); dependência nova `mysql2` no worker.
+
 ## 2026-07-16 — D-016: robustez do pipeline de triagem (lock com heartbeat + espera sem consumir tentativas + redes de segurança)
 
 - **Incidente real (causa-raiz confirmada por investigação):** worker morto no meio de uma triagem (Windows mata sem sinal) deixou o lock por tenant órfão por 15 min; os retries do job (3 × backoff 5s ≈ 105s) esgotaram antes do TTL → job em `failed` permanente e chamado preso em `em_triagem` sem registro algum. Bugs correlatos: TTL sem renovação (o comentário da config prometia "renovado a cada execução" — não existia), TTL menor que o pior caso legítimo (mapa+triagem > 15 min), `ExecucaoIA` eterna em `executando`, e `Promise.all` sobre o mesmo cliente pg transacional (erro no pg@9).

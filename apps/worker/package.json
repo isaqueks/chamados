@@ -20,6 +20,7 @@
     "@chamados/shared": "*",
     "bullmq": "^5.34.5",
     "ioredis": "^5.4.2",
+    "mysql2": "^3.23.0",
     "nodemailer": "^9.0.3",
     "pg": "^8.22.0",
     "simple-git": "^3.36.0",
