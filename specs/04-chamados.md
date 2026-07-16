@@ -96,13 +96,13 @@ Princípio de produto (RNF-01/RNF-02): o oposto do osTicket. O formulário de ab
 
 Campos do formulário do cliente:
 
-| Campo                        | Obrigatório | Regra                                                                                                                                                                  |
-| ---------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sistema-alvo (`SistemaAlvo`) | Condicional | Exibido e obrigatório **apenas** se o tenant tiver mais de um sistema-alvo. Com um único, é preenchido automaticamente. Alternativamente, a categoria geral do tenant. |
+| Campo                        | Obrigatório | Regra                                                                                                                                                                                                                                                            |
+| ---------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sistema-alvo (`SistemaAlvo`) | Condicional | Exibido e obrigatório **apenas** se o tenant tiver mais de um sistema-alvo. Com um único, é preenchido automaticamente. Alternativamente, a categoria geral do tenant.                                                                                           |
 | Natureza                     | Não (D-017) | `problema`, `alteracao` ou `duvida`. No portal do cliente fica em "Opções avançadas" com default "Automático": sem escolha, abre como `problema` e a IA classifica na triagem (`naturezaAjustada`). No painel (operador em nome de cliente), continua explícita. |
-| Título                       | Sim         | Texto curto (ver limites na seção 4).                                                                                                                                  |
-| Descrição                    | Sim         | Rich text com imagens/anexos inline (seção 4).                                                                                                                         |
-| Prioridade                   | Não         | Se omitida, entra como `media` (default) e pode ser ajustada pela IA/operador.                                                                                         |
+| Título                       | Sim         | Texto curto (ver limites na seção 4).                                                                                                                                                                                                                            |
+| Descrição                    | Sim         | Rich text com imagens/anexos inline (seção 4).                                                                                                                                                                                                                   |
+| Prioridade                   | Não         | Se omitida, entra como `media` (default) e pode ser ajustada pela IA/operador.                                                                                                                                                                                   |
 
 Ao criar:
 
