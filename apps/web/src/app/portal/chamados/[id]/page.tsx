@@ -35,6 +35,7 @@ import { acaoTransicionarCliente } from '../actions';
 import { RespostaForm } from './resposta-form';
 import { DialogoCancelar } from './dialogo-cancelar';
 import { ToastAoMontar } from './toast-ao-montar';
+import { AtualizacaoPeriodica } from '@/components/chamado/atualizacao-periodica';
 
 /** Eventos já representados como mensagem na timeline (não viram linha própria). */
 const EVENTOS_OCULTOS = new Set<TipoEvento>(['mensagem_publicada', 'nota_interna_publicada']);
@@ -127,6 +128,8 @@ export default async function ChamadoDetalhePage({
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Novas respostas/eventos aparecem sozinhos (short-polling de 1 min). */}
+      <AtualizacaoPeriodica />
       {aberto === '1' && (
         <ToastAoMontar
           texto="Chamado aberto! Nossa equipe já vai analisar."
@@ -142,10 +145,10 @@ export default async function ChamadoDetalhePage({
         Meus chamados
       </Link>
 
-      {/* Cabeçalho */}
+      {/* Cabeçalho — número integrado à linha do título (nunca órfão). */}
       <div className="flex flex-col gap-2.5">
-        <span className="text-xs font-medium text-muted-foreground">#{String(chamado.numero)}</span>
         <h1 className="font-heading text-xl font-semibold tracking-tight sm:text-2xl">
+          <span className="mr-2 font-normal text-muted-foreground">#{String(chamado.numero)}</span>
           {chamado.titulo}
         </h1>
         <div className="flex flex-wrap items-center gap-2">

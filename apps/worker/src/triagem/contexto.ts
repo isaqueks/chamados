@@ -290,6 +290,9 @@ export async function montarInput(
         timeline,
         sistemaAlvo,
         imagens: [],
+        // D-020: instruções do admin do tenant — entram no SYSTEM PROMPT da
+        // triagem (seção demarcada, subordinada às regras da plataforma).
+        instrucoesTenant: tenant?.ia_instrucoes ?? null,
       },
       ferramentas: reais.ferramentas,
       limites: deps.limites,

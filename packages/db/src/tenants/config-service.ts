@@ -1,5 +1,6 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
+import { LIMITE_IA_INSTRUCOES_CHARS } from '@chamados/shared';
 import { TenantSchema, type Tenant, type ConfigBranding } from '../entities/tenant';
 
 /**
@@ -64,6 +65,21 @@ export async function atualizarConfigGeral(
       ia_resolucao_automatica_habilitada: config.ia_resolucao_automatica_habilitada,
     },
   );
+}
+
+/**
+ * Define/limpa as instruções do admin para a IA (D-020, specs/05 §4.1). Impõe o
+ * cap de caracteres AQUI (fronteira de gravação): texto além do limite é
+ * truncado; string vazia/só espaços limpa o campo (`null`).
+ */
+export async function atualizarInstrucoesIa(
+  em: EntityManager,
+  tenantId: string,
+  instrucoes: string | null,
+): Promise<void> {
+  const texto = instrucoes?.trim() ?? '';
+  const valor = texto.length > 0 ? texto.slice(0, LIMITE_IA_INSTRUCOES_CHARS) : null;
+  await em.update(TenantSchema, { id: tenantId }, { ia_instrucoes: valor });
 }
 
 export type ResultadoDominio = { ok: true } | { ok: false; motivo: 'em_uso' };

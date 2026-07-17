@@ -9,6 +9,7 @@ import {
   atualizarBranding,
   atualizarNomeExibicao,
   atualizarConfigGeral,
+  atualizarInstrucoesIa,
   definirDominioProprio,
   buscarCanal,
   salvarWebhook,
@@ -26,6 +27,7 @@ import {
   normalizarHex,
   dominioProprioValido,
   normalizarDominio,
+  LIMITE_IA_INSTRUCOES_CHARS,
 } from '@chamados/shared';
 import { enviarObjeto, removerObjeto, chaveBranding } from '@chamados/storage';
 import { exigirUsuario } from '@/lib/sessao';
@@ -208,6 +210,36 @@ export async function acaoSalvarGeral(
   );
   revalidatePath('/app/config');
   return { sucesso: 'Configurações gerais salvas.' };
+}
+
+/** Define/limpa as instruções do admin para a IA (D-020, specs/05 §4.1). */
+export async function acaoSalvarInstrucoesIa(
+  _prev: EstadoConfig,
+  formData: FormData,
+): Promise<EstadoConfig> {
+  const ctx = await exigirUsuario();
+  if (!autorizar(ctx.usuario, 'config_tenant', 'editar')) {
+    return { erro: 'Sem permissão.' };
+  }
+
+  const bruto = String(formData.get('ia_instrucoes') ?? '').trim();
+  if (bruto.length > LIMITE_IA_INSTRUCOES_CHARS) {
+    return {
+      erro: `As instruções excedem o limite de ${LIMITE_IA_INSTRUCOES_CHARS.toLocaleString('pt-BR')} caracteres.`,
+    };
+  }
+
+  const ds = await obterAppDataSource();
+  await runInTenantContext(ds, ctx.tenant.id, (em) =>
+    atualizarInstrucoesIa(em, ctx.tenant.id, bruto.length > 0 ? bruto : null),
+  );
+  revalidatePath('/app/config');
+  return {
+    sucesso:
+      bruto.length > 0
+        ? 'Instruções da IA salvas. Valem para as próximas análises.'
+        : 'Instruções da IA removidas.',
+  };
 }
 
 /** Define/limpa o domínio próprio do tenant (specs/07 §3.4, E-08). */

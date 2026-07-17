@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils';
 import { UserMenu } from './user-menu';
 
 /**
- * Header do portal do cliente (specs/08 §3): coluna única, logo/nome do tenant,
- * ação primária "Abrir chamado" e menu do usuário. Sem sidebar administrativa —
- * o portal é minimalista. Whitelabel puro: não exibe a marca da plataforma.
+ * Header do portal do cliente (specs/08 §3): ação primária "Abrir chamado" e
+ * menu do usuário. No desktop a marca vive na sidebar (D-019 v2) — aqui ela só
+ * aparece no mobile. Whitelabel puro: não exibe a marca da plataforma.
  */
 export function PortalHeader({
   tenantNome,
@@ -22,9 +22,10 @@ export function PortalHeader({
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-3 px-4">
+        {/* Marca só no mobile — no desktop ela vive na sidebar. */}
         <Link
           href="/portal"
-          className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:hidden"
           aria-label={`${tenantNome} — Meus chamados`}
         >
           {logoUrl ? (

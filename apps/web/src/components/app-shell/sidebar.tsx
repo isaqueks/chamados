@@ -16,8 +16,8 @@ export function Sidebar({
   logoUrl?: string | null;
 }) {
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
-      <div className="flex h-14 items-center border-b px-4">
+    <aside className="hidden w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
+      <div className="flex h-14 items-center border-b border-sidebar-border px-4">
         <Marca tenantNome={tenantNome} logoUrl={logoUrl} />
       </div>
       <div className="flex-1 overflow-y-auto p-2">

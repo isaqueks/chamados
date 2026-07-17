@@ -91,7 +91,12 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
 
   const clonarDoZero = async (): Promise<void> => {
     await fs.mkdir(dir, { recursive: true });
-    await simpleGit().clone(authed, dir);
+    // Clona a BRANCH CONFIGURADA (`git_branch_padrao`). Sem `--branch` o git
+    // clonava a default do remoto e a IA analisava código da branch ERRADA
+    // sempre que a configurada ≠ default (bug corrigido em 2026-07-16 — a base
+    // do PR já era a configurada, mas o conteúdo analisado não).
+    const opcoes = cfg.branchPadrao ? ['--branch', cfg.branchPadrao, '--single-branch'] : [];
+    await simpleGit().clone(authed, dir, opcoes);
     if (!local) {
       await simpleGit(dir)
         .remote(['set-url', 'origin', cfg.repoUrl])
@@ -102,6 +107,22 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
   try {
     if (existsSync(join(dir, '.git'))) {
       const g = simpleGit(dir);
+      // Cache na BRANCH errada (admin trocou `git_branch_padrao`, ou cache
+      // anterior ao fix acima preso na default do remoto): o cache é
+      // descartável — re-clona na branch certa em vez de tentar checkout
+      // (o clone é --single-branch; a outra branch nem está no fetch).
+      const branchAtual = (await g.revparse(['--abbrev-ref', 'HEAD']).catch(() => '')).trim();
+      if (cfg.branchPadrao && branchAtual !== cfg.branchPadrao) {
+        logGitSync(
+          `checkout na branch '${branchAtual}' ≠ configurada '${cfg.branchPadrao}' — re-clonando`,
+          null,
+          cfg,
+          authed,
+        );
+        await fs.rm(dir, { recursive: true, force: true });
+        await clonarDoZero();
+        return dir;
+      }
       await g.remote(['set-url', 'origin', authed]);
       try {
         await g.fetch(['origin']);
@@ -137,7 +158,7 @@ export async function sincronizarRepo(cfg: ConfigRepo): Promise<string> {
 
 /** Log estruturado do sync com a mensagem do git REDIGIDA (nunca vaza segredo). */
 function logGitSync(msg: string, erro: unknown, cfg: ConfigRepo, authed: string): void {
-  let detalhe = erro instanceof Error ? erro.message : String(erro);
+  let detalhe = erro == null ? '' : erro instanceof Error ? erro.message : String(erro);
   if (cfg.credencial) detalhe = detalhe.split(cfg.credencial).join('***');
   detalhe = detalhe.split(authed).join('<origem>');
   console.log(

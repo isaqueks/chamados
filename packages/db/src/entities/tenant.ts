@@ -28,6 +28,8 @@ export interface Tenant {
   config_branding: ConfigBranding;
   dias_fechamento_automatico: number;
   ia_resolucao_automatica_habilitada: boolean;
+  /** Instruções adicionais do admin para a IA (D-020) — system prompt da triagem. */
+  ia_instrucoes: string | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -55,6 +57,7 @@ export const TenantSchema = new EntitySchema<Tenant>({
     config_branding: { type: 'jsonb', default: {} },
     dias_fechamento_automatico: { type: 'int', default: 3 },
     ia_resolucao_automatica_habilitada: { type: 'boolean', default: true },
+    ia_instrucoes: { type: 'text', nullable: true },
     created_at: { type: 'timestamptz', createDate: true },
     updated_at: { type: 'timestamptz', updateDate: true },
     deleted_at: { type: 'timestamptz', deleteDate: true, nullable: true },

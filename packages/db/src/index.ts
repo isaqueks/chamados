@@ -70,6 +70,7 @@ export {
   atualizarBranding,
   atualizarNomeExibicao,
   atualizarConfigGeral,
+  atualizarInstrucoesIa,
   definirDominioProprio,
   type ConfigGeral,
   type ResultadoDominio,

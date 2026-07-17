@@ -32,9 +32,10 @@ export function MobileNav({
       >
         <Menu className="size-5" />
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 gap-0 p-0">
-        <SheetHeader className="h-14 justify-center border-b px-4">
-          <SheetTitle className="text-left">
+      {/* Mesma superfície escura da sidebar (D-019 v2). */}
+      <SheetContent side="left" className="w-72 gap-0 bg-sidebar p-0 text-sidebar-foreground">
+        <SheetHeader className="h-14 justify-center border-b border-sidebar-border px-4">
+          <SheetTitle className="text-left text-sidebar-foreground">
             <Marca tenantNome={tenantNome} logoUrl={logoUrl} />
           </SheetTitle>
         </SheetHeader>

@@ -40,12 +40,16 @@ function itemAtivo(pathname: string, href: string): boolean {
   return href === '/app' ? pathname === '/app' : pathname.startsWith(href);
 }
 
-function LinhaNav({
+/**
+ * Linha de navegação sobre a sidebar ESCURA (D-019 v2). Exportada para reuso
+ * pela sidebar do portal do cliente — visual idêntico ao do painel (D-009).
+ */
+export function LinhaNav({
   item,
   ativo,
   onNavigate,
 }: {
-  item: ItemNav;
+  item: Pick<ItemNav, 'href' | 'rotulo' | 'icone'>;
   ativo: boolean;
   onNavigate?: () => void;
 }) {
@@ -57,11 +61,12 @@ function LinhaNav({
       aria-current={ativo ? 'page' : undefined}
       className={cn(
         'relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-        // Indicador de item ativo: barra de acento à esquerda derivada de
-        // --primary (whitelabel) + fundo levemente tingido; ícone realçado.
+        // Sidebar ESCURA (D-019 v2): item ativo com fundo realçado + barra de
+        // acento à esquerda derivada de --primary CLAREADA via color-mix —
+        // visível sobre o fundo escuro mesmo com marca de tenant escura.
         ativo
-          ? 'bg-[color-mix(in_oklab,var(--primary),transparent_90%)] font-semibold text-foreground before:absolute before:top-1/2 before:left-0 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-primary [&_svg]:text-primary'
-          : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+          ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground before:absolute before:top-1/2 before:left-0 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-[color-mix(in_oklab,var(--primary),white_45%)] [&_svg]:text-[color-mix(in_oklab,var(--primary),white_45%)]'
+          : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
       )}
     >
       <Icone className="size-4 shrink-0 transition-colors" />
@@ -88,7 +93,7 @@ export function NavLinks({ papel, onNavigate }: { papel: Papel; onNavigate?: () 
 
       {admin.length > 0 && (
         <>
-          <p className="mt-4 mb-1 px-3 text-xs font-medium tracking-wide text-muted-foreground/70 uppercase">
+          <p className="mt-4 mb-1 px-3 text-xs font-medium tracking-wide text-sidebar-foreground/45 uppercase">
             Administração
           </p>
           {admin.map((item) => (

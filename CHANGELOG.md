@@ -2,6 +2,42 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-16 — Correção: IA analisava a branch DEFAULT do remoto, não a configurada
+
+- **Bug (achado pelo usuário):** `sincronizarRepo` clonava sem `--branch` → o checkout ficava na branch **default do remoto** (main/master), e `git_branch_padrao` só era usado como **base do PR** (resolucao.ts). Com configurada ≠ default, TUDO que a IA via (Read/Grep/Glob, mapa de conhecimento D-013, working copy da resolução) vinha da branch errada — e o PR abria contra a certa com conteúdo da errada.
+- **Correção (spec 05 §3.2):** clone com `--branch <git_branch_padrao> --single-branch`; no cache existente, se a branch do checkout difere da configurada (admin trocou a config, ou cache antigo preso na default), apaga e re-clona (cache descartável, mesmo padrão da autocura). Branch inexistente falha ALTO (`git_sync_falhou`) — nunca cai na default silenciosamente.
+- 4 testes de integração com git REAL (origem local com `main` + `des`): clona a configurada, re-clona na troca, reaproveita cache na mesma branch, falha com branch inexistente. Caches criados antes do fix se autocorrigem na próxima triagem.
+
+## 2026-07-16 — D-021: consulta de logs via SFTP + polling do chamado + prompt "é um chat"
+
+- **Logs via SFTP (ADR D-021):** novo adapter `sftp` em `logs_consultar` — a IA lê logs de um servidor remoto do cliente. Configurável por sistema-alvo na UI (fonte de logs virou select com campos condicionais): host, porta (default 22), usuário, **diretório remoto dos logs** (ou glob de 1 nível); credencial no cofre (senha OU chave privada PEM, heurística `-----BEGIN`). Mesmos limites do tipo `arquivo` (tail por offset, tetos de bytes/arquivos/linhas) + `IA_LOGS_SFTP_TIMEOUT_MS` (8s). Caminho/host fixados pelo admin — o modelo só controla filtro/limite. Sem migration (colunas já existiam); a UI também passa a expor o `caminho` do tipo `arquivo` (antes inconfigurável). Dependência `ssh2-sftp-client` (import dinâmico); 4 testes com cliente fake injetado.
+- **Short-polling de 1 min no chamado (spec 08 §6):** componente `AtualizacaoPeriodica` nas páginas de detalhe (painel e portal) — `router.refresh()` a cada 60s, pausa com aba oculta, refresh imediato ao voltar o foco; estado do editor preservado. Novas respostas aparecem sozinhas.
+- **Prompt: chat contínuo + ambiguidade → perguntar (spec 05 §5.3):** o system prompt da triagem agora diz explicitamente que o chamado é um CHAT (o cliente pode responder; a IA é re-acionada a cada mensagem — D-017) e que solicitação AMBÍGUA, mesmo após investigar, exige PERGUNTAR (`compreendido=false`) em vez de assumir interpretação; tom de conversa, nunca relatório final. +1 teste do prompt.
+
+## 2026-07-16 — Portal do cliente: sidebar no desktop + número do chamado integrado ao título
+
+- **Sidebar no portal** (pedido do usuário; spec 08 §3 atualizada): o portal ganha menu lateral no desktop com Meus chamados / Abrir chamado / Notificações — mesma superfície escura e visual do painel (reusa `Marca` e `LinhaNav` do app-shell, D-009). No mobile a sidebar some e a marca volta ao header (portal segue mobile-first). O detalhe do chamado marca "Meus chamados" como ativo; a sidebar prefere o logo `dark` (fallback `light`).
+- **"#6" órfão corrigido**: o número do chamado ficava sozinho numa linha acima do título (detalhe e cards da lista do portal); agora é integrado à linha do título ("#6 Alterações"), como o painel já fazia. Verificado com screenshots via Playwright.
+
+## 2026-07-16 — D-020: instruções do tenant para a IA (system prompt do admin)
+
+- **Novo:** o admin define instruções próprias para a IA em `/app/config` (card "Assistente IA"): tom, contexto do negócio, prioridades, vocabulário. Persistidas em `tenant.ia_instrucoes` (migration 0010; cap 4.000 chars — `LIMITE_IA_INSTRUCOES_CHARS` em @chamados/shared, imposto no config-service e na UI).
+- **Fio completo:** contrato `AIProvider` ganha `contexto.instrucoesTenant` (specs/01 §4.1) → worker preenche no `montarInput` → `ClaudeAgentProvider` injeta no SYSTEM PROMPT da triagem em seção demarcada AO FINAL, com precedência explícita das regras da plataforma (semi-confiável: personaliza, nunca relaxa guardrails). Mapeamento (D-013) não usa — é neutro por design.
+- Specs 01/02/05/07 atualizadas; ADR D-020; teste do provider cobre inclusão, posição e ausência quando vazio (207/207 verdes).
+
+## 2026-07-16 — Correção: respostas da IA sem quebra de linha (\n não virava `<br>`)
+
+- **Bug:** `markdownParaDoc` usava `marked.lexer(..., { breaks: false })` — um `\n` simples dentro de parágrafo ficava literal no texto e o HTML o colapsava em espaço: as respostas da IA perdiam TODA quebra de linha simples (o conversor até já mapeava tokens `br` → `hardBreak` → `<br>`, mas o lexer nunca os emitia).
+- **Correção:** `breaks: true` (GFM "hard breaks", o comportamento de comentários do GitHub e o que se espera de um chat): `\n` simples → `hardBreak` → `<br>`; parágrafos (linha em branco) seguem inalterados. O fallback de texto plano (`textoParaDoc`) já fazia isso — os dois caminhos agora são coerentes. +1 teste (206→207).
+
+## 2026-07-16 — D-019: paleta padrão com cor — azul-petróleo sobre neutros frios
+
+- **Antes:** todos os tokens do tema tinham chroma 0 (preto e branco literal), `--background` = `--card` = branco puro (nenhuma camada de superfície) e `--chart-1..5` eram 5 tons de cinza — o sistema parecia "morto".
+- **Paleta padrão do produto (spec 08 §2.3.1, ADR D-019):** primário **azul-petróleo** (claro `oklch(0.46 0.09 215)`, escuro `oklch(0.76 0.09 210)` com foreground invertido); neutros frios (chroma ≤ 0.02) em fundo/muted/bordas/sidebar; camadas de superfície (`--background` ≠ `--card` nos dois temas); charts com paleta categórica real (petróleo/indigo/âmbar/esmeralda/vermelho); gradientes neutros dos controles D-018 tingidos na mesma família.
+- **Dashboard:** KPIs com ponto de cor na linguagem dos badges de status (`PontoStatus` exportado do módulo único `chamado/badges.tsx`).
+- **Whitelabel intacto:** branding do tenant continua sobrescrevendo `--primary`/`--marca-acento` (com checagem AA); efeitos D-018 derivam de `var(--primary)` e se recolorem sozinhos. Contraste de TODOS os pares texto/fundo da paleta validado numericamente (≥ 4.5:1, maioria ≥ 6:1).
+- **v2 (revisão visual com Playwright — login real na UI, screenshots de 9 telas):** sidebar **escura azul-petróleo nos dois temas** (âncora de identidade; sheet mobile idem; item ativo/chip da marca derivam de `--primary` clareado via `color-mix` p/ contraste garantido; sidebar prefere logo `dark` com fallback `light`); fundo do conteúdo com tinta mais presente; login com véu radial de marca; empty states do dashboard em linha única (antes: caixas de py-12 dominavam a tela); inputs longos de config/convite contidos com `max-w`.
+
 ## 2026-07-16 — D-018 (tarefa #18): linguagem visual v2 — controles "levemente 3D" (inspiração Cloudflare) + bug da fonte
 
 - **Bug crítico de fonte:** `--font-sans: var(--font-sans)` (auto-referência circular no `globals.css`) — o app INTEIRO renderizava na serifada default do navegador desde o M3; a Geist (next/font) nunca chegou a valer. Corrigido para `var(--font-geist-sans)`. Grande parte do aspecto "cru" vinha daí.

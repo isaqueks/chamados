@@ -117,8 +117,8 @@ O passo 2 depende de uma distinção que precisa ficar explícita (e é reconcil
 
 Fluxo por job:
 
-1. **Primeira triagem de um `SistemaAlvo`** (cache ausente): `git clone` do repositório para o cache persistente. Este é o provisionamento inicial — antes só se falava em "pull"; o clone inicial acontece aqui.
-2. **Triagens seguintes**: `git pull --ff-only` no cache persistente para trazer o conhecimento atualizado (RF-14).
+1. **Primeira triagem de um `SistemaAlvo`** (cache ausente): `git clone` do repositório para o cache persistente, **da branch configurada** (`git_branch_padrao`), com `--branch <branch> --single-branch`. _(Defeito corrigido em 2026-07-16: o clone sem `--branch` caía na branch **default do remoto** — a IA analisava código da branch errada sempre que a configurada ≠ default, enquanto o PR de resolução já usava a configurada como base. Branch configurada inexistente falha ALTO com `git_sync_falhou` — nunca cai na default silenciosamente.)_
+2. **Triagens seguintes**: `git pull --ff-only` no cache persistente para trazer o conhecimento atualizado (RF-14). Se a branch do checkout difere da configurada (admin trocou `git_branch_padrao`, ou cache anterior ao fix), o cache — descartável — é apagado e re-clonado na branch certa.
 3. **Checkout descartável por job**: um snapshot/checkout do cache é disponibilizado ao sandbox efêmero **read-only** (montagem read-only ou cópia). O sandbox nunca escreve de volta no cache; qualquer branch/PR de resolução (§6) é criado via push direto ao remoto git a partir do checkout do job, não persistido localmente.
 
 Assim o `git pull` incremental (cache persistente) coexiste com o sandbox efêmero de `09` §4.4: **filesystem de execução efêmero** ≠ **cache de repositório persistente e não confiável**. Ver `09-seguranca-lgpd.md` §4.4 para a especificação da fronteira de isolamento.
@@ -173,6 +173,7 @@ Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem ant
 - **Timeline completa** (D-015): a IA recebe **todas** as mensagens do chamado, `publica` e `interna`, em ordem, com autor e papel — demarcadas por visibilidade em blocos claramente rotulados ("conversa com o cliente" para `publica`, "notas internas da equipe" para `interna`), nunca misturadas sem identificação. _(Defeito corrigido em 2026-07-16, D-015: o contexto levava só mensagens públicas, então a IA não via o próprio diagnóstico anterior nem orientações internas de operadores, apesar de o papel `agente_ia` já ter permissão de leitura das duas visibilidades pela matriz de `03-autenticacao-perfis-permissoes.md` §8.1.)_ Racional: continuidade entre triagens (a IA enxerga sua própria análise anterior registrada em nota interna) e um canal direto operador→IA (orientação deixada em nota interna antes de uma reanálise).
 - **Anexos**: texto/imagens relevantes (imagens via visão do modelo quando suportado; ver limites em §7).
 - **Conhecimento do sistema-alvo**: o mapa de conhecimento (`conhecimento_resumo`, §3.3) é injetado como contexto de fundo em toda triagem; a investigação do caso específico do chamado é sob demanda via ferramentas (não se despeja o repo inteiro no prompt).
+- **Instruções do tenant (D-020)**: texto livre opcional definido pelo **admin** do tenant (`tenant.ia_instrucoes`, `07-` §4.1) com orientações adicionais para a IA — tom, contexto do negócio, prioridades, vocabulário. Entra no **system prompt** da triagem numa seção demarcada ("instruções do administrador do tenant"), **depois** das regras da plataforma e com precedência explícita: em conflito com os guardrails (separação técnico/cliente, formato de saída, nunca merge/deploy, defesa de injection), **as regras da plataforma prevalecem** — as instruções do tenant são semi-confiáveis (vêm de admin autenticado, não do cliente), personalizam mas nunca relaxam segurança. Cap de 4.000 caracteres imposto na gravação. Não se aplica ao mapeamento (§3.3), que é neutro por design.
 
 ### 4.2 Ferramentas (read-only sobre o SistemaAlvo, exceto a dupla de escrita gated)
 
@@ -183,7 +184,7 @@ Falha na execução de mapeamento **não bloqueia a triagem**: sem mapa (nem ant
 | `Read` _(nativa SDK)_                  | lê arquivo por caminho, leitura paginada como no Claude Code     | `cwd` = checkout descartável do job; `canUseTool` nega caminho fora dele                     |
 | `Grep` _(nativa SDK)_                  | busca por regex no código sincronizado, como no Claude Code      | idem acima                                                                                   |
 | `Glob` _(nativa SDK)_                  | lista arquivos por padrão de caminho, como no Claude Code        | idem acima                                                                                   |
-| `logs_consultar` _(MCP)_               | consulta fontes/caminhos de log configurados                     | janela temporal limitada; read-only                                                          |
+| `logs_consultar` _(MCP)_               | consulta a fonte de logs configurada — adapters `arquivo` (local do worker) e `sftp` (servidor remoto do cliente, D-021) | read-only; tail limitado por bytes/linhas/arquivos; caminho/host fixados pelo ADMIN (o modelo só controla filtro/limite); credencial SFTP (senha ou chave PEM) do cofre, timeout de conexão |
 | `bd_consultar` _(MCP)_                 | executa SELECT na conexão read-only (postgres e mysql/mariadb)   | somente `SELECT`; timeout curto; sem DDL/DML; sessão READ ONLY no servidor; LIMIT forçado    |
 | `chamado_publicar_mensagem`            | publica mensagem `publica` ou `interna`                          | visibilidade obrigatória                                                                     |
 | `chamado_classificar`                  | grava complexidade/natureza/prioridade sugeridas                 | valores dos enums canônicos                                                                  |
@@ -244,6 +245,8 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 - Explica brevemente por que precisa da informação (transparência).
 - Cada pergunta versa sobre fato do lado do cliente (passos, tela, usuário, quando começou) — nunca sobre algo que código, log ou BD já responderiam (protocolo investigação-primeiro, §5.1).
 - Se após `MAX_ROUNDS_PERGUNTAS` (default 3) o cliente ainda não deu o suficiente, escalona para operador humano (nota interna) em vez de repetir.
+
+**Natureza de CHAT e ambiguidade (2026-07-16, pedido do usuário).** O prompt do sistema deixa explícito que o chamado é uma **conversa contínua**: toda mensagem pública da IA chega ao cliente como mensagem de chat, o cliente pode responder e a triagem re-dispara a cada nova mensagem dele (D-017 — triagem contínua). Duas regras derivam disso: (a) **solicitação ambígua** (mais de uma interpretação possível, mesmo após investigar) → **perguntar em vez de assumir** (`compreendido = false` + perguntas) — assumir errado custa um diagnóstico/SPEC na direção errada, perguntar custa uma mensagem; (b) o tom é de conversa (retomar o que o cliente disse, perguntas respondíveis em uma frase), nunca de relatório final ou despedida definitiva.
 
 ### 5.4 Resposta pública ao cliente (D-015)
 

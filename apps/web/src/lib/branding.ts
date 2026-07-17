@@ -5,7 +5,7 @@ import { avaliarCorMarca, corHexValida } from '@chamados/shared';
  * Aplicação do branding whitelabel na UI (specs/07 §3.2, specs/08 §7). As cores
  * do tenant viram CSS custom properties injetadas no `:root`. Cada cor passa por
  * checagem de contraste AA; se reprovar (ou for inválida), NÃO é aplicada e a UI
- * cai no fallback neutro dos defaults do design system.
+ * cai na paleta padrão do produto (azul-petróleo — D-019).
  */
 
 /** Variantes de logo servidas pela aplicação. */
@@ -48,8 +48,8 @@ export function urlLogo(
 
 /**
  * Monta o CSS (`:root { ... }`) com as variáveis de branding do tenant. Retorna
- * string vazia quando não há nada aplicável (fallback neutro). Cores que
- * reprovam no contraste AA são descartadas (a UI mantém o neutro).
+ * string vazia quando não há nada aplicável (vale a paleta padrão). Cores que
+ * reprovam no contraste AA são descartadas (a UI mantém a paleta padrão).
  */
 export function cssBranding(branding: ConfigBranding | null | undefined): string {
   if (!branding) return '';

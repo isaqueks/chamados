@@ -13,6 +13,7 @@ import {
   enfileirarMapeamento,
   permitirRepoLocal,
   type EntradaSistemaAlvo,
+  type LogsConfig,
 } from '@chamados/db';
 import { autorizar, validarRepoSistema } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
@@ -52,12 +53,50 @@ function lerEntrada(
     bd_porta = n;
   }
 
+  // Config NÃO-secreta da fonte de logs (D-021): montada pelo tipo escolhido.
+  // Segredo (senha/chave SFTP) segue em `logs_credencial` → cofre, nunca aqui.
+  const logs_tipo = String(formData.get('logs_tipo') ?? '').trim() || null;
+  const logs_config: LogsConfig = {};
+  if (logs_tipo === 'arquivo' || logs_tipo === 'sftp') {
+    const caminho = String(formData.get('logs_caminho') ?? '').trim();
+    if (!caminho) {
+      return {
+        ok: false,
+        erro:
+          logs_tipo === 'sftp'
+            ? 'Informe o diretório remoto dos logs (tipo SFTP).'
+            : 'Informe o caminho dos logs (tipo arquivo).',
+      };
+    }
+    logs_config.caminho = caminho;
+  }
+  if (logs_tipo === 'sftp') {
+    const host = String(formData.get('logs_host') ?? '').trim();
+    const usuarioSftp = String(formData.get('logs_usuario') ?? '').trim();
+    if (!host || !usuarioSftp) {
+      return { ok: false, erro: 'Informe host e usuário do SFTP.' };
+    }
+    const portaSftpRaw = String(formData.get('logs_porta') ?? '').trim();
+    let porta = 22;
+    if (portaSftpRaw !== '') {
+      const n = Number(portaSftpRaw);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        return { ok: false, erro: 'Porta do SFTP inválida (1–65535).' };
+      }
+      porta = n;
+    }
+    logs_config.host = host;
+    logs_config.usuario = usuarioSftp;
+    logs_config.porta = porta;
+  }
+
   const entrada: EntradaSistemaAlvo = {
     nome,
     descricao: String(formData.get('descricao') ?? '').trim() || null,
     git_repo_url,
     git_branch_padrao: String(formData.get('git_branch_padrao') ?? '').trim() || 'main',
-    logs_tipo: String(formData.get('logs_tipo') ?? '').trim() || null,
+    logs_tipo,
+    logs_config,
     bd_tipo: String(formData.get('bd_tipo') ?? '').trim() || null,
     bd_host: String(formData.get('bd_host') ?? '').trim() || null,
     bd_porta,

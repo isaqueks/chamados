@@ -227,7 +227,11 @@ function blocosDe(tokens: Token[]): NoRichText[] {
  */
 export function markdownParaDoc(markdown: string): DocRico {
   try {
-    const tokens = marked.lexer(markdown, { gfm: true, breaks: false });
+    // `breaks: true` (GFM "hard breaks", como em comentários do GitHub): um \n
+    // simples dentro do parágrafo vira token `br` → nó `hardBreak` → `<br>`.
+    // Com false, o \n ficava literal no texto e o HTML colapsava em espaço —
+    // as respostas da IA perdiam TODA quebra de linha simples.
+    const tokens = marked.lexer(markdown, { gfm: true, breaks: true });
     const content = blocosDe(tokens);
     if (content.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] };
     return { type: 'doc', content };

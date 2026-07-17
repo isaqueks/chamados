@@ -30,6 +30,7 @@ import {
 import { ROTULO_STATUS_CHAMADO, ROTULO_TIPO_EVENTO, ROTULO_PAPEL, iniciais } from '@/lib/rotulos';
 import { dataHora, tempoRelativo } from '@/lib/tempo';
 import { cn } from '@/lib/utils';
+import { AtualizacaoPeriodica } from '@/components/chamado/atualizacao-periodica';
 import { RespostaForm } from './resposta-form';
 import { PainelPropriedades } from './painel-propriedades';
 import { AssistenteIA } from './assistente-ia';
@@ -145,6 +146,8 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
+      {/* Novas respostas/eventos aparecem sozinhos (short-polling de 1 min). */}
+      <AtualizacaoPeriodica />
       <Link
         href="/app/chamados"
         className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"

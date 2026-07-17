@@ -69,7 +69,7 @@ export function NotificacoesForm({
           </Alert>
         )}
 
-        <div className="flex flex-col gap-2">
+        <div className="flex max-w-xl flex-col gap-2">
           <Label htmlFor="url">URL do endpoint</Label>
           <Input
             id="url"
@@ -84,7 +84,7 @@ export function NotificacoesForm({
           </p>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="flex max-w-xl flex-col gap-2">
           <Label htmlFor="segredo">Segredo (assinatura HMAC SHA-256)</Label>
           <Input
             id="segredo"

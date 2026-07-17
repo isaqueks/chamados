@@ -39,6 +39,8 @@ export const ferramentasConfig = {
     maxBytes: num('IA_LOGS_MAX_BYTES', 2 * 1024 * 1024),
     /** Teto de arquivos considerados numa consulta com glob. */
     maxArquivos: num('IA_LOGS_MAX_ARQUIVOS', 20),
+    /** Timeout de conexão/handshake do adapter SFTP (ms) — D-021. */
+    sftpTimeoutMs: num('IA_LOGS_SFTP_TIMEOUT_MS', 8000),
   },
   bd: {
     /** `statement_timeout` da transação READ ONLY (ms) — timeout CURTO (specs/05 §4.2). */

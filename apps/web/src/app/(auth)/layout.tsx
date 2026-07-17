@@ -14,7 +14,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex flex-1 items-center justify-center bg-linear-to-b from-muted/50 to-background px-4 py-10">
+    // Fundo com presença de marca (D-019 v2): véu radial derivado de --primary
+    // no topo — recolore com o branding do tenant via color-mix, sem imagem.
+    <main className="flex flex-1 items-center justify-center bg-[radial-gradient(ellipse_75%_55%_at_50%_-15%,color-mix(in_oklab,var(--primary),transparent_78%),transparent),linear-gradient(to_bottom,var(--background),var(--background))] px-4 py-10">
       <div className="flex w-full max-w-sm flex-col gap-6">{children}</div>
     </main>
   );

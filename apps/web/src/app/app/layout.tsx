@@ -27,13 +27,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { usuario, tenant } = await exigirUsuario();
   if (usuario.papel === Papel.cliente) redirect('/portal');
 
-  const logo = urlLogo(tenant.config_branding, 'light');
+  // Sidebar e sheet mobile são superfícies ESCURAS nos dois temas (D-019 v2):
+  // preferem a variante escura do logo, com fallback na clara.
+  const logoEscuro =
+    urlLogo(tenant.config_branding, 'dark') ?? urlLogo(tenant.config_branding, 'light');
 
   return (
     <div className="flex min-h-full flex-1">
-      <Sidebar papel={usuario.papel} tenantNome={tenant.nome_exibicao} logoUrl={logo} />
+      <Sidebar papel={usuario.papel} tenantNome={tenant.nome_exibicao} logoUrl={logoEscuro} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar usuario={usuario} tenant={tenant} logoUrl={logo} />
+        <Topbar usuario={usuario} tenant={tenant} logoUrl={logoEscuro} />
         <main className="flex-1 p-4 sm:p-6">{children}</main>
       </div>
     </div>

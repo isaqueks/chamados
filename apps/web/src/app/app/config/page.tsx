@@ -14,6 +14,7 @@ import { urlLogo } from '@/lib/branding';
 import { BrandingForm } from './branding-form';
 import { LogoForm } from './logos-form';
 import { GeralForm } from './geral-form';
+import { IaForm } from './ia-form';
 import { DominioForm } from './dominio-form';
 import { NotificacoesForm } from './notificacoes-form';
 
@@ -100,6 +101,19 @@ export default async function ConfigPage() {
             diasFechamento={t.dias_fechamento_automatico}
             iaResolucaoAuto={t.ia_resolucao_automatica_habilitada}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Assistente IA</CardTitle>
+          <CardDescription>
+            Instruções próprias da sua empresa para o {b.agente_ia_nome ?? 'Assistente'}: contexto
+            do negócio, tom das respostas e prioridades. Aplicadas em toda análise de chamado.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <IaForm instrucoes={t.ia_instrucoes} />
         </CardContent>
       </Card>
 

@@ -29,7 +29,7 @@ export function ConviteForm() {
       )}
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-        <div className="flex flex-1 flex-col gap-2">
+        <div className="flex max-w-sm flex-1 flex-col gap-2">
           <Label htmlFor="email">E-mail</Label>
           <Input id="email" name="email" type="email" placeholder="pessoa@empresa.com" required />
         </div>

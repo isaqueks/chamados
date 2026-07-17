@@ -14,6 +14,12 @@
  */
 import type { Natureza, Prioridade, Complexidade, Papel, VisibilidadeMensagem } from './enums';
 
+/**
+ * Cap (caracteres) das instruções do tenant para a IA (`tenant.ia_instrucoes`,
+ * D-020) — imposto na gravação (config-service) e refletido na UI de config.
+ */
+export const LIMITE_IA_INSTRUCOES_CHARS = 4000;
+
 // ---------------------------------------------------------------------------
 // Contexto entregue ao modelo (specs/05 §4.1) — SEM credenciais do sistema-alvo
 // ---------------------------------------------------------------------------
@@ -201,6 +207,15 @@ export interface AIProviderInput {
      * derruba a triagem). Ausente/vazio = chamado sem imagens.
      */
     imagens?: ImagemContexto[];
+    /**
+     * Instruções ADICIONAIS do admin do tenant para a IA (D-020): tom, contexto
+     * do negócio, prioridades, vocabulário. SEMI-CONFIÁVEL (vem de admin
+     * autenticado, não do cliente): entra no SYSTEM PROMPT numa seção demarcada,
+     * SUBORDINADA às regras da plataforma — nunca relaxa guardrails. Cap de
+     * `LIMITE_IA_INSTRUCOES_CHARS` imposto na gravação. `null`/ausente = sem
+     * instruções.
+     */
+    instrucoesTenant?: string | null;
   };
 
   /**

@@ -67,6 +67,17 @@ const PONTO_STATUS: Record<Tom, string> = {
   neutral: 'bg-muted-foreground/50',
 };
 
+/** Ponto de cor de um status, para superfícies que já têm o rótulo em texto
+ *  (ex.: KPIs do dashboard). Mesma linguagem de cor do StatusBadge. */
+export function PontoStatus({ status, className }: { status: StatusChamado; className?: string }) {
+  return (
+    <span
+      className={cn('size-1.5 rounded-full', PONTO_STATUS[TOM_STATUS[status]], className)}
+      aria-hidden
+    />
+  );
+}
+
 export function StatusBadge({ status, className }: { status: StatusChamado; className?: string }) {
   const tom = TOM_STATUS[status];
   return (

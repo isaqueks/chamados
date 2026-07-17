@@ -74,9 +74,20 @@ A estética do design system (refina D-009, sem substituí-lo): controles **leve
 - **Whitelabel intocado**: todo efeito que envolve a cor primária DERIVA de `var(--primary)` via `color-mix()` — o branding por tenant recolore a UI inteira; sombras/realces são neutros (profundidade, não marca). Claro/escuro têm overrides próprios dos realces.
 - **Fonte**: Geist (via `next/font`) — a v1 tinha um bug de auto-referência (`--font-sans: var(--font-sans)`) que fazia o app inteiro renderizar na serifada do navegador.
 
+### 2.3.1 Paleta padrão do produto (D-019)
+
+Identidade visual default, aplicada quando o tenant não tem branding (ou quando a cor cadastrada reprova no contraste AA):
+
+- **Primário azul-petróleo** — claro: `oklch(0.46 0.09 215)`; escuro: `oklch(0.76 0.09 210)` com foreground escuro. Matiz calmo/confiável que não colide com as cores de status do domínio (sky/violet/amber/indigo/emerald).
+- **Neutros frios** (chroma ≤ 0.02, matiz ~230–250): fundo, muted e bordas levemente tingidos de azul — nunca cinza puro. Discretos o bastante para conviver com qualquer cor de marca de tenant.
+- **Sidebar escura nos dois temas** (âncora de identidade do painel; o sheet mobile usa a mesma superfície): tinta azul-petróleo profunda. Item ativo e chip da marca derivam de `var(--primary)` **clareado** via `color-mix(..., white 45%)` — contraste garantido sobre o fundo escuro mesmo com marca de tenant escura. A sidebar prefere a variante **dark** do logo (fallback: light).
+- **Camadas de superfície**: `--background` ≠ `--card` nos dois temas (claro: papel frio × card branco; escuro: azul-carvão × card mais claro) — dá profundidade a todas as telas sem custo por componente.
+- **Gráficos**: `--chart-1..5` é paleta categórica real (petróleo, indigo, âmbar, esmeralda, vermelho), alinhada aos matizes dos badges de domínio.
+- **AA por construção**: todos os pares texto/fundo da paleta foram validados numericamente (≥ 4.5:1; maioria ≥ 6:1). O branding do tenant continua passando pela própria checagem AA (§7).
+
 ## 3. Layout e navegação (shell)
 
-**Portal do cliente** — layout de coluna única, largura máxima confortável (~880px), header fixo com logo do tenant, seletor de idioma e menu do usuário. Ação primária "Abrir chamado" sempre visível (botão no header e FAB no mobile).
+**Portal do cliente** — conteúdo em coluna única de largura confortável (~880px) + **sidebar escura no desktop** (pedido do usuário em 2026-07-16; mesma linguagem visual da sidebar do painel — D-019 v2) com Meus chamados / Abrir chamado / Notificações. Header fixo com menu do usuário e ação primária "Abrir chamado" sempre visível (botão no header e FAB no mobile); no mobile a sidebar some e a marca volta ao header (o portal segue mobile-first). Números de chamado sempre integrados à linha do título (ex.: "#6 Alterações"), nunca órfãos em linha própria.
 
 **Painel operador/admin** — layout de app com:
 
@@ -304,6 +315,8 @@ Métricas exibidas alinham-se às de `00-visao-geral.md`. O bloco "Precisa de vo
 
 **Feedback de progresso da IA.** Enquanto há `ExecucaoIA` em andamento, o chamado mostra indicador "Assistente analisando…" (badge na fila, skeleton no painel IA). Nunca deixar o usuário sem saber que algo automático está em curso.
 
+**Atualização automática do chamado (2026-07-16).** As páginas de detalhe do chamado (painel e portal) fazem **short-polling de 1 minuto** (`router.refresh()` via componente `AtualizacaoPeriodica`): novas mensagens/eventos aparecem sem recarregar a página. O polling pausa com a aba oculta e dispara um refresh imediato quando ela volta ao foco; o estado dos client components (editor de resposta em digitação) é preservado pelo refresh do App Router.
+
 **Acessibilidade.** Meta WCAG 2.1 AA: contraste mínimo mesmo com cores de branding do tenant (validar contraste ao salvar branding — ver `07-`), navegação completa por teclado, foco visível, `aria-label` em ícones-ação, timeline como lista semântica, respeito a `prefers-reduced-motion`. Distinção pública/interna nunca depende só de cor (usar selo textual).
 
 **Consistência e velocidade.** Design system único compartilhado pelas duas áreas; navegação otimista com prefetch; alvo de interações percebidas < 100ms e paleta de comandos (`Ctrl/Cmd+K`) para operadores.
@@ -325,7 +338,7 @@ O branding é definido por tenant (detalhes de modelo e provisionamento em `07-m
 | Favicon                      | Aba do navegador                                    |
 | Domínio próprio              | URL do portal/painel                                |
 
-Implementação: tokens aplicados via **CSS variables** injetadas no `:root` a partir do tenant resolvido, permitindo tema por requisição sem rebuild. Todo par de cores texto/fundo derivado do branding passa por checagem de contraste AA; se reprovar, a UI aplica _fallback_ neutro e sinaliza no painel de configuração. Suporte a modo claro/escuro respeitando `prefers-color-scheme`, com override manual.
+Implementação: tokens aplicados via **CSS variables** injetadas no `:root` a partir do tenant resolvido, permitindo tema por requisição sem rebuild. Todo par de cores texto/fundo derivado do branding passa por checagem de contraste AA; se reprovar, a UI mantém a paleta padrão do produto (azul-petróleo — §2.3.1, D-019) e sinaliza no painel de configuração. Suporte a modo claro/escuro respeitando `prefers-color-scheme`, com override manual.
 
 O portal do cliente **não** exibe marca da plataforma "Chamados" (whitelabel puro); o painel operador pode exibir um discreto "powered by" conforme decisão comercial.
 

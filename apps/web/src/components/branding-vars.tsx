@@ -3,9 +3,9 @@ import { cssBranding } from '@/lib/branding';
 
 /**
  * Injeta as CSS variables de branding do tenant resolvido (specs/07 §3.2). Um
- * `<style>` com `:root { --primary: … }` sobrescreve os defaults neutros do
- * design system. Sem tenant ou sem cores válidas/aprovadas no contraste,
- * renderiza nada (fallback neutro). Aplica-se ao login e ao app.
+ * `<style>` com `:root { --primary: … }` sobrescreve a paleta padrão do design
+ * system (azul-petróleo — D-019). Sem tenant ou sem cores válidas/aprovadas no
+ * contraste, renderiza nada (vale a paleta padrão). Aplica-se ao login e ao app.
  */
 export async function BrandingVars() {
   const tenant = await obterTenantAtual();

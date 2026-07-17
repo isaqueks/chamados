@@ -18,7 +18,7 @@ import {
 } from '@chamados/db';
 import { StatusChamado, Papel } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
-import { PrioridadeBadge, StatusBadge } from '@/components/chamado/badges';
+import { PontoStatus, PrioridadeBadge, StatusBadge } from '@/components/chamado/badges';
 import { tempoRelativo, duracaoMin } from '@/lib/tempo';
 import { cn } from '@/lib/utils';
 
@@ -49,21 +49,25 @@ export default async function DashboardPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <CardMetrica
           rotulo="Novos"
+          status={StatusChamado.novo}
           valor={metricas.porStatus[StatusChamado.novo]}
           href="/app/chamados?status=novo"
         />
         <CardMetrica
           rotulo="Em atendimento"
+          status={StatusChamado.em_atendimento}
           valor={metricas.porStatus[StatusChamado.em_atendimento]}
           href="/app/chamados?status=em_atendimento"
         />
         <CardMetrica
           rotulo="Aguardando cliente"
+          status={StatusChamado.aguardando_cliente}
           valor={metricas.porStatus[StatusChamado.aguardando_cliente]}
           href="/app/chamados?status=aguardando_cliente"
         />
         <CardMetrica
           rotulo="Resolvidos (7 dias)"
+          status={StatusChamado.resolvido}
           valor={metricas.resolvidosSemana}
           href="/app/chamados?status=resolvido"
         />
@@ -97,11 +101,14 @@ export default async function DashboardPage() {
         <h2 className="font-heading text-lg font-semibold tracking-tight">Precisa de você</h2>
 
         {semAcoes ? (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card py-12 text-center">
-            <CheckCircle2 className="size-6 text-emerald-500" />
-            <p className="font-medium">Tudo sob controle</p>
-            <p className="text-sm text-muted-foreground">
-              Nenhum chamado urgente sem dono nem parado há muito tempo.
+          <div className="flex items-center gap-3 rounded-xl border border-dashed bg-card px-4 py-4">
+            <CheckCircle2 className="size-5 shrink-0 text-emerald-500" />
+            <p className="text-sm">
+              <span className="font-medium">Tudo sob controle</span>
+              <span className="text-muted-foreground">
+                {' '}
+                — nenhum chamado urgente sem dono nem parado há muito tempo.
+              </span>
             </p>
           </div>
         ) : (
@@ -137,15 +144,26 @@ export default async function DashboardPage() {
   );
 }
 
-function CardMetrica({ rotulo, valor, href }: { rotulo: string; valor: number; href: string }) {
+function CardMetrica({
+  rotulo,
+  status,
+  valor,
+  href,
+}: {
+  rotulo: string;
+  status: StatusChamado;
+  valor: number;
+  href: string;
+}) {
   return (
     <Link
       href={href}
       className="group flex flex-col gap-1 rounded-xl border bg-card p-4 shadow-cartao transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-cartao-hover"
     >
-      <span className="flex items-center justify-between text-sm text-muted-foreground">
+      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <PontoStatus status={status} />
         {rotulo}
-        <ArrowUpRight className="size-4 opacity-0 transition-opacity group-hover:opacity-100" />
+        <ArrowUpRight className="ml-auto size-4 opacity-0 transition-opacity group-hover:opacity-100" />
       </span>
       <span className="font-heading text-3xl font-semibold tabular-nums">{valor}</span>
     </Link>
@@ -187,7 +205,7 @@ function BlocoPrsIa({ itens, nomeAssistente }: { itens: ItemPrIa[]; nomeAssisten
         )}
       </div>
       {itens.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-muted-foreground">
+        <p className="px-4 py-3.5 text-sm text-muted-foreground">
           Nenhum PR da IA aguardando revisão. Correções automáticas de problemas fáceis aparecem
           aqui — o merge é sempre manual.
         </p>

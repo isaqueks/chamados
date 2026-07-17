@@ -73,6 +73,8 @@ export function SistemaForm({
     edicao ? acaoAtualizarSistema : acaoCriarSistema,
     INICIAL,
   );
+  // Fonte de logs controla os campos exibidos (D-021); '' = sem fonte.
+  const [logsTipo, setLogsTipo] = useState(sistema?.logs_tipo ?? '');
 
   return (
     <form action={acao} className="flex flex-col gap-6">
@@ -159,22 +161,92 @@ export function SistemaForm({
         />
       </fieldset>
 
-      {/* Logs */}
+      {/* Logs (D-021: fontes suportadas — arquivo local do worker ou SFTP) */}
       <fieldset className="flex flex-col gap-4 rounded-lg border p-4">
         <legend className="px-1 text-sm font-semibold">Logs</legend>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="logs_tipo">Tipo/fonte de logs</Label>
-          <Input
+        <div className="flex max-w-xs flex-col gap-2">
+          <Label htmlFor="logs_tipo">Fonte de logs</Label>
+          <select
             id="logs_tipo"
             name="logs_tipo"
-            defaultValue={sistema?.logs_tipo ?? ''}
-            placeholder="arquivo, cloudwatch, loki…"
-          />
+            value={logsTipo}
+            onChange={(e) => setLogsTipo(e.target.value)}
+            className="flex h-9 w-full rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="">Sem fonte de logs</option>
+            <option value="arquivo">Arquivo local (no servidor do worker)</option>
+            <option value="sftp">SFTP (servidor remoto)</option>
+          </select>
         </div>
+
+        {logsTipo === 'sftp' && (
+          <div className="grid gap-4 sm:grid-cols-4">
+            <div className="flex flex-col gap-2 sm:col-span-2">
+              <Label htmlFor="logs_host">Host SFTP *</Label>
+              <Input
+                id="logs_host"
+                name="logs_host"
+                defaultValue={String(sistema?.logs_config?.host ?? '')}
+                placeholder="servidor.empresa.com"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="logs_porta">Porta</Label>
+              <Input
+                id="logs_porta"
+                name="logs_porta"
+                type="number"
+                min={1}
+                max={65535}
+                defaultValue={String(sistema?.logs_config?.porta ?? '')}
+                placeholder="22"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="logs_usuario">Usuário *</Label>
+              <Input
+                id="logs_usuario"
+                name="logs_usuario"
+                defaultValue={String(sistema?.logs_config?.usuario ?? '')}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        )}
+
+        {(logsTipo === 'arquivo' || logsTipo === 'sftp') && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="logs_caminho">
+              {logsTipo === 'sftp' ? 'Diretório remoto dos logs *' : 'Caminho dos logs *'}
+            </Label>
+            <Input
+              id="logs_caminho"
+              name="logs_caminho"
+              defaultValue={String(sistema?.logs_config?.caminho ?? '')}
+              placeholder={
+                logsTipo === 'sftp'
+                  ? '/var/log/meu-sistema ou /var/log/app/*.log'
+                  : '/var/log/app/*.log'
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Arquivo único, diretório ou padrão simples com <code className="font-mono">*</code>{' '}
+              (um nível). A IA lê apenas o final dos arquivos, com limites de volume.
+            </p>
+          </div>
+        )}
+
         <CampoSegredo
           name="logs_credencial"
-          label="Credencial de acesso aos logs"
+          label={
+            logsTipo === 'sftp' ? 'Senha ou chave privada (SFTP)' : 'Credencial de acesso aos logs'
+          }
           temCredencial={sistema?.tem_logs_credencial ?? false}
+          descricao={
+            logsTipo === 'sftp'
+              ? 'Senha do usuário OU chave privada (PEM, começa com "-----BEGIN"). Guardada cifrada no cofre — nunca exibida.'
+              : undefined
+          }
           edicao={edicao}
         />
       </fieldset>

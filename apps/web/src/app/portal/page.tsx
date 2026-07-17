@@ -193,10 +193,13 @@ function ChamadoCard({ chamado }: { chamado: ChamadoView }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className="text-xs font-medium text-muted-foreground">
-            #{String(chamado.numero)}
-          </span>
-          <h3 className="mt-0.5 truncate font-medium">{chamado.titulo}</h3>
+          {/* Número integrado à linha do título (nunca órfão). */}
+          <h3 className="truncate font-medium">
+            <span className="mr-1.5 text-sm font-normal text-muted-foreground">
+              #{String(chamado.numero)}
+            </span>
+            {chamado.titulo}
+          </h3>
         </div>
         {aguardando && (
           <span className="shrink-0 rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground">

@@ -209,6 +209,7 @@ Empresa/instância whitelabel. Raiz do isolamento. Detalhes de branding/domínio
 | status                               | status_tenant (enum) | NOT NULL default 'em_provisionamento' | governa acesso: `suspenso` bloqueia login, `em_provisionamento` libera só o admin (ver `07-multitenancy-whitelabel.md`)           |
 | dias_fechamento_automatico           | int                  | NOT NULL default 3                    | resolvido → fechado após N dias (mesmo nome/valor em `04-chamados.md` e `07-multitenancy-whitelabel.md`)                          |
 | ia_resolucao_automatica_habilitada   | bool                 | NOT NULL default true                 | guardrail relaxável (ver `05-agente-ia.md` §6 e `07` §4.1)                                                                        |
+| ia_instrucoes                        | text                 | NULL                                  | instruções do admin para a IA (D-020) — entra no system prompt da triagem; cap 4.000 chars (ver `05` §4.1 e `07` §4.1)            |
 | config_branding                      | jsonb                | NOT NULL default '{}'                 | cores, logo (ref)                                                                                                                 |
 | created_at / updated_at / deleted_at | timestamptz          |                                       |                                                                                                                                   |
 

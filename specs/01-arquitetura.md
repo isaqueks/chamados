@@ -187,6 +187,7 @@ interface AIProviderInput {
     sistemaAlvo: MetadadosSistemaAlvo; // metadados SEM credenciais (nem DSN, nem caminho de repo cru)
     conhecimento?: ConhecimentoSistema; // mapa do sistema (D-013), quando existente
     imagens?: ImagemContexto[]; // prints inline (descrição/mensagens PÚBLICAS) p/ envio MULTIMODAL (#16)
+    instrucoesTenant?: string | null; // instruções do ADMIN do tenant p/ a IA (D-020) — semi-confiável; guardrails prevalecem
   };
 
   // Exploração de código NATIVA (D-014): o provider real habilita Read/Grep/Glob do

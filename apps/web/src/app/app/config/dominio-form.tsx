@@ -30,7 +30,7 @@ export function DominioForm({ slug, dominioAtual }: Props) {
         </Alert>
       )}
 
-      <div className="flex flex-col gap-2">
+      <div className="flex max-w-md flex-col gap-2">
         <Label htmlFor="dominio_proprio">Domínio próprio</Label>
         <Input
           id="dominio_proprio"

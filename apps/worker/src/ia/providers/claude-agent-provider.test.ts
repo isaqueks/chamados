@@ -251,6 +251,29 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(sp).toContain('CONTINUIDADE');
   });
 
+  it('montarSystemPrompt deixa claro que é um CHAT e que ambiguidade → perguntar', () => {
+    const sp = montarSystemPrompt();
+    expect(sp).toContain('CONVERSA CONTÍNUA');
+    expect(sp).toContain('isto é um CHAT');
+    expect(sp).toMatch(/AMBÍGUA[\s\S]*NÃO ASSUMA/);
+    expect(sp).toContain('acionado DE NOVO a cada nova mensagem');
+  });
+
+  it('montarSystemPrompt injeta as instruções do tenant SUBORDINADAS às regras (D-020)', () => {
+    const sp = montarSystemPrompt('Responda em tom formal. Faturamento é prioritário.');
+    expect(sp).toContain('INSTRUÇÕES DO ADMINISTRADOR DO TENANT');
+    expect(sp).toContain('Responda em tom formal. Faturamento é prioritário.');
+    // Precedência explícita: as regras da plataforma prevalecem sobre o tenant.
+    expect(sp).toContain('as regras da plataforma PREVALECEM');
+    // As instruções vêm DEPOIS das regras da plataforma (posição = subordinação).
+    expect(sp.indexOf('PROTOCOLO OBRIGATÓRIO')).toBeLessThan(
+      sp.indexOf('INSTRUÇÕES DO ADMINISTRADOR DO TENANT'),
+    );
+    // Sem instruções (null/vazia/só espaços), a seção NÃO existe.
+    expect(montarSystemPrompt()).not.toContain('INSTRUÇÕES DO ADMINISTRADOR DO TENANT');
+    expect(montarSystemPrompt('   ')).not.toContain('INSTRUÇÕES DO ADMINISTRADOR DO TENANT');
+  });
+
   it('normaliza respostaAoCliente do structured_output (D-015)', async () => {
     const msg: MensagemSdk = {
       type: 'result',
