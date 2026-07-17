@@ -36,6 +36,7 @@
     "smoke:notificacoes": "npm run smoke:notificacoes -w @chamados/worker",
     "smoke:manutencao": "npm run smoke:manutencao -w @chamados/worker",
     "seed:dev": "npm run seed:dev -w @chamados/db",
+    "tenant:provisionar": "npm run tenant:provisionar -w @chamados/db --",
     "test": "vitest run",
     "test:watch": "vitest"
   },

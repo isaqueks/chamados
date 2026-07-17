@@ -19,7 +19,8 @@
     "smoke:chamados": "tsx src/scripts/smoke-chamados.ts",
     "smoke:mensagens": "tsx src/scripts/smoke-mensagens.ts",
     "smoke:seguranca": "tsx src/scripts/smoke-seguranca.ts",
-    "seed:dev": "tsx src/scripts/seed-dev.ts"
+    "seed:dev": "tsx src/scripts/seed-dev.ts",
+    "tenant:provisionar": "tsx src/scripts/provisionar-tenant.ts"
   },
   "dependencies": {
     "@chamados/shared": "*",
