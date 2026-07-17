@@ -13,8 +13,11 @@ import {
   montarNotaFalhaResolucao,
   montarTemplateSpec,
   detectarConteudoTecnico,
+  detectarPromessaResolucao,
   montarAvisoRespostaRebaixada,
+  montarAvisoPromessaRebaixada,
   RESPOSTA_PUBLICA_FALLBACK,
+  MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO,
   type AIProviderResult,
   type Prioridade,
   type TentativaResolucao,
@@ -233,11 +236,23 @@ async function aplicarEntendeu(
   //    tiver cara de técnica, é REBAIXADA (o cliente recebe a genérica e o texto
   //    original é preservado apenas na nota interna). No fluxo "entendeu" apenas —
   //    no "não entendeu", perguntasAoCliente é o canal (não se duplica).
+  // Complexidade SEMPRE gravada quando compreendido (default medio se ausente).
+  const complexidade = resultado.complexidade ?? Complexidade.medio;
+  const naturezaEfetiva = resultado.naturezaAjustada ?? chamado.natureza;
+
   let avisoRebaixamento = '';
   const respostaCru = (resultado.respostaAoCliente ?? '').trim();
   if (respostaCru.length > 0) {
     const deteccao = detectarConteudoTecnico(respostaCru);
-    const corpoPublico = deteccao.tecnica ? RESPOSTA_PUBLICA_FALLBACK : respostaCru;
+    // D-022: fora de DÚVIDA (onde a resposta em si resolve o chamado), resposta
+    // que AFIRMA correção já concluída é FALSA — a tentativa da IA é sempre um PR
+    // aguardando revisão humana — e é rebaixada como a técnica.
+    const promessa =
+      naturezaEfetiva === Natureza.duvida
+        ? { promete: false, motivos: [] as string[] }
+        : detectarPromessaResolucao(respostaCru);
+    const rebaixada = deteccao.tecnica || promessa.promete;
+    const corpoPublico = rebaixada ? RESPOSTA_PUBLICA_FALLBACK : respostaCru;
     const msgPub = await criarMensagem(
       em,
       ator,
@@ -257,13 +272,16 @@ async function aplicarEntendeu(
         chamadoId: chamado.id,
         motivos: deteccao.motivos,
       });
+    } else if (promessa.promete) {
+      avisoRebaixamento = montarAvisoPromessaRebaixada(respostaCru, promessa.motivos);
+      deps.log('resposta pública rebaixada: prometia resolução (D-022)', {
+        chamadoId: chamado.id,
+        motivos: promessa.motivos,
+      });
     }
   }
 
-  // Complexidade SEMPRE gravada quando compreendido (default medio se ausente).
-  const complexidade = resultado.complexidade ?? Complexidade.medio;
   const tocado = await tocadoPorOperador(em, chamado);
-  const naturezaEfetiva = resultado.naturezaAjustada ?? chamado.natureza;
 
   const prioridadeAplicada: Prioridade | null =
     resultado.prioridadeSugerida && !tocado ? resultado.prioridadeSugerida : null;
@@ -412,6 +430,22 @@ async function aplicarResolucao(
 
   if (resolucao.tipo === 'sucesso') {
     const t = resolucao.tentativa;
+    // D-022: o CLIENTE é informado pelo PIPELINE (mensagem fixa, nunca do modelo)
+    // de que a correção proposta está EM REVISÃO pela equipe — sem detalhe técnico
+    // e sem afirmar que algo já mudou em produção (o merge/deploy é humano).
+    const msgPublica = await criarMensagem(
+      em,
+      ator,
+      {
+        chamado_id: chamado.id,
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: markdownParaDoc(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO),
+        execucao_ia_id: execucaoId,
+        created_at: proximoInstante?.(),
+      },
+      hooks,
+    );
+    exigir(msgPublica.ok, 'mensagem_correcao_em_revisao');
     const nota = await criarMensagem(
       em,
       ator,

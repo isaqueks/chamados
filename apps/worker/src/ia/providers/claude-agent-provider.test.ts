@@ -257,6 +257,18 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(sp).toContain('isto é um CHAT');
     expect(sp).toMatch(/AMBÍGUA[\s\S]*NÃO ASSUMA/);
     expect(sp).toContain('acionado DE NOVO a cada nova mensagem');
+    // Sem saudação repetida: só na PRIMEIRA interação do chamado.
+    expect(sp).toContain('NÃO cumprimente a cada mensagem');
+  });
+
+  it('montarSystemPrompt condiciona a escrita a facil e proíbe anunciar "resolvido" (D-022)', () => {
+    const sp = montarSystemPrompt();
+    // Escrita de código APENAS quando a própria IA classificou complexidade=facil.
+    expect(sp).toMatch(/complexidade = "facil"/);
+    expect(sp).toMatch(/"medio" ou[\s\S]*"dificil", NÃO toque em código/);
+    // A alteração é PROPOSTA em PR com revisão humana — nunca "resolvido" ao cliente.
+    expect(sp).toContain('REVISÃO HUMANA');
+    expect(sp).toMatch(/JAMAIS diga ao cliente[\s\S]*"foi resolvido\/corrigido"/);
   });
 
   it('montarSystemPrompt injeta as instruções do tenant SUBORDINADAS às regras (D-020)', () => {

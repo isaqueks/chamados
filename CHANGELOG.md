@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-17 — D-022: correção da IA é proposta em revisão, nunca "resolvido" ao cliente
+
+- **Incômodo (relato do usuário):** a IA alterava código e anunciava ao cliente que o problema estava "resolvido" — falso: a alteração vira PR pendente de aprovação humana + deploy manual, e quando a complexidade não é `facil` o gate PÓS-call nem cria o PR (a alteração é descartada). Os gates já estavam corretos (PR só com `facil` + confiança ≥ limiar); faltava governar a comunicação.
+- **Três camadas (ADR D-022):** (1) system prompt condiciona a escrita a `complexidade = facil` autoavaliada e proíbe anunciar resolução (a alteração é PROPOSTA em revisão humana); (2) novo validador `detectarPromessaResolucao` (@chamados/shared) rebaixa, nos fluxos problema/alteração, resposta pública que afirma correção concluída ("resolvi", "foi corrigido", "voltou a funcionar") — fallback genérico ao cliente, original preservado na nota interna; (3) quando o PR/push é criado, o pipeline publica mensagem pública FIXA (`MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO`): correção proposta em revisão pela equipe, sem jargão nem promessa de prazo — antes o desfecho do PR era 100% interno e o cliente ficava no escuro.
+- Specs 05 (§5.4, §6) + ADR D-022; testes dos padrões do validador (positivos e anti-falso-positivo) e do prompt.
+
+## 2026-07-17 — Prompt: IA não cumprimenta a cada mensagem
+
+- **Incômodo (relato do usuário):** a IA abria TODA resposta com "Olá" — cada triagem é uma execução nova do modelo (ainda que receba a timeline completa, D-015), e nada no prompt vetava a saudação repetida.
+- **Correção (spec 05 §5.3):** o bloco CONVERSA CONTÍNUA do system prompt agora manda cumprimentar no máximo na PRIMEIRA interação do chamado; se a timeline já tem mensagem da IA, a resposta entra direto no assunto, como num chat real. +1 asserção no teste do prompt.
+
 ## 2026-07-16 — Correção: IA analisava a branch DEFAULT do remoto, não a configurada
 
 - **Bug (achado pelo usuário):** `sincronizarRepo` clonava sem `--branch` → o checkout ficava na branch **default do remoto** (main/master), e `git_branch_padrao` só era usado como **base do PR** (resolucao.ts). Com configurada ≠ default, TUDO que a IA via (Read/Grep/Glob, mapa de conhecimento D-013, working copy da resolução) vinha da branch errada — e o PR abria contra a certa com conteúdo da errada.

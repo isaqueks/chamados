@@ -442,3 +442,101 @@ export function montarAvisoRespostaRebaixada(original: string, motivos: string[]
     .filter((linha, i) => !(linha === '' && i > 0))
     .join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Promessa FALSA de resolução (D-022) — validador da resposta pública
+// ---------------------------------------------------------------------------
+
+/** Resultado da inspeção quanto a AFIRMAÇÃO de correção já concluída. */
+export interface DeteccaoPromessa {
+  /** A mensagem afirma que o problema JÁ FOI resolvido/corrigido? */
+  promete: boolean;
+  /** Rótulos dos padrões detectados (para auditar na nota interna). */
+  motivos: string[];
+}
+
+/**
+ * Padrões CONSERVADORES de afirmação de correção CONCLUÍDA numa mensagem que iria
+ * ao cliente (D-022). A tentativa de resolução da IA é sempre uma PROPOSTA (PR
+ * aguardando revisão humana) — dizer "resolvido/corrigido" ao cliente é FALSO até
+ * o deploy. Foco em formas de fato consumado ("resolvi", "foi corrigido", "já
+ * está funcionando"); formas de futuro/intenção ("vamos corrigir", "será
+ * resolvido", "estamos analisando") NÃO disparam.
+ */
+const PADROES_PROMESSA: ReadonlyArray<{ rotulo: string; re: RegExp }> = [
+  // 1ª pessoa no perfeito: "resolvi", "corrigimos", "consertei", "implementei", "apliquei a correção".
+  {
+    rotulo: 'correção em 1ª pessoa',
+    re: /\b(?:resolvi|resolvemos|corrigi|corrigimos|consertei|consertamos|implementei|implementamos|apliquei|aplicamos)\b/i,
+  },
+  // Fato consumado: "foi/está/já foi/já está resolvido|corrigido|consertado|implementado|normalizado|ajustado".
+  {
+    rotulo: 'correção como fato consumado',
+    re: /\b(?:foi|foram|está|estão)\s+(?:resolvid|corrigid|consertad|implementad|normalizad|ajustad)\w*\b/i,
+  },
+  // "problema resolvido"/"erro corrigido" (particípio direto após o substantivo).
+  {
+    rotulo: 'problema dado como resolvido',
+    re: /\b(?:problema|erro|falha|defeito)s?\s+(?:resolvid|corrigid|consertad|solucionad)\w*\b/i,
+  },
+  // "correção (foi) aplicada/realizada/feita/publicada/implantada".
+  {
+    rotulo: 'correção dada como aplicada',
+    re: /\bcorreç(?:ão|ões)\s+(?:foi\s+|já\s+)?(?:aplicad|realizad|feit|publicad|implantad)\w*\b/i,
+  },
+  // "voltou a funcionar" / "já está funcionando" / "deve estar funcionando".
+  {
+    rotulo: 'funcionamento dado como restabelecido',
+    re: /\b(?:voltou\s+a\s+funcionar|(?:já\s+está|deve\s+estar)\s+funcionando)\b/i,
+  },
+];
+
+/**
+ * Inspeciona a resposta que iria ao CLIENTE e detecta, de forma conservadora, se
+ * ela AFIRMA correção já concluída (D-022). Usada pelo aplicador nos fluxos
+ * problema/alteracao (nunca em dúvida, onde a resposta em si resolve o chamado):
+ * detectada a promessa, a resposta é REBAIXADA para a genérica ("equipe está
+ * analisando") e o texto original vai para a nota interna. Pura e determinística.
+ */
+export function detectarPromessaResolucao(texto: string): DeteccaoPromessa {
+  const alvo = (texto ?? '').trim();
+  if (alvo.length === 0) return { promete: false, motivos: [] };
+  const motivos: string[] = [];
+  for (const { rotulo, re } of PADROES_PROMESSA) {
+    if (re.test(alvo) && !motivos.includes(rotulo)) motivos.push(rotulo);
+  }
+  return { promete: motivos.length > 0, motivos };
+}
+
+/**
+ * Aviso anexado à nota interna quando a resposta pública foi rebaixada por
+ * PROMETER resolução (D-022) — espelha `montarAvisoRespostaRebaixada`, com o
+ * motivo específico: a correção da IA é proposta em revisão, não fato.
+ */
+export function montarAvisoPromessaRebaixada(original: string, motivos: string[]): string {
+  return [
+    '',
+    '---',
+    'Resposta pública rebaixada pelo validador: a mensagem proposta ao cliente AFIRMAVA que o',
+    'problema já estava resolvido/corrigido — mas a correção da IA é apenas uma PROPOSTA que',
+    'aguarda revisão humana (PR); nada foi publicado em produção. O cliente recebeu uma resposta',
+    'genérica no lugar.',
+    motivos.length > 0 ? `Padrões detectados: ${motivos.join(', ')}.` : '',
+    'Texto original proposto pela IA (mantido apenas nesta nota interna):',
+    original.trim() || '(vazio)',
+  ]
+    .filter((linha, i) => !(linha === '' && i > 0))
+    .join('\n');
+}
+
+/**
+ * Mensagem PÚBLICA publicada pelo PIPELINE (nunca pelo modelo) quando a tentativa
+ * de resolução vira PR/push com sucesso (D-022): informa o cliente de que a
+ * análise avançou e a correção proposta está EM REVISÃO pela equipe — sem jargão,
+ * sem prometer prazo e sem afirmar que algo já mudou em produção.
+ */
+export const MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO = [
+  'Temos novidades: nossa análise identificou a causa provável e uma proposta de correção já',
+  'foi preparada. Ela está agora em revisão pela nossa equipe — nada muda no sistema até essa',
+  'revisão ser aprovada e publicada. Avisaremos por aqui assim que houver uma posição.',
+].join('\n');

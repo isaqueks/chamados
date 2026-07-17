@@ -14,7 +14,10 @@ import {
   montarNotaFalhaResolucao,
   detectarConteudoTecnico,
   montarAvisoRespostaRebaixada,
+  detectarPromessaResolucao,
+  montarAvisoPromessaRebaixada,
   RESPOSTA_PUBLICA_FALLBACK,
+  MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO,
 } from './triagem-notas';
 
 describe('formatarPerguntasCliente', () => {
@@ -261,5 +264,57 @@ describe('montarAvisoRespostaRebaixada', () => {
     const aviso = montarAvisoRespostaRebaixada('texto', []);
     expect(aviso).not.toContain('Padrões detectados');
     expect(aviso).toContain('texto');
+  });
+});
+
+describe('detectarPromessaResolucao (D-022)', () => {
+  it.each([
+    'Boa notícia! Já resolvi o problema do relatório.',
+    'Identificamos a causa e corrigimos o cálculo do desconto.',
+    'O erro foi corrigido e não deve mais acontecer.',
+    'O problema relatado já está resolvido.',
+    'A correção foi aplicada com sucesso.',
+    'Pode testar novamente: o sistema voltou a funcionar.',
+    'Fizemos um ajuste e o cadastro já está funcionando.',
+    'Apliquei a mudança que você pediu.',
+  ])('detecta afirmação de correção concluída: %s', (texto) => {
+    const d = detectarPromessaResolucao(texto);
+    expect(d.promete).toBe(true);
+    expect(d.motivos.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'Nossa equipe está analisando o seu chamado e em breve retornamos.',
+    'Vamos corrigir esse comportamento e avisaremos quando estiver disponível.',
+    'O problema será resolvido pela nossa equipe técnica.',
+    'Entendi seu pedido: você gostaria de alterar a ordem dos campos, certo?',
+    'Assim que a correção for publicada, avisaremos por aqui.',
+    'Estamos cuidando disso com prioridade.',
+  ])('NÃO dispara com futuro/intenção/atendimento comum: %s', (texto) => {
+    expect(detectarPromessaResolucao(texto).promete).toBe(false);
+  });
+
+  it('texto vazio não promete nada', () => {
+    expect(detectarPromessaResolucao('')).toEqual({ promete: false, motivos: [] });
+  });
+});
+
+describe('montarAvisoPromessaRebaixada / mensagem de correção em revisão (D-022)', () => {
+  it('preserva o original, explica que era promessa falsa e cita os padrões', () => {
+    const aviso = montarAvisoPromessaRebaixada('Já resolvi o problema!', ['correção em 1ª pessoa']);
+    expect(aviso).toContain('rebaixada pelo validador');
+    expect(aviso).toContain('PROPOSTA');
+    expect(aviso).toContain('Padrões detectados: correção em 1ª pessoa.');
+    expect(aviso).toContain('Já resolvi o problema!');
+  });
+
+  it('a mensagem pública de PR em revisão não promete resolução nem vaza técnica', () => {
+    expect(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO).toContain('em revisão');
+    expect(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO).toContain('nada muda no sistema');
+    // Não pode disparar os próprios validadores.
+    expect(detectarConteudoTecnico(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO).tecnica).toBe(false);
+    expect(detectarPromessaResolucao(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO).promete).toBe(false);
+    // Nunca menciona PR/branch/merge (jargão) ao cliente.
+    expect(MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO).not.toMatch(/\b(PR|pull request|branch|merge)\b/i);
   });
 });
