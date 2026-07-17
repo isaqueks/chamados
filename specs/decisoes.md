@@ -114,6 +114,13 @@
 **Decisão:** coluna `tenant.ia_instrucoes` (text NULL, migration 0010; cap de 4.000 chars imposto no config-service e refletido na UI via `LIMITE_IA_INSTRUCOES_CHARS` de @chamados/shared). O admin edita em `/app/config` (card "Assistente IA"). O contrato `AIProvider` ganha `contexto.instrucoesTenant` (specs/01 §4.1) e o worker o preenche do tenant já carregado no `montarInput`. No `ClaudeAgentProvider`, as instruções entram no SYSTEM PROMPT da triagem numa seção demarcada AO FINAL, com precedência explícita: **as regras da plataforma prevalecem** — o texto é semi-confiável (admin autenticado, não o cliente); personaliza, nunca relaxa guardrails (separação técnico/cliente, formato JSON, nunca merge/deploy, defesa de injection). Não se aplica ao mapeamento (D-013), que é neutro por design.
 **Consequências:** specs 01 (§4.1), 02 (tabela Tenant), 05 (§4.1) e 07 (§4.1) atualizadas; teste do provider prova inclusão, posição (após as regras) e ausência da seção quando vazio; vale a partir da PRÓXIMA triagem de cada chamado (o prompt é montado por execução).
 
+## D-023 — Resolução automática também para alteração simples (2026-07-17)
+
+**Status:** aceita.
+**Contexto:** caso real em produção — chamado "Alterar disparos" (trocar um texto), classificado `alteracao` + `facil`, tenant habilitado, repo configurado: nenhum PR. Os gates (specs/05 §6) restringiam a resolução automática a `natureza = problema`; a diretriz do usuário sempre foi "qualquer tipo de mudança no código, desde que `facil`" — o limitador é a complexidade, não a natureza.
+**Decisão:** as naturezas elegíveis nos DOIS gates (pré e pós-call) passam a ser `problema` e `alteracao` (`NATUREZAS_RESOLVIVEIS`); `duvida` segue fora (nada a mudar no sistema). O prompt orienta o modelo: alteração só é implementável quando pontual e inequívoca (texto/rótulo/valor) — regra de negócio, fluxo ou ambiguidade não é `facil`. A SPEC continua sendo gerada; a mensagem pública de PR-em-revisão (D-022) vira texto neutro ("proposta de mudança"). Todos os demais guardrails intactos: complexidade `facil`, confiança ≥ limiar, tenant habilitado, PR com aprovação humana, nunca merge/deploy.
+**Consequências:** specs/05 §6 atualizada (título "problema/alteração + fácil"); testes dos gates invertidos para alteracao (+ caso `duvida` negado); alterações fáceis de texto passam a virar PR automaticamente.
+
 ## D-022 — Correção da IA é proposta em revisão, nunca "resolvido" ao cliente (2026-07-17)
 
 **Status:** aceita.

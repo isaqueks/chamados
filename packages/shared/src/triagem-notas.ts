@@ -532,11 +532,12 @@ export function montarAvisoPromessaRebaixada(original: string, motivos: string[]
 /**
  * Mensagem PÚBLICA publicada pelo PIPELINE (nunca pelo modelo) quando a tentativa
  * de resolução vira PR/push com sucesso (D-022): informa o cliente de que a
- * análise avançou e a correção proposta está EM REVISÃO pela equipe — sem jargão,
- * sem prometer prazo e sem afirmar que algo já mudou em produção.
+ * análise avançou e a mudança proposta está EM REVISÃO pela equipe — sem jargão,
+ * sem prometer prazo e sem afirmar que algo já mudou em produção. Texto NEUTRO
+ * quanto à natureza (serve a correção de problema E a alteração simples — D-023).
  */
 export const MENSAGEM_PUBLICA_CORRECAO_EM_REVISAO = [
-  'Temos novidades: nossa análise identificou a causa provável e uma proposta de correção já',
-  'foi preparada. Ela está agora em revisão pela nossa equipe — nada muda no sistema até essa',
+  'Temos novidades: concluímos a análise e já preparamos uma proposta de mudança para o seu',
+  'chamado. Ela está agora em revisão pela nossa equipe — nada muda no sistema até essa',
   'revisão ser aprovada e publicada. Avisaremos por aqui assim que houver uma posição.',
 ].join('\n');

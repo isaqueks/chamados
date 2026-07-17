@@ -19,8 +19,11 @@ describe('portaResolucaoAberta (gate PRÉ-call)', () => {
   it('fecha quando o tenant desabilitou', () => {
     expect(portaResolucaoAberta({ ...base, tenantHabilitado: false })).toBe(false);
   });
-  it('fecha quando a natureza declarada é alteracao', () => {
-    expect(portaResolucaoAberta({ ...base, naturezaDeclarada: Natureza.alteracao })).toBe(false);
+  it('abre também para natureza declarada alteracao (D-023)', () => {
+    expect(portaResolucaoAberta({ ...base, naturezaDeclarada: Natureza.alteracao })).toBe(true);
+  });
+  it('fecha para natureza declarada duvida', () => {
+    expect(portaResolucaoAberta({ ...base, naturezaDeclarada: Natureza.duvida })).toBe(false);
   });
   it('fecha quando não há repositório configurado', () => {
     expect(portaResolucaoAberta({ ...base, repoConfigurado: false })).toBe(false);
@@ -44,8 +47,11 @@ describe('deveTentarResolver (gate PÓS-call)', () => {
   it('NÃO tenta com complexidade media', () => {
     expect(deveTentarResolver({ ...base, complexidade: Complexidade.medio })).toBe(false);
   });
-  it('NÃO tenta com natureza efetiva alteracao', () => {
-    expect(deveTentarResolver({ ...base, naturezaEfetiva: Natureza.alteracao })).toBe(false);
+  it('tenta também com natureza efetiva alteracao (D-023: alteração simples + facil)', () => {
+    expect(deveTentarResolver({ ...base, naturezaEfetiva: Natureza.alteracao })).toBe(true);
+  });
+  it('NÃO tenta com natureza efetiva duvida', () => {
+    expect(deveTentarResolver({ ...base, naturezaEfetiva: Natureza.duvida })).toBe(false);
   });
   it('NÃO tenta abaixo do limiar de confiança', () => {
     expect(deveTentarResolver({ ...base, confianca: 0.5 })).toBe(false);

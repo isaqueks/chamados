@@ -21,10 +21,11 @@ import { detectarGithub, tokenDaCredencial, abrirPrGithub, type FetchImpl } from
  *
  * O GATE é decidido AQUI (pipeline), nunca no provider (specs/05 §6):
  *  - PRÉ-call (`portaResolucaoAberta`): decide se as ferramentas de escrita são
- *    sequer injetadas (tenant habilitado + natureza declarada `problema` + repo).
+ *    sequer injetadas (tenant habilitado + natureza declarada `problema` ou
+ *    `alteracao` (D-023) + repo).
  *  - PÓS-call (`deveTentarResolver`): decide se o worker cria branch/push/PR, com
- *    base no resultado real (natureza efetiva `problema`, complexidade `facil`,
- *    compreendido, confiança ≥ limiar, tentativa presente).
+ *    base no resultado real (natureza efetiva `problema`/`alteracao`, complexidade
+ *    `facil`, compreendido, confiança ≥ limiar, tentativa presente).
  */
 
 // ---------------------------------------------------------------------------
@@ -37,9 +38,19 @@ export interface EntradaGatePre {
   repoConfigurado: boolean;
 }
 
+/**
+ * Naturezas elegíveis à resolução automática (D-023): `problema` (correção) e
+ * `alteracao` (mudança simples, ex.: trocar um texto). O limitador REAL do gate
+ * é a complexidade `facil` + confiança (PÓS-call) — `duvida` fica fora (nada a
+ * mudar no sistema).
+ */
+const NATUREZAS_RESOLVIVEIS: readonly Natureza[] = [Natureza.problema, Natureza.alteracao];
+
 /** Gate PRÉ-call: injetar (ou não) as ferramentas de escrita nesta triagem. */
 export function portaResolucaoAberta(e: EntradaGatePre): boolean {
-  return e.tenantHabilitado && e.naturezaDeclarada === Natureza.problema && e.repoConfigurado;
+  return (
+    e.tenantHabilitado && NATUREZAS_RESOLVIVEIS.includes(e.naturezaDeclarada) && e.repoConfigurado
+  );
 }
 
 export interface EntradaGatePos {
@@ -60,7 +71,7 @@ export function deveTentarResolver(e: EntradaGatePos): boolean {
     e.repoConfigurado &&
     e.compreendido &&
     e.temTentativa &&
-    e.naturezaEfetiva === Natureza.problema &&
+    NATUREZAS_RESOLVIVEIS.includes(e.naturezaEfetiva) &&
     e.complexidade === Complexidade.facil &&
     e.confianca >= e.confiancaMin
   );

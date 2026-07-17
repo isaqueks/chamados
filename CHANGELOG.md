@@ -2,6 +2,21 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-17 — D-023: resolução automática também para alteração simples (fácil)
+
+- **Caso real (produção):** chamado "alterar um texto" saiu `alteracao` + `facil` com tenant/repo OK e NÃO gerou PR — os gates limitavam a resolução automática a `natureza = problema`. A diretriz do produto é que o limitador seja a COMPLEXIDADE (`facil`), não a natureza.
+- **Mudança (ADR D-023):** gates pré e pós-call aceitam `problema` e `alteracao` (`duvida` segue fora). Prompt orienta: alteração implementável só quando pontual e inequívoca (texto/rótulo/valor); regra de negócio/fluxo/ambiguidade não é `facil`. SPEC continua sendo gerada; mensagem pública de PR-em-revisão virou texto neutro ("proposta de mudança"). Demais guardrails intactos (confiança, tenant, PR com aprovação humana, nunca merge/deploy).
+- Spec 05 §6 atualizada; testes dos gates ajustados (+ caso `duvida` negado).
+
+## 2026-07-17 — Prompt: respostas da IA formatadas para chat (parágrafos e listas)
+
+- **Relato do usuário:** respostas da IA continuavam sem quebra de linha. **Investigação em produção provou que o renderizador está correto**: o texto CRU devolvido pelo modelo (gravado na ExecucaoIA) não tinha nenhum `\n` — parágrafo único de centenas de caracteres; onde o cru tem `\n`, o HTML tem `<br>`/`<p>` (fix de 2026-07-16 funcionando).
+- **Correção (spec 05 §5.3):** o system prompt agora exige formatação de chat na resposta: parágrafos curtos (1–3 frases) separados por linha em branco, enumerações como lista markdown, nunca bloco único corrido. Mensagens antigas (HTML já gravado) não mudam retroativamente.
+
+## 2026-07-17 — Script `tenant:provisionar` (provisionamento de produção)
+
+- **Novo script `tenant:provisionar`** (packages/db + atalho na raiz): provisionamento de tenant de PRODUÇÃO parametrizado por CLI — tenant + agente_ia + categoria geral + admin humano (senha forte gerada e impressa uma única vez, ou `--admin-senha`), ativação ao final; idempotente. O `seed:dev` continua exclusivo de dev (dados de exemplo, senhas conhecidas). Detalhes operacionais de ambiente (hosts, infra, credenciais) ficam FORA do repositório — vivem na documentação do próprio ambiente.
+
 ## 2026-07-17 — D-022: correção da IA é proposta em revisão, nunca "resolvido" ao cliente
 
 - **Incômodo (relato do usuário):** a IA alterava código e anunciava ao cliente que o problema estava "resolvido" — falso: a alteração vira PR pendente de aprovação humana + deploy manual, e quando a complexidade não é `facil` o gate PÓS-call nem cria o PR (a alteração é descartada). Os gates já estavam corretos (PR só com `facil` + confiança ≥ limiar); faltava governar a comunicação.

@@ -269,6 +269,8 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     // A alteração é PROPOSTA em PR com revisão humana — nunca "resolvido" ao cliente.
     expect(sp).toContain('REVISÃO HUMANA');
     expect(sp).toMatch(/JAMAIS diga ao cliente[\s\S]*"foi resolvido\/corrigido"/);
+    // D-023: alteração simples (facil) também é implementável — não só problema.
+    expect(sp).toContain('ALTERAÇÃO simples (D-023)');
   });
 
   it('montarSystemPrompt injeta as instruções do tenant SUBORDINADAS às regras (D-020)', () => {
