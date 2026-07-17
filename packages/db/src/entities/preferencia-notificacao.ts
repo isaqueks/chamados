@@ -3,8 +3,10 @@ import { EntitySchema } from 'typeorm';
 /**
  * PreferenciaNotificacao (specs/02, specs/06 §7): granularidade
  * (usuário × evento × canal) → habilitado. A AUSÊNCIA de linha significa o DEFAULT
- * do papel (habilitado para os eventos que o afetam). Eventos OBRIGATÓRIOS (§7)
- * nunca são desabilitáveis — o serviço recusa e o dispatcher ignora a preferência.
+ * do CATÁLOGO (`defaultDoEvento`): eventos ruidosos (mudança de status/prioridade)
+ * nascem DESLIGADOS (anti-flood, opt-in); os demais, ligados. Eventos OBRIGATÓRIOS
+ * (§7) nunca são desabilitáveis — o serviço recusa e o dispatcher ignora a
+ * preferência.
  */
 export interface PreferenciaNotificacao {
   id: string;

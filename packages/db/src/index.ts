@@ -243,6 +243,7 @@ export {
   eventoNotificavelDe,
   eventosDoPapel,
   eObrigatorio,
+  defaultDoEvento,
   papelDestinatario,
   chaveIdempotencia,
   chaveIdempotenciaTransacional,

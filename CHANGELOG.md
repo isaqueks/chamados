@@ -13,6 +13,12 @@
 - **Relato do usuário:** respostas da IA continuavam sem quebra de linha. **Investigação em produção provou que o renderizador está correto**: o texto CRU devolvido pelo modelo (gravado na ExecucaoIA) não tinha nenhum `\n` — parágrafo único de centenas de caracteres; onde o cru tem `\n`, o HTML tem `<br>`/`<p>` (fix de 2026-07-16 funcionando).
 - **Correção (spec 05 §5.3):** o system prompt agora exige formatação de chat na resposta: parágrafos curtos (1–3 frases) separados por linha em branco, enumerações como lista markdown, nunca bloco único corrido. Mensagens antigas (HTML já gravado) não mudam retroativamente.
 
+## 2026-07-17 — Anti-flood de e-mails: status/prioridade viram opt-in (spec 06 §7)
+
+- **Relato do usuário (com print):** cada chamado gerava 5+ e-mails em minutos — "status Em triagem", "status Em atendimento", "prioridade Média"… A infraestrutura de preferências por evento (usuário × evento × canal, specs/06 §7) já existia e funcionava (páginas em `/portal/preferencias` e no painel; dispatcher consulta); o problema era o DEFAULT "ausência de linha = tudo ligado".
+- **Mudança:** default agora vem do CATÁLOGO (`defaultDoEvento`, fonte única para dispatcher, serviço e UI): `mudanca_status` e `mudanca_prioridade` nascem DESLIGADOS (quem quiser, liga na página de preferências); os demais seguem ligados — confirmação de abertura, nova mensagem pública, resolvido, fechado, reaberto, cancelado, atribuição. Obrigatórios continuam invioláveis; teste de coerência garante que nenhum obrigatório nasça desligado.
+- Preferências explícitas já salvas não mudam (a linha do usuário sempre vence o default).
+
 ## 2026-07-17 — Script `tenant:provisionar` (provisionamento de produção)
 
 - **Novo script `tenant:provisionar`** (packages/db + atalho na raiz): provisionamento de tenant de PRODUÇÃO parametrizado por CLI — tenant + agente_ia + categoria geral + admin humano (senha forte gerada e impressa uma única vez, ou `--admin-senha`), ativação ao final; idempotente. O `seed:dev` continua exclusivo de dev (dados de exemplo, senhas conhecidas). Detalhes operacionais de ambiente (hosts, infra, credenciais) ficam FORA do repositório — vivem na documentação do próprio ambiente.

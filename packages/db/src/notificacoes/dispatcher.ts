@@ -11,6 +11,7 @@ import {
   CanalNotificacaoTipo,
   chaveIdempotencia,
   eObrigatorio,
+  defaultDoEvento,
   eventoNotificavelDe,
   type EventoNotificavel,
   type JobNotificacao,
@@ -46,7 +47,7 @@ function papelDoSlot(slot: PapelDestinatario): PapelDestinatario {
   return slot;
 }
 
-/** Verifica a preferência de e-mail; ausência de canal/linha = habilitado (default). */
+/** Verifica a preferência de e-mail; ausência de linha = default do CATÁLOGO (§7). */
 async function emailHabilitado(
   em: EntityManager,
   usuarioId: string,
@@ -55,11 +56,11 @@ async function emailHabilitado(
   canalEmailId: string | null,
 ): Promise<boolean> {
   if (eObrigatorio(evento, papel)) return true; // obrigatório ignora preferência (§7).
-  if (!canalEmailId) return true; // sem canal de e-mail materializado → default on.
+  if (!canalEmailId) return defaultDoEvento(evento); // sem canal materializado → default.
   const linha = await em.findOne(PreferenciaNotificacaoSchema, {
     where: { usuario_id: usuarioId, evento, canal_id: canalEmailId },
   });
-  return linha ? linha.habilitado : true;
+  return linha ? linha.habilitado : defaultDoEvento(evento);
 }
 
 /**

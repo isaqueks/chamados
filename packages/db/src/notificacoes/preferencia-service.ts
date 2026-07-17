@@ -4,6 +4,7 @@ import {
   CATALOGO_NOTIFICACOES,
   eventosDoPapel,
   eObrigatorio,
+  defaultDoEvento,
   type EventoNotificavel,
   type PapelDestinatario,
 } from './tipos';
@@ -11,8 +12,9 @@ import {
 /**
  * Preferências de notificação por usuário (specs/06 §7). A regra de resolução:
  *  - evento OBRIGATÓRIO para o papel → SEMPRE habilitado (ignora a preferência);
- *  - senão, existe linha → usa `habilitado`; AUSENTE → default `true` (o papel
- *    recebe por padrão os eventos que o afetam — specs/06 §7).
+ *  - senão, existe linha → usa `habilitado`; AUSENTE → default do CATÁLOGO
+ *    (`defaultDoEvento`): eventos ruidosos (status/prioridade) nascem DESLIGADOS
+ *    (anti-flood, opt-in); os demais, ligados.
  */
 
 /** Resolve se um (usuário × evento × canal) está habilitado (efetivo). */
@@ -27,7 +29,7 @@ export async function preferenciaHabilitada(
   const linha = await em.findOne(PreferenciaNotificacaoSchema, {
     where: { usuario_id: usuarioId, evento, canal_id: canalId },
   });
-  return linha ? linha.habilitado : true;
+  return linha ? linha.habilitado : defaultDoEvento(evento);
 }
 
 /** Item da matriz de preferências exibida ao usuário. */
@@ -63,7 +65,7 @@ export async function listarPreferenciasUsuario(
       rotulo: cat.rotulo,
       descricao: cat.descricao,
       obrigatorio,
-      habilitado: obrigatorio ? true : (mapa.get(evento) ?? true),
+      habilitado: obrigatorio ? true : (mapa.get(evento) ?? defaultDoEvento(evento)),
     };
   });
 }

@@ -226,7 +226,7 @@ Notas:
 
 Persistidas em `PreferenciaNotificacao` (schema em `02-modelo-de-dados.md`). O dispatcher consulta antes de enfileirar.
 
-- Granularidade: **(usuário × tipoEvento × canal) → habilitado**. Default sensato por papel (cliente recebe eventos que o afetam por e-mail; operador recebe atribuições e novas mensagens).
+- Granularidade: **(usuário × tipoEvento × canal) → habilitado**. Sem linha de preferência, vale o **default do catálogo** (`defaultDoEvento`, ajuste anti-flood 2026-07-17): eventos **ruidosos** — `mudanca_status` e `mudanca_prioridade` — nascem **DESLIGADOS** (opt-in na página de preferências); os demais nascem ligados. Motivo (caso real): uma triagem normal transita `novo → em_triagem → em_atendimento` e ajusta prioridade em minutos — com tudo ligado, cada chamado gerava 5+ e-mails de burocracia; os desfechos que importam (resolvido/fechado/reaberto/cancelado) têm eventos próprios e continuam notificando.
 - **Eventos obrigatórios** não podem ser desabilitados (coluna "Obrigatório?" na §6) — ex.: confirmação de abertura, resolução, atribuição ao operador. Garante que o usuário não perca eventos de estado crítico.
 - **Canal preferido**: usuário escolhe canais ativos (e-mail sempre disponível na fase 1; WhatsApp quando o tenant o habilitar). Se nenhum canal ativo restar para um evento obrigatório, e-mail é forçado como fallback.
 - **Quiet hours / digest** (fase futura): agrupar notificações não urgentes em resumo. Não faz parte do MVP.

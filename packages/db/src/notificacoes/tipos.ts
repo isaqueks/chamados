@@ -92,6 +92,12 @@ export interface EntradaCatalogo {
   obrigatorio: PapelDestinatario[];
   /** O autor da ação recebe (confirmação — ex.: abertura/reabertura). Default: não. */
   confirmacaoAutor?: boolean;
+  /**
+   * Evento RUIDOSO: sem linha de preferência, nasce DESLIGADO (opt-in — §7).
+   * Anti-flood: uma triagem normal transita status/prioridade várias vezes em
+   * minutos; quem quiser esse nível de detalhe liga na página de preferências.
+   */
+  padraoDesligado?: boolean;
   /** Categoria de webhook disparada (null = não dispara webhook). */
   webhook: WebhookTipo | null;
 }
@@ -115,9 +121,12 @@ export const CATALOGO_NOTIFICACOES: Record<EventoNotificavel, EntradaCatalogo> =
   },
   mudanca_status: {
     rotulo: 'Mudança de status',
-    descricao: 'Transição de status do chamado.',
+    descricao: 'Transição de status do chamado (em triagem, em atendimento…).',
     destinatarios: ['cliente', 'operador'],
     obrigatorio: [],
+    // Ruído: a triagem move o status várias vezes em minutos; os desfechos que
+    // importam (resolvido/fechado/reaberto/cancelado) têm eventos PRÓPRIOS.
+    padraoDesligado: true,
     webhook: 'status_alterado',
   },
   mudanca_prioridade: {
@@ -125,6 +134,7 @@ export const CATALOGO_NOTIFICACOES: Record<EventoNotificavel, EntradaCatalogo> =
     descricao: 'Alteração da prioridade do chamado.',
     destinatarios: ['cliente', 'operador'],
     obrigatorio: [],
+    padraoDesligado: true,
     webhook: 'prioridade_alterada',
   },
   atribuicao: {
@@ -210,6 +220,15 @@ export function eventosDoPapel(papel: PapelDestinatario): EventoNotificavel[] {
 /** O evento é obrigatório (não desabilitável) para o papel? (specs/06 §7). */
 export function eObrigatorio(evento: EventoNotificavel, papel: PapelDestinatario): boolean {
   return CATALOGO_NOTIFICACOES[evento].obrigatorio.includes(papel);
+}
+
+/**
+ * Default EFETIVO do evento quando o usuário nunca definiu preferência (§7):
+ * eventos ruidosos (`padraoDesligado`) nascem desligados (opt-in); os demais,
+ * ligados. Fonte ÚNICA do default — dispatcher, serviço e UI usam esta função.
+ */
+export function defaultDoEvento(evento: EventoNotificavel): boolean {
+  return CATALOGO_NOTIFICACOES[evento].padraoDesligado !== true;
 }
 
 /** Converte o `Papel` do usuário no `PapelDestinatario` (ou `null` se não recebe). */
