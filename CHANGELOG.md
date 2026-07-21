@@ -2,9 +2,10 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
-## 2026-07-20 — Doc: guia de integração de Webhooks (`docs/webhooks.md`)
+## 2026-07-20 — Doc: guia de integração de Webhooks (`docs/webhooks.md` + versão externa)
 
 - **Novo `docs/webhooks.md`**: documentação de referência do canal webhook (specs/06 §3.2, D-003) para integradores e admins — configuração no painel (URL/segredo/ativo + evento de teste), os 7 tipos de evento, headers e verificação da assinatura HMAC SHA-256 (com exemplo de código), schema do payload, semântica de entrega (2xx, timeout, retries com backoff, dedupe por `x-chamados-event-id`, ordem não garantida), circuito de desativação automática por falhas e regras anti-SSRF. Sem mudança de comportamento — só documentação derivada da spec e do código.
+- **Novo `docs/webhooks-integracao.md`** (pedido do usuário): versão **autossuficiente para distribuição externa** — mesmo conteúdo do ponto de vista do receptor, sem NENHUMA referência a specs/código/infra internos; inclui exemplos de verificação de assinatura em Node.js e Python, tabela de valores dos enums e orientação de tolerância a valores futuros. `docs/webhooks.md` permanece como referência interna e aponta para a versão externa.
 
 ## 2026-07-17 — D-023: resolução automática também para alteração simples (fácil)
 

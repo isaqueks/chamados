@@ -1,6 +1,6 @@
 # Webhooks — guia de integração
 
-> Documento de referência para **integradores** (o sistema externo do tenant que recebe os webhooks) e **admins** (que configuram o canal no painel). Fonte da verdade: `specs/06-notificacoes.md` §3.2 (D-003). Se este guia divergir da spec, a spec ganha.
+> Documento de referência **interna** (spec + código). Fonte da verdade: `specs/06-notificacoes.md` §3.2 (D-003) — se este guia divergir da spec, a spec ganha. Para enviar a integradores externos, use a versão autossuficiente (sem referências internas): [`docs/webhooks-integracao.md`](webhooks-integracao.md).
 
 O Chamados envia um `POST` JSON **assinado** ao endpoint do tenant a cada atualização relevante de chamado. O caso de uso típico: o tenant já possui um sistema próprio que entrega mensagens aos usuários finais (WhatsApp, app, painel interno) — o Chamados apenas o notifica.
 
