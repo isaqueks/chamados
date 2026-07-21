@@ -2,6 +2,10 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-20 — Doc: guia de integração de Webhooks (`docs/webhooks.md`)
+
+- **Novo `docs/webhooks.md`**: documentação de referência do canal webhook (specs/06 §3.2, D-003) para integradores e admins — configuração no painel (URL/segredo/ativo + evento de teste), os 7 tipos de evento, headers e verificação da assinatura HMAC SHA-256 (com exemplo de código), schema do payload, semântica de entrega (2xx, timeout, retries com backoff, dedupe por `x-chamados-event-id`, ordem não garantida), circuito de desativação automática por falhas e regras anti-SSRF. Sem mudança de comportamento — só documentação derivada da spec e do código.
+
 ## 2026-07-17 — D-023: resolução automática também para alteração simples (fácil)
 
 - **Caso real (produção):** chamado "alterar um texto" saiu `alteracao` + `facil` com tenant/repo OK e NÃO gerou PR — os gates limitavam a resolução automática a `natureza = problema`. A diretriz do produto é que o limitador seja a COMPLEXIDADE (`facil`), não a natureza.

@@ -296,7 +296,8 @@ O **webhook** é assinado por HMAC-SHA256 no header `X-Chamados-Signature`
 (`sha256=<hex>`), que o receptor recalcula com o segredo do canal; o payload NUNCA
 inclui conteúdo interno (notas internas, complexidade). Após
 `NOTIFICACOES_WEBHOOK_MAX_FALHAS` falhas consecutivas o canal é desativado
-automaticamente e os admins recebem um e-mail de alerta.
+automaticamente e os admins recebem um e-mail de alerta. Guia completo do canal
+(headers, verificação da assinatura, payload, retries): [docs/webhooks.md](webhooks.md).
 
 Para validar a camada de notificações de ponta a ponta (e-mail SMTP fake + webhook
 com HMAC, idempotência, retry, desativação por falhas, RLS):
