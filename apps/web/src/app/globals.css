@@ -198,6 +198,13 @@
   html {
     @apply font-sans;
   }
+  /* Tailwind v4 mudou o default de botões para `cursor: default`; a UI inteira
+     (D-009) espera a affordance clássica de clique. Desabilitado mantém o
+     not-allowed que os componentes shadcn aplicam via utilitário. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
   /* Acessibilidade (specs/08 §6): respeita quem pediu menos animação. */
   @media (prefers-reduced-motion: reduce) {
     *,
