@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Natureza, Complexidade } from '@chamados/shared';
+import { Natureza, Complexidade, ConfiancaAnalise } from '@chamados/shared';
 import { portaResolucaoAberta, deveTentarResolver } from './resolucao';
 
 /**
@@ -36,8 +36,8 @@ describe('deveTentarResolver (gate PÓS-call)', () => {
     naturezaEfetiva: Natureza.problema,
     complexidade: Complexidade.facil,
     compreendido: true,
-    confianca: 0.9,
-    confiancaMin: 0.7,
+    confianca: ConfiancaAnalise.alta,
+    confiancaMin: ConfiancaAnalise.alta,
     temTentativa: true,
     repoConfigurado: true,
   };
@@ -53,8 +53,24 @@ describe('deveTentarResolver (gate PÓS-call)', () => {
   it('NÃO tenta com natureza efetiva duvida', () => {
     expect(deveTentarResolver({ ...base, naturezaEfetiva: Natureza.duvida })).toBe(false);
   });
-  it('NÃO tenta abaixo do limiar de confiança', () => {
-    expect(deveTentarResolver({ ...base, confianca: 0.5 })).toBe(false);
+  it('NÃO tenta abaixo do limiar de confiança (D-025: categórica, baixa < media < alta)', () => {
+    expect(deveTentarResolver({ ...base, confianca: ConfiancaAnalise.media })).toBe(false);
+    expect(deveTentarResolver({ ...base, confianca: ConfiancaAnalise.baixa })).toBe(false);
+    // Limiar rebaixado pelo tenant: media passa, baixa segue barrada.
+    expect(
+      deveTentarResolver({
+        ...base,
+        confianca: ConfiancaAnalise.media,
+        confiancaMin: ConfiancaAnalise.media,
+      }),
+    ).toBe(true);
+    expect(
+      deveTentarResolver({
+        ...base,
+        confianca: ConfiancaAnalise.baixa,
+        confiancaMin: ConfiancaAnalise.media,
+      }),
+    ).toBe(false);
   });
   it('NÃO tenta se não compreendeu', () => {
     expect(deveTentarResolver({ ...base, compreendido: false })).toBe(false);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Complexidade, Natureza, Prioridade } from './enums';
+import { Complexidade, ConfiancaAnalise, Natureza, Prioridade } from './enums';
 import {
   formatarPerguntasCliente,
   montarNotaDiagnostico,
@@ -40,7 +40,7 @@ describe('montarNotaDiagnostico', () => {
   it('aplica prioridade quando a IA a aplicou (chamado virgem)', () => {
     const nota = montarNotaDiagnostico({
       diagnostico: 'Timeout no serviço de pedidos.',
-      confianca: 0.9,
+      confianca: ConfiancaAnalise.alta,
       complexidade: Complexidade.facil,
       naturezaAtual: Natureza.problema,
       naturezaAjustada: Natureza.problema,
@@ -48,6 +48,8 @@ describe('montarNotaDiagnostico', () => {
       prioridadeSugerida: null,
     });
     expect(nota).toContain('Diagnóstico automático');
+    // D-025: confiança categórica com rótulo pt-BR, nunca "0.90".
+    expect(nota).toContain('Confiança da análise: alta');
     expect(nota).toContain('Complexidade avaliada: facil');
     expect(nota).toContain('Prioridade ajustada automaticamente para: alta');
     expect(nota).not.toContain('Natureza reclassificada');
@@ -56,7 +58,7 @@ describe('montarNotaDiagnostico', () => {
   it('apenas sugere prioridade e registra reclassificação de natureza', () => {
     const nota = montarNotaDiagnostico({
       diagnostico: 'É um pedido de comportamento novo.',
-      confianca: 0.8,
+      confianca: ConfiancaAnalise.media,
       complexidade: Complexidade.medio,
       naturezaAtual: Natureza.problema,
       naturezaAjustada: Natureza.alteracao,

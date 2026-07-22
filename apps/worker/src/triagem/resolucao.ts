@@ -2,6 +2,8 @@ import simpleGit from 'simple-git';
 import {
   Natureza,
   Complexidade,
+  confiancaAtinge,
+  type ConfiancaAnalise,
   nomeBranchResolucao,
   montarMensagemCommit,
   montarTituloPr,
@@ -58,8 +60,9 @@ export interface EntradaGatePos {
   naturezaEfetiva: Natureza;
   complexidade: Complexidade | null;
   compreendido: boolean;
-  confianca: number;
-  confiancaMin: number;
+  /** Confiança CATEGÓRICA (D-025): baixa < media < alta. */
+  confianca: ConfiancaAnalise;
+  confiancaMin: ConfiancaAnalise;
   temTentativa: boolean;
   repoConfigurado: boolean;
 }
@@ -73,7 +76,7 @@ export function deveTentarResolver(e: EntradaGatePos): boolean {
     e.temTentativa &&
     NATUREZAS_RESOLVIVEIS.includes(e.naturezaEfetiva) &&
     e.complexidade === Complexidade.facil &&
-    e.confianca >= e.confiancaMin
+    confiancaAtinge(e.confianca, e.confiancaMin)
   );
 }
 

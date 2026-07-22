@@ -96,7 +96,7 @@ const RESULTADO_SUCESSO: MensagemSdk = {
   usage: { input_tokens: 1500, output_tokens: 300 },
   structured_output: {
     compreendido: true,
-    confianca: 0.82,
+    confianca: 'alta',
     perguntasAoCliente: null,
     complexidade: 'medio',
     naturezaAjustada: 'problema',
@@ -113,7 +113,7 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     const r = await p.executarTriagem(inputBase());
 
     expect(r.compreendido).toBe(true);
-    expect(r.confianca).toBe(0.82);
+    expect(r.confianca).toBe('alta');
     expect(r.complexidade).toBe(Complexidade.medio);
     expect(r.naturezaAjustada).toBe(Natureza.problema);
     expect(r.prioridadeSugerida).toBe(Prioridade.alta);
@@ -142,6 +142,28 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(r.compreendido).toBe(false);
     expect(r.perguntasAoCliente).toEqual(['Qual erro?']);
     expect(r.complexidade).toBeNull();
+    // D-025: número legado (0.2) é mapeado para a faixa categórica.
+    expect(r.confianca).toBe('baixa');
+  });
+
+  it('confiança é CATEGÓRICA (D-025): aceita baixa/media/alta; número legado vira faixa; lixo = baixa', () => {
+    const com = (confianca: unknown) =>
+      mapearResultado(
+        {
+          type: 'result',
+          subtype: 'success',
+          structured_output: { compreendido: true, confianca },
+        },
+        Date.now(),
+      ).confianca;
+    expect(com('media')).toBe('media');
+    expect(com('alta')).toBe('alta');
+    expect(com(0.9)).toBe('alta');
+    expect(com(0.5)).toBe('media');
+    expect(com(0.1)).toBe('baixa');
+    // Fail-closed: valor desconhecido nunca habilita resolução automática.
+    expect(com('altíssima')).toBe('baixa');
+    expect(com(undefined)).toBe('baixa');
   });
 
   it('subtype error_max_budget_usd vira ErroProviderBudget', async () => {

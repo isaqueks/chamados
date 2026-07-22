@@ -3,6 +3,7 @@ import {
   Natureza,
   Prioridade,
   Complexidade,
+  ConfiancaAnalise,
   VisibilidadeMensagem,
   type AIProvider,
   type AIProviderInput,
@@ -514,6 +515,24 @@ function umDe<T extends string>(valores: readonly T[], v: unknown): T | null {
   return typeof v === 'string' && (valores as readonly string[]).includes(v) ? (v as T) : null;
 }
 
+/**
+ * Normaliza a confiança CATEGÓRICA (D-025). Tolerância a legado/modelo
+ * desobediente: número 0..1 vira faixa; qualquer outra coisa é `baixa`
+ * (fail-closed — confiança desconhecida nunca habilita resolução automática).
+ */
+function normalizarConfianca(v: unknown): ConfiancaAnalise {
+  const categoria = umDe(
+    [ConfiancaAnalise.baixa, ConfiancaAnalise.media, ConfiancaAnalise.alta],
+    v,
+  );
+  if (categoria) return categoria;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    if (v >= 0.75) return ConfiancaAnalise.alta;
+    if (v >= 0.4) return ConfiancaAnalise.media;
+  }
+  return ConfiancaAnalise.baixa;
+}
+
 /** Normaliza o objeto bruto no `AIProviderResult` (defensivo contra campos ausentes). */
 function normalizarResultado(
   bruto: Record<string, unknown>,
@@ -523,7 +542,7 @@ function normalizarResultado(
   const perguntas = Array.isArray(bruto.perguntasAoCliente)
     ? (bruto.perguntasAoCliente.filter((p) => typeof p === 'string') as string[])
     : null;
-  const confianca = typeof bruto.confianca === 'number' ? bruto.confianca : 0;
+  const confianca = normalizarConfianca(bruto.confianca);
 
   // tentativaResolucao: o PROVIDER só produz resumo + arquivosAlterados; branch/PR
   // são do worker (specs/05 §6). Só é considerada válida se houve arquivo alterado.
@@ -665,10 +684,14 @@ export function montarSystemPrompt(instrucoesTenant?: string | null): string {
     '  ainda tenha cara de conteúdo técnico — então mantenha-a mesmo simples.',
     '',
     'Ao final, responda com um objeto JSON no formato AIProviderResult:',
-    '{ compreendido, confianca (0..1), perguntasAoCliente (string[]|null), respostaAoCliente',
-    '(string|null), complexidade (facil|medio|dificil|null), naturezaAjustada (problema|alteracao|',
-    'duvida|null), prioridadeSugerida (baixa|media|alta|urgente|null), diagnostico (string|null), spec',
-    '(string|null), tentativaResolucao ({resumo, arquivosAlterados}|null) }.',
+    '{ compreendido, confianca ("baixa"|"media"|"alta"), perguntasAoCliente (string[]|null),',
+    'respostaAoCliente (string|null), complexidade (facil|medio|dificil|null), naturezaAjustada',
+    '(problema|alteracao|duvida|null), prioridadeSugerida (baixa|media|alta|urgente|null),',
+    'diagnostico (string|null), spec (string|null), tentativaResolucao',
+    '({resumo, arquivosAlterados}|null) }.',
+    '"confianca" é CATEGÓRICA (nunca número): "alta" só quando a conclusão está ancorada em',
+    'evidência concreta do código/logs/BD; "media" quando a análise é plausível mas com lacunas;',
+    '"baixa" quando é mais hipótese do que evidência. Resolução automática exige "alta".',
     'Sua ÚLTIMA mensagem deve conter APENAS esse objeto JSON (sem texto ao redor).',
     '',
     'NATUREZA DO CHAMADO — classifique você mesmo em "naturezaAjustada" (a declarada pode estar',

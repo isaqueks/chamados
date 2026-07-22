@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ConfiancaAnalise } from '@chamados/shared';
 
 /**
  * Configuração/limites das FERRAMENTAS REAIS read-only da triagem (M7 — specs/05
@@ -13,12 +14,26 @@ function num(nome: string, padrao: number): number {
   return Number.isFinite(v) && v > 0 ? v : padrao;
 }
 
-/** Número dentro de [min, max] (aceita 0 e frações — ex.: limiar de confiança). */
-function numMin(nome: string, padrao: number, min: number, max: number): number {
-  const raw = process.env[nome];
-  if (raw === undefined || raw.trim() === '') return padrao;
+/**
+ * Confiança mínima CATEGÓRICA do gate de resolução (D-025). Aceita
+ * `baixa`/`media`/`alta`; tolera o formato numérico legado (0..1 → faixa);
+ * qualquer outra coisa cai no padrão.
+ */
+function confiancaMinEnv(nome: string, padrao: ConfiancaAnalise): ConfiancaAnalise {
+  const raw = process.env[nome]?.trim();
+  if (!raw) return padrao;
+  if ((Object.values(ConfiancaAnalise) as string[]).includes(raw)) {
+    return raw as ConfiancaAnalise;
+  }
   const v = Number(raw);
-  return Number.isFinite(v) && v >= min && v <= max ? v : padrao;
+  if (Number.isFinite(v) && v >= 0 && v <= 1) {
+    return v >= 0.75
+      ? ConfiancaAnalise.alta
+      : v >= 0.4
+        ? ConfiancaAnalise.media
+        : ConfiancaAnalise.baixa;
+  }
+  return padrao;
 }
 
 export const ferramentasConfig = {
@@ -55,8 +70,8 @@ export const ferramentasConfig = {
    * working copy descartável + limiar de confiança do gate. `IA_RESOLUCAO_*`.
    */
   resolucao: {
-    /** Confiança mínima do gate (specs/05 §5.1: default 0.7). */
-    confiancaMin: numMin('IA_RESOLUCAO_CONFIANCA_MIN', 0.7, 0, 1),
+    /** Confiança mínima CATEGÓRICA do gate (D-025: default `alta`). */
+    confiancaMin: confiancaMinEnv('IA_RESOLUCAO_CONFIANCA_MIN', ConfiancaAnalise.alta),
     /** Teto de arquivos que a tentativa pode criar/alterar (correção pontual). */
     maxArquivos: num('IA_RESOLUCAO_MAX_ARQUIVOS', 10),
     /** Teto de tamanho de cada arquivo escrito (bytes). */

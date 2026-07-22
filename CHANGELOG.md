@@ -2,6 +2,12 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-22 — D-025: confiança da análise vira categórica (baixa/média/alta)
+
+- **Avaliação do usuário:** o `confianca: 0..1` pedido à IA era um chute com casas decimais — precisão ilusória ("Confiança da análise: 0.78" na nota interna, `0.78 >= 0.7` no gate é aritmética sobre ruído).
+- **Mudança (ADR D-025):** enum canônico `ConfiancaAnalise` (`baixa`/`media`/`alta`) em todo o contrato — prompt (com critério: `alta` só com evidência concreta no código/logs/BD), `AIProviderResult`, nota interna (agora "Confiança da análise: alta"), eventos e o gate de resolução automática (`IA_RESOLUCAO_CONFIANCA_MIN` agora categórico, default `alta` — mais exigente que o antigo 0.7). Normalização defensiva: número legado → faixa; valor desconhecido → `baixa` (fail-closed).
+- Specs 01 §4.1 e 05 §5.1/§6 atualizadas (o `LIMIAR_TENANT` numérico pendente foi resolvido/abolido); testes dos três lados (provider, gate, nota).
+
 ## 2026-07-22 — Triagem: fim do questionário genérico; saída ilegível escalona a humano
 
 - **Incidente (produção, chamado #8, 2ª execução):** o modelo devolveu a última mensagem sem JSON parseável; `extrairEstruturado` degradava silenciosamente para `{}` → "não entendeu" vazio → o aplicador publicava o fallback fixo "Você poderia detalhar o que aconteceu, com o passo a passo para reproduzir?" — fora de contexto (era `alteracao` já entendida, e a cliente tinha acabado de responder). Diretriz do usuário: **JAMAIS texto genérico ao cliente; antes não responder nada.**

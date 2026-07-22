@@ -12,7 +12,14 @@
  * `custoUsd`/`duracaoMs`/`tokensEntrada`/`tokensSaida` (specs/01 §4.1, specs/05
  * §10) — gravada em `ExecucaoIA` com esses mesmos nomes.
  */
-import type { Natureza, Prioridade, Complexidade, Papel, VisibilidadeMensagem } from './enums';
+import type {
+  Natureza,
+  Prioridade,
+  Complexidade,
+  ConfiancaAnalise,
+  Papel,
+  VisibilidadeMensagem,
+} from './enums';
 
 /**
  * Cap (caracteres) das instruções do tenant para a IA (`tenant.ia_instrucoes`,
@@ -287,8 +294,9 @@ export interface TentativaResolucao {
 
 export interface AIProviderResult {
   compreendido: boolean;
-  /** 0..1 */
-  confianca: number;
+  /** Confiança CATEGÓRICA da análise (D-025): `baixa`/`media`/`alta` — nunca
+   *  número (precisão ilusória de LLM). Gate de resolução exige `alta`. */
+  confianca: ConfiancaAnalise;
   perguntasAoCliente: string[] | null;
   /**
    * Mensagem PÚBLICA amigável ao cliente (D-015), em linguagem simples de

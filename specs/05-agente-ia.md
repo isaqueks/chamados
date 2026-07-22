@@ -208,11 +208,13 @@ A saída do modelo deve incluir um objeto de avaliação; o worker aplica os lim
 ```json
 {
   "compreendido": true,
-  "confianca": 0.0-1.0,
+  "confianca": "baixa | media | alta",
   "evidencias": ["arquivo:linha", "log:...", "consulta:..."],
   "lacunas": ["o que falta para diagnosticar"]
 }
 ```
+
+**Confiança CATEGÓRICA (D-025, 2026-07-22):** `confianca` é `baixa`/`media`/`alta` — nunca número. Um "0.78" de LLM tem precisão ilusória (é um chute com casas decimais); três níveis expressam o mesmo sem fingir exatidão. Critério dado ao modelo: `alta` só com conclusão ancorada em evidência concreta (código/logs/BD); `media` = plausível com lacunas; `baixa` = mais hipótese que evidência. O provider normaliza defensivamente (número legado → faixa; valor desconhecido → `baixa`, fail-closed).
 
 **Etapa 0 — meta-análise da intenção (tarefa #19)**: ANTES de qualquer ferramenta, a IA decide **o que o cliente quer** (título + descrição + timeline): algo quebrado → `problema`; pedido de que o sistema funcione **diferente** (novos valores/opções, mudar ordem/fluxo/regra, nova funcionalidade — mesmo sem nada quebrado) → `alteracao`; só quer entender → `duvida`. A decisão é registrada em `naturezaAjustada` **sempre** — inclusive quando `compreendido = false` (o aplicador passa a aplicá-la também no fluxo de perguntas), pois a classificação de intenção quase sempre é possível só pelo texto. Toda a análise seguinte segue o protocolo da natureza escolhida — em particular, as perguntas ao cliente são específicas por natureza: perguntas de reprodução ("o que aconteceu", "passo a passo") são EXCLUSIVAS de `problema`; em `alteracao` pergunta-se apenas o que falta para especificar a mudança. Motivação: caso real de um chamado de alterações classificado como problema, com pergunta genérica de reprodução — o protocolo anterior era enviesado para bug.
 
@@ -220,13 +222,13 @@ A saída do modelo deve incluir um objeto de avaliação; o worker aplica os lim
 
 Considera-se **entendido** quando TODAS as condições valem:
 
-- `confianca >= LIMIAR_TENANT` (default `0.7`, configurável por tenant);
+- `confianca` em pelo menos `media` (a `baixa` indica hipótese sem lastro — pergunta ou escala);
 - há ao menos uma `evidencia` concreta ancorada em código, log ou BD (não só no texto do cliente);
 - `lacunas` vazio OU preenchível por inferência, sem depender de informação que só o cliente possui.
 
 Caso contrário → **não entendeu** → fluxo de perguntas (§5.3).
 
-> DECISÃO PENDENTE: valor default do `LIMIAR_TENANT` e se ele varia por `natureza` (alteração pode exigir menos evidência de código que problema).
+> Resolvido por D-025: o antigo `LIMIAR_TENANT` numérico (0.7) foi abolido junto com a confiança numérica; o limiar do gate de resolução é categórico (`IA_RESOLUCAO_CONFIANCA_MIN`, default `alta`).
 
 ### 5.2 Classificação de complexidade e validação de natureza
 
@@ -278,7 +280,7 @@ Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e mov
 A tentativa de resolução é controlada por um **gate duplo no pipeline** — nunca no provider (menor privilégio, `09-seguranca-lgpd.md` §4). **D-023 (2026-07-17)**: as naturezas elegíveis são `problema` E `alteracao` — o limitador real é a **complexidade `facil`** + confiança, não a natureza (caso motivador: "alterar um texto" é alteração fácil e ficava sem PR; `duvida` segue fora — nada a mudar no sistema):
 
 - **Gate PRÉ-call**: decide se as ferramentas de **escrita** (`repo_escrever_arquivo`/`repo_criar_arquivo`, §4.2) são sequer injetadas nesta triagem. Condições cumulativas: tenant com resolução automática habilitada (default: habilitada só para geração de PR, nunca merge) + `naturezaDeclarada ∈ {problema, alteracao}` + `SistemaAlvo` com repositório configurado. Se o gate está fechado, o provider não recebe as ferramentas de escrita e não há como tentar resolver.
-- **Gate PÓS-call**: decide se o **worker** de fato cria branch/push/PR, com base no resultado real devolvido pelo provider. Condições cumulativas: gate pré-call também satisfeito + `naturezaAjustada ∈ {problema, alteracao}` + `complexidade = facil` + `compreendido = true` + `confianca >= LIMIAR` (§5.1) + `tentativaResolucao` presente (o provider efetivamente escreveu arquivos). Para alteração, o prompt orienta: só implementa mudança pontual e inequívoca (texto/rótulo/valor); qualquer regra de negócio/fluxo/ambiguidade não é `facil`. A SPEC (§7) continua sendo gerada normalmente.
+- **Gate PÓS-call**: decide se o **worker** de fato cria branch/push/PR, com base no resultado real devolvido pelo provider. Condições cumulativas: gate pré-call também satisfeito + `naturezaAjustada ∈ {problema, alteracao}` + `complexidade = facil` + `compreendido = true` + `confianca` no mínimo `IA_RESOLUCAO_CONFIANCA_MIN` (D-025: categórica, default `alta`) + `tentativaResolucao` presente (o provider efetivamente escreveu arquivos). Para alteração, o prompt orienta: só implementa mudança pontual e inequívoca (texto/rótulo/valor); qualquer regra de negócio/fluxo/ambiguidade não é `facil`. A SPEC (§7) continua sendo gerada normalmente.
 
 Quando o gate pré-call está aberto, o provider — se decidir tentar — escreve a correção numa **working copy descartável** (clone efêmero do cache, §3.2) usando `repo_escrever_arquivo`/`repo_criar_arquivo`, e devolve `tentativaResolucao = { resumo, arquivosAlterados }` (contrato canônico em `01-arquitetura.md` §4.1). O provider não tem acesso a git nem à rede — só escreve arquivos.
 
@@ -291,7 +293,7 @@ flowchart TD
     B -- sim --> D[injeta repo_escrever_arquivo / repo_criar_arquivo na working copy descartavel]
     C --> E[provider devolve AIProviderResult]
     D --> E
-    E --> F{gate POS-call: facil + compreendido + confianca >= limiar + tentativa presente?}
+    E --> F{gate POS-call: facil + compreendido + confianca alta + tentativa presente?}
     F -- nao --> Z[nota interna com diagnostico + acao sugerida; sem branch/PR]
     F -- sim --> G[worker valida alteracoes reais via git status]
     G --> H[worker cria branch ia/chamado-N-slug + commit padronizado]

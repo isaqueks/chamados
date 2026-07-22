@@ -158,6 +158,26 @@ export const StatusExecucaoIA = {
 export type StatusExecucaoIA = (typeof StatusExecucaoIA)[keyof typeof StatusExecucaoIA];
 
 /**
+ * Confiança da análise da triagem (D-025): CATEGÓRICA, nunca numérica — um
+ * "0.78" vindo de LLM tem precisão ilusória (é um chute com casas decimais).
+ * Três níveis bastam para as decisões do pipeline: o gate de resolução
+ * automática exige `alta`; a nota interna exibe o nível ao operador.
+ */
+export const ConfiancaAnalise = {
+  baixa: 'baixa',
+  media: 'media',
+  alta: 'alta',
+} as const;
+export type ConfiancaAnalise = (typeof ConfiancaAnalise)[keyof typeof ConfiancaAnalise];
+
+const ORDEM_CONFIANCA: Record<ConfiancaAnalise, number> = { baixa: 0, media: 1, alta: 2 };
+
+/** `valor` atinge (>=) a confiança `minima`? (baixa < media < alta) */
+export function confiancaAtinge(valor: ConfiancaAnalise, minima: ConfiancaAnalise): boolean {
+  return ORDEM_CONFIANCA[valor] >= ORDEM_CONFIANCA[minima];
+}
+
+/**
  * Gatilho que originou uma triagem de IA (specs/05 §2). Persistido em
  * `ExecucaoIA.gatilho` (coluna `text`) e carregado no job da fila `triagem-ia`.
  */

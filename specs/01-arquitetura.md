@@ -221,7 +221,7 @@ interface AIProviderInput {
 
 interface AIProviderResult {
   compreendido: boolean;
-  confianca: number; // 0..1
+  confianca: 'baixa' | 'media' | 'alta'; // CATEGÓRICA (D-025) — número 0..1 abolido (precisão ilusória de LLM)
   perguntasAoCliente: string[] | null;
   respostaAoCliente: string | null; // mensagem publica amigavel opcional (confirmacao/posicao/duvida resolvida); NUNCA detalhe tecnico — validada e rebaixavel pelo worker (D-015, 05-agente-ia.md §5.4)
   complexidade: 'facil' | 'medio' | 'dificil' | null;

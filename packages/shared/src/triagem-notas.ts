@@ -12,7 +12,7 @@
  * entra aqui como RESUMO NEUTRO já sanitizado pelo modelo, nunca o texto cru; e
  * as perguntas ao cliente nunca ecoam caminhos de código, queries ou segredos.
  */
-import type { Complexidade, Natureza, Prioridade } from './enums';
+import type { Complexidade, ConfiancaAnalise, Natureza, Prioridade } from './enums';
 
 // ---------------------------------------------------------------------------
 // Perguntas ao cliente (specs/05 §5.3) — mensagem PÚBLICA
@@ -49,7 +49,8 @@ export function formatarPerguntasCliente(perguntas: string[]): string | null {
 
 export interface DadosNotaDiagnostico {
   diagnostico: string;
-  confianca: number;
+  /** Confiança CATEGÓRICA (D-025) — exibida como baixa/média/alta. */
+  confianca: ConfiancaAnalise;
   complexidade: Complexidade | null;
   /** Natureza atual e sugerida; quando divergem, registra a reclassificação. */
   naturezaAtual: Natureza;
@@ -66,13 +67,19 @@ export interface DadosNotaDiagnostico {
  * O `diagnostico` do provider já traz resumo/evidências/causa; aqui apenas
  * enquadramos e anexamos as decisões de classificação de forma auditável.
  */
+const ROTULO_CONFIANCA: Record<ConfiancaAnalise, string> = {
+  baixa: 'baixa',
+  media: 'média',
+  alta: 'alta',
+};
+
 export function montarNotaDiagnostico(d: DadosNotaDiagnostico): string {
   const linhas: string[] = [
     'Diagnóstico automático (Assistente IA)',
     '',
     d.diagnostico.trim() || '(sem detalhamento)',
     '',
-    `Confiança da análise: ${(Math.round(d.confianca * 100) / 100).toFixed(2)}`,
+    `Confiança da análise: ${ROTULO_CONFIANCA[d.confianca]}`,
   ];
   if (d.complexidade) linhas.push(`Complexidade avaliada: ${d.complexidade}`);
   if (d.naturezaAjustada && d.naturezaAjustada !== d.naturezaAtual) {

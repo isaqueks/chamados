@@ -2,6 +2,7 @@ import {
   Natureza,
   Prioridade,
   Complexidade,
+  ConfiancaAnalise,
   VisibilidadeMensagem,
   montarTemplateSpec,
   type AIProvider,
@@ -93,7 +94,7 @@ export class FakeProvider implements AIProvider {
     if (!compreendido) {
       return {
         compreendido: false,
-        confianca: 0.35,
+        confianca: ConfiancaAnalise.baixa,
         // No fluxo "não entendeu", perguntasAoCliente é o canal (D-015): não duplica
         // com respostaAoCliente.
         perguntasAoCliente: [
@@ -143,7 +144,7 @@ export class FakeProvider implements AIProvider {
 
     return {
       compreendido: true,
-      confianca: 0.9,
+      confianca: ConfiancaAnalise.alta,
       perguntasAoCliente: null,
       // respostaAoCliente PÚBLICA (D-015): dirigida por marcador. Técnica → o
       // validador do aplicador a rebaixa; limpa → publicada como está.
