@@ -265,7 +265,8 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
             nomeAssistente={nomeAssistente}
             chamadoId={chamado.id}
             execucoes={execucoesIa}
-            podeReexecutar={podeInterna}
+            podeReexecutar={podeInterna && !encerrado}
+            iaSilenciada={chamado.ia_silenciada === true}
           />
         }
       />

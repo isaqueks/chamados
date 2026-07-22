@@ -12,6 +12,7 @@ import {
   alterarNatureza,
   definirComplexidade,
   criarMensagem,
+  definirSilencioIa,
   obterChamado,
   enfileirarTriagem,
   type MotivoCriar,
@@ -243,9 +244,35 @@ export async function acaoDefinirComplexidade(
 }
 
 /**
+ * Silencia/reativa a IA no chamado (D-024, specs/05 §2). Só operador/admin.
+ * Silenciada, nenhuma triagem roda no chamado (o worker também descarta jobs já
+ * enfileirados); a reativação volta ao comportamento normal nos próximos
+ * gatilhos (não reanalisa retroativamente).
+ */
+export async function acaoSilenciarIa(
+  chamadoId: string,
+  silenciar: boolean,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const ds = await obterAppDataSource();
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    definirSilencioIa(em, usuario, chamadoId, silenciar, hooks),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_MUTACAO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return {
+    ok: true,
+    msg: silenciar
+      ? 'IA silenciada neste chamado — nenhuma análise automática será executada.'
+      : 'IA reativada neste chamado.',
+  };
+}
+
+/**
  * Reexecuta a triagem manualmente (specs/05 §2 — "reprocessamento manual"). Só
- * operador/admin. Enfileira o job (`manual: true` → jobId único, sem debounce) de
- * forma BEST-EFFORT: uma falha de fila NÃO quebra a ação (informa o operador).
+ * operador/admin; recusada com a IA silenciada no chamado (D-024). Enfileira o
+ * job (`manual: true` → jobId único, sem debounce) de forma BEST-EFFORT: uma
+ * falha de fila NÃO quebra a ação (informa o operador).
  */
 export async function acaoReexecutarTriagem(chamadoId: string): Promise<ResultadoAcao> {
   const { tenant, usuario } = await exigirUsuario();
@@ -257,6 +284,7 @@ export async function acaoReexecutarTriagem(chamadoId: string): Promise<Resultad
   const info = await runInTenantContext(ds, tenant.id, async (em) => {
     const chamado = await obterChamado(em, usuario, chamadoId);
     if (!chamado || !('operador_id' in chamado)) return null; // inexistente/sem acesso
+    if (chamado.ia_silenciada) return { silenciada: true as const };
     const linhas: Array<{ id: string }> = await em.query(
       `SELECT id FROM mensagem
         WHERE chamado_id = $1 AND visibilidade = 'publica' AND deleted_at IS NULL
@@ -266,6 +294,9 @@ export async function acaoReexecutarTriagem(chamadoId: string): Promise<Resultad
     return { ultimaMensagemId: linhas[0]?.id ?? null };
   });
   if (!info) return { ok: false, msg: 'Chamado não encontrado.' };
+  if ('silenciada' in info) {
+    return { ok: false, msg: 'A IA está silenciada neste chamado. Reative-a para reexecutar.' };
+  }
 
   try {
     await enfileirarTriagem(

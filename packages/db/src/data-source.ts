@@ -29,6 +29,7 @@ import { M101720000007000 } from './migrations/0007-m10';
 import { M111720000008000 } from './migrations/0008-m11';
 import { NaturezaDuvida1720000009000 } from './migrations/0009-natureza-duvida';
 import { IaInstrucoes1720000010000 } from './migrations/0010-ia-instrucoes';
+import { IaSilenciada1720000011000 } from './migrations/0011-ia-silenciada';
 
 const entidades = [
   TenantSchema,
@@ -60,6 +61,7 @@ const migrations = [
   M111720000008000,
   NaturezaDuvida1720000009000,
   IaInstrucoes1720000010000,
+  IaSilenciada1720000011000,
 ];
 
 /**

@@ -173,6 +173,13 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(ia, 'pr_ia', 'aprovar')).toBe(false);
     });
 
+    it('silenciar_ia é decisão HUMANA da equipe (D-024): operador/admin sim; IA e cliente não', () => {
+      expect(autorizar(ator(Papel.operador), 'chamado', 'silenciar_ia')).toBe(true);
+      expect(autorizar(ator(Papel.admin), 'chamado', 'silenciar_ia')).toBe(true);
+      expect(autorizar(ator(Papel.agente_ia), 'chamado', 'silenciar_ia')).toBe(false);
+      expect(autorizar(ator(Papel.cliente), 'chamado', 'silenciar_ia')).toBe(false);
+    });
+
     it('NÃO administra o tenant (usuários, sistemas-alvo, branding)', () => {
       const ia = ator(Papel.agente_ia);
       expect(autorizar(ia, 'usuario', 'convidar', { papel_convidado: Papel.cliente })).toBe(false);

@@ -89,6 +89,8 @@ export const TipoEvento = {
   ia_abriu_pr: 'ia_abriu_pr',
   ia_gerou_spec: 'ia_gerou_spec',
   ia_falhou: 'ia_falhou',
+  ia_silenciada: 'ia_silenciada',
+  ia_reativada: 'ia_reativada',
 } as const;
 export type TipoEvento = (typeof TipoEvento)[keyof typeof TipoEvento];
 

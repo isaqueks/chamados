@@ -94,6 +94,8 @@ export const ROTULO_TIPO_EVENTO: Record<TipoEvento, string> = {
   [TipoEvento.ia_abriu_pr]: 'IA abriu um PR',
   [TipoEvento.ia_gerou_spec]: 'IA gerou uma SPEC',
   [TipoEvento.ia_falhou]: 'execução da IA falhou',
+  [TipoEvento.ia_silenciada]: 'silenciou a IA neste chamado',
+  [TipoEvento.ia_reativada]: 'reativou a IA neste chamado',
 };
 
 /** Rótulos do status de uma ExecucaoIA (painel Assistente IA — specs/08 §4.3). */

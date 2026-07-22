@@ -50,6 +50,8 @@ export interface ChamadoInterno {
   natureza: Natureza;
   prioridade: Prioridade;
   complexidade?: Complexidade | null;
+  /** IA silenciada neste chamado (operador/admin — D-024). Interno: nunca vai ao cliente. */
+  ia_silenciada?: boolean;
   resolvido_em?: Date | string | null;
   fechar_automaticamente_em?: Date | string | null;
   fechado_em?: Date | string | null;
@@ -120,6 +122,8 @@ export const EVENTOS_INTERNOS: ReadonlySet<TipoEvento> = new Set<TipoEvento>([
   TipoEvento.ia_abriu_pr,
   TipoEvento.ia_gerou_spec,
   TipoEvento.ia_falhou,
+  TipoEvento.ia_silenciada,
+  TipoEvento.ia_reativada,
 ]);
 
 /** Um evento é visível ao papel `cliente`? (default fechado para os `ia_*`.) */

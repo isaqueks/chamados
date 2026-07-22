@@ -72,6 +72,7 @@ describe('serializarChamadoParaCliente — exclui complexidade e atribuição', 
     natureza: Natureza.problema,
     prioridade: Prioridade.alta,
     complexidade: Complexidade.facil,
+    ia_silenciada: true,
     resolvido_em: null,
     fechar_automaticamente_em: null,
     fechado_em: null,
@@ -85,6 +86,8 @@ describe('serializarChamadoParaCliente — exclui complexidade e atribuição', 
     expect(out as object).not.toHaveProperty('complexidade');
     expect(out as object).not.toHaveProperty('operador_id');
     expect(out as object).not.toHaveProperty('tenant_id');
+    // D-024: o silêncio da IA é gestão interna do atendimento — o cliente não vê.
+    expect(out as object).not.toHaveProperty('ia_silenciada');
   });
 
   it('expõe fechar_automaticamente_em (acompanhamento do prazo de auto-fechamento)', () => {

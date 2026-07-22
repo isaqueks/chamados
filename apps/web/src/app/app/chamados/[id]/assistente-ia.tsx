@@ -1,9 +1,10 @@
-import { Sparkles, GitPullRequest, ExternalLink } from 'lucide-react';
+import { Sparkles, GitPullRequest, ExternalLink, BellOff } from 'lucide-react';
 import type { ExecucaoIAView } from '@chamados/db';
 import { ExecucaoIABadge } from '@/components/chamado/badges';
 import { ROTULO_GATILHO_IA } from '@/lib/rotulos';
 import { dataHora, tempoRelativo } from '@/lib/tempo';
 import { ReexecutarTriagem } from './reexecutar-triagem';
+import { SilenciarIa } from './silenciar-ia';
 
 /**
  * Painel "Assistente IA" (specs/08 §4.3) — VISÍVEL só a operador/admin (o cliente
@@ -18,11 +19,13 @@ export function AssistenteIA({
   chamadoId,
   execucoes,
   podeReexecutar,
+  iaSilenciada,
 }: {
   nomeAssistente: string;
   chamadoId: string;
   execucoes: ExecucaoIAView[];
   podeReexecutar: boolean;
+  iaSilenciada: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
@@ -37,6 +40,17 @@ export function AssistenteIA({
           </span>
         )}
       </div>
+
+      {iaSilenciada && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
+          <BellOff className="mt-0.5 size-3.5 shrink-0" />
+          <p>
+            <span className="font-medium">IA silenciada neste chamado.</span> Nenhuma análise
+            automática (abertura, resposta do cliente ou reexecução manual) será executada até um
+            operador ou admin reativá-la.
+          </p>
+        </div>
+      )}
 
       {execucoes.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
@@ -93,8 +107,9 @@ export function AssistenteIA({
       )}
 
       {podeReexecutar && (
-        <div className="flex justify-end">
-          <ReexecutarTriagem chamadoId={chamadoId} />
+        <div className="flex justify-end gap-2">
+          <SilenciarIa chamadoId={chamadoId} silenciada={iaSilenciada} />
+          {!iaSilenciada && <ReexecutarTriagem chamadoId={chamadoId} />}
         </div>
       )}
     </div>

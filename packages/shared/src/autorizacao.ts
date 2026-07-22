@@ -42,6 +42,7 @@ export type Acao =
   | 'mudar_natureza'
   | 'atribuir'
   | 'classificar_complexidade'
+  | 'silenciar_ia'
   | 'fechar'
   | 'cancelar'
   | 'enviar'
@@ -129,6 +130,9 @@ const MATRIZ: Matriz = {
       [cliente]: false,
       [agente_ia]: true,
     },
+    // Silenciar/reativar a IA no chamado (D-024): decisão HUMANA da equipe — a
+    // agente_ia nunca silencia/reativa a si mesma; cliente não gere a triagem.
+    silenciar_ia: { [operador]: true, [cliente]: false, [agente_ia]: false },
     fechar: { [operador]: true, [cliente]: false, [agente_ia]: false },
     cancelar: { [operador]: true, [cliente]: false, [agente_ia]: false },
   },

@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-22 — D-024: silenciar a IA por chamado (operador/admin)
+
+- **Caso real (produção, chamado #8):** após a resposta da cliente, a triagem publicou uma mensagem-template fora de contexto ("detalhe o passo a passo para reproduzir" numa `alteracao` já entendida) — e a equipe não tinha como impedir novas intervenções automáticas naquele chamado.
+- **Mudança (ADR D-024):** flag `chamado.ia_silenciada` (migration 0011) controlada por operador/admin (ação `silenciar_ia` na matriz; `agente_ia` e cliente nunca). Silenciada, NENHUMA triagem roda no chamado: o worker descarta o job no início da Tx1 (`ignorado: ia_silenciada` — cobre jobs já enfileirados) e o reprocessamento manual é recusado na action. Reativação manual, sem reanálise retroativa.
+- **UI:** painel "Assistente IA" ganha aviso âmbar quando silenciada + botão "Silenciar IA"/"Reativar IA"; "Reexecutar triagem" some enquanto silenciada (e ambos somem em chamado encerrado). Auditoria na timeline via eventos internos `ia_silenciada`/`ia_reativada` (cliente não vê a flag nem os eventos — allowlist do serializer, com teste).
+- Specs 02 (coluna + `tipo_evento`), 04 §9 e 05 §2 atualizadas; testes de autorização e serialização cobrindo a fronteira.
+
 ## 2026-07-20 — UI: botões com `cursor: pointer`
 
 - O Tailwind v4 mudou o default de `<button>` para `cursor: default`; a UI perdia a affordance clássica de clique. Regra global no `globals.css` (camada base): `button:not(:disabled)` e `[role="button"]:not(:disabled)` voltam a `cursor: pointer`; botões desabilitados preservam o `cursor: not-allowed` aplicado pelos componentes shadcn.

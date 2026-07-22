@@ -39,6 +39,8 @@ export interface Chamado {
   natureza: Natureza;
   prioridade: Prioridade;
   complexidade: Complexidade | null;
+  /** IA silenciada neste chamado (D-024): nenhuma triagem roda enquanto true. */
+  ia_silenciada: boolean;
   resolvido_em: Date | null;
   fechar_automaticamente_em: Date | null;
   fechado_em: Date | null;
@@ -89,6 +91,7 @@ export const ChamadoSchema = new EntitySchema<Chamado>({
       enumName: 'complexidade',
       nullable: true,
     },
+    ia_silenciada: { type: 'boolean', default: false },
     resolvido_em: { type: 'timestamptz', nullable: true },
     fechar_automaticamente_em: { type: 'timestamptz', nullable: true },
     fechado_em: { type: 'timestamptz', nullable: true },

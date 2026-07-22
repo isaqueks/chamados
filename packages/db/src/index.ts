@@ -91,6 +91,7 @@ export {
   desatribuirOperador,
   alterarPrioridade,
   definirComplexidade,
+  definirSilencioIa,
   alterarNatureza,
   motivoRichParaCriar,
   type AtorChamado,

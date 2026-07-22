@@ -269,6 +269,8 @@ Os nomes de tipo abaixo correspondem EXATAMENTE ao enum `tipo_evento` de `02-mod
 | `ia_abriu_pr`            | agente_ia                                            | referência a `ExecucaoIA` (branch/PR de correção)                                               |
 | `ia_gerou_spec`          | agente_ia                                            | referência a `ExecucaoIA` (SPEC de alteração)                                                   |
 | `ia_falhou`              | agente_ia                                            | referência a `ExecucaoIA` (erro/timeout)                                                        |
+| `ia_silenciada`          | operador/admin                                       | D-024: IA silenciada no chamado (`{de, para}`); interno                                         |
+| `ia_reativada`           | operador/admin                                       | D-024: IA reativada no chamado; interno                                                         |
 
 - Eventos de atributos internos (ex.: `complexidade_alterada`) e notas internas (`nota_interna_publicada`) herdam a visibilidade interna: não aparecem no histórico do cliente.
 - Detalhamento das ações da IA e da entidade `ExecucaoIA`: ver `05-agente-ia.md`.

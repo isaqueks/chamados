@@ -77,11 +77,11 @@ export interface DepsProcessador {
 export type ResultadoProcessamento =
   | { status: 'concluido'; execucaoId: string }
   | { status: 'falhou'; execucaoId: string; erro: string }
-  | { status: 'ignorado'; motivo: 'idempotente' | 'chamado_inexistente' };
+  | { status: 'ignorado'; motivo: 'idempotente' | 'chamado_inexistente' | 'ia_silenciada' };
 
 /** Preparação (Tx1): idempotência, transição, abertura da execução e do contexto. */
 type Preparacao =
-  | { skip: true; motivo: 'idempotente' | 'chamado_inexistente' }
+  | { skip: true; motivo: 'idempotente' | 'chamado_inexistente' | 'ia_silenciada' }
   | { skip: false; execucaoId: string; ctx: PreparacaoContexto; acoes: unknown[] };
 
 export async function processarTriagem(
@@ -120,6 +120,11 @@ export async function processarTriagem(
         where: { id: job.chamadoId, deleted_at: IsNull() },
       });
       if (!chamado) return { skip: true, motivo: 'chamado_inexistente' };
+
+      // IA silenciada no chamado (D-024): NENHUMA triagem roda — nem a manual
+      // (a action já recusa; aqui é a defesa em profundidade contra jobs
+      // enfileirados antes do silêncio ou por outros caminhos).
+      if (chamado.ia_silenciada) return { skip: true, motivo: 'ia_silenciada' };
 
       // Transição defensiva novo → em_triagem (specs/04 §2 "quando o worker
       // inicia"): cobre enfileiramentos diretos (sem transição na criação).

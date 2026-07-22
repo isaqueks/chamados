@@ -100,6 +100,7 @@ export function toChamadoInterno(c: Chamado): ChamadoInterno {
     natureza: c.natureza,
     prioridade: c.prioridade,
     complexidade: c.complexidade,
+    ia_silenciada: c.ia_silenciada,
     resolvido_em: c.resolvido_em,
     fechar_automaticamente_em: c.fechar_automaticamente_em,
     fechado_em: c.fechado_em,
@@ -701,6 +702,40 @@ export async function definirComplexidade(
     chamado_id: id,
     ator_id: ator.id,
     dados: { de: c.complexidade, para: complexidade },
+  });
+  return { ok: true };
+}
+
+/**
+ * Silencia/reativa a IA no chamado (D-024, specs/05 §2). Com `ia_silenciada`,
+ * NENHUMA triagem roda (o worker descarta o job e o reprocessamento manual é
+ * recusado) — usado quando a equipe quer conduzir o chamado sem interferência
+ * da IA (ex.: análise fora de contexto). Só operador/admin (a agente_ia nunca
+ * silencia/reativa a si mesma). Idempotente: repetir o mesmo valor é no-op sem
+ * evento. Auditado como `ia_silenciada`/`ia_reativada` (interno — o cliente
+ * não vê).
+ */
+export async function definirSilencioIa(
+  em: EntityManager,
+  ator: AtorChamado,
+  id: string,
+  silenciada: boolean,
+  hooks?: HooksChamado,
+): Promise<ResultadoMutacao> {
+  const c = await carregar(em, id);
+  if (!c) return { ok: false, motivo: 'inexistente' };
+  if (!autorizar(ator, 'chamado', 'silenciar_ia', { tenant_id: c.tenant_id })) {
+    return { ok: false, motivo: 'sem_permissao' };
+  }
+  if (ehTerminal(c.status)) return { ok: false, motivo: 'estado_terminal' };
+  if (c.ia_silenciada === silenciada) return { ok: true };
+
+  await em.update(ChamadoSchema, { id }, { ia_silenciada: silenciada });
+  await auditorDe(hooks)(em, {
+    tipo: silenciada ? 'ia_silenciada' : 'ia_reativada',
+    chamado_id: id,
+    ator_id: ator.id,
+    dados: { de: c.ia_silenciada, para: silenciada },
   });
   return { ok: true };
 }

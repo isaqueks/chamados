@@ -103,6 +103,8 @@ Valores canônicos:
 - `ia_abriu_pr`
 - `ia_gerou_spec`
 - `ia_falhou`
+- `ia_silenciada` — operador/admin silenciou a IA no chamado (D-024; payload `{de, para}`)
+- `ia_reativada` — operador/admin reativou a IA no chamado (D-024)
 
 > DECISÃO (resolvida): `04-chamados.md` §9 usava nomes divergentes (`natureza_ajustada`, `complexidade_definida`, `operador_atribuido/desatribuido`, `chamado_resolvido/fechado/cancelado`, `acao_ia`). Fica valendo a lista acima; 04 e 00 devem ser corrigidos para estes valores.
 
@@ -363,6 +365,7 @@ Entidade central.
 | natureza                             | natureza       | NOT NULL                 | problema/alteracao/duvida (duvida: D-017, migration 0009)                      |
 | prioridade                           | prioridade     | NOT NULL default 'media' | cliente pode sugerir                                                           |
 | complexidade                         | complexidade   | NULL                     | interna; definida pela IA/operador                                             |
+| ia_silenciada                        | boolean        | NOT NULL default false   | D-024: silenciada, nenhuma triagem roda; só operador/admin alteram; interna    |
 | resolvido_em                         | timestamptz    | NULL                     | marca início da janela de auto-fechamento                                      |
 | fechar_automaticamente_em            | timestamptz    | NULL                     | resolvido_em + dias_fechamento_automatico                                      |
 | fechado_em                           | timestamptz    | NULL                     | terminal                                                                       |
