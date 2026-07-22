@@ -157,6 +157,14 @@ async function aplicarNaoEntendeu(
   const { ator, chamado, execucaoId, resultado } = ctx;
   const hooks: HooksChamado = { despachante: deps.despachante };
 
+  // "Não entendeu" SEM perguntas válidas = triagem que não produziu nada útil
+  // (incidente de 2026-07-22: um resultado degradado publicava o questionário
+  // genérico fora de contexto). JAMAIS mensagem genérica ao cliente: falha a
+  // aplicação — o processador marca a execução `falhou` e escalona a humano
+  // (nota interna, nenhuma mensagem pública — specs/05 §8).
+  const corpo = formatarPerguntasCliente(resultado.perguntasAoCliente ?? []);
+  if (corpo === null) throw new Error('aplicacao_falhou:sem_perguntas');
+
   // #19 (meta-análise): a classificação de INTENÇÃO vale mesmo sem compreensão
   // total — o modelo quase sempre sabe a natureza só pelo texto. Antes, o fluxo
   // "não entendeu" IGNORAVA naturezaAjustada e o chamado ficava com a natureza
@@ -168,7 +176,6 @@ async function aplicarNaoEntendeu(
     );
   }
 
-  const corpo = formatarPerguntasCliente(resultado.perguntasAoCliente ?? []);
   const msg = await criarMensagem(
     em,
     ator,

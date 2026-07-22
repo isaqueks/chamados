@@ -285,9 +285,11 @@ export class ClaudeAgentProvider implements AIProvider {
   readonly modelo: string;
   private readonly queryFn: QueryFn;
   private readonly queryMapFn: QueryMapFn;
+  private readonly log: (msg: string, extra?: Record<string, unknown>) => void;
 
   constructor(opts: OpcoesClaudeProvider = {}) {
     this.modelo = opts.modelo ?? 'claude-opus-4-8';
+    this.log = opts.log ?? (() => {});
     // Falha CEDO (na construção) quando a triagem real é necessária sem credencial
     // (produção: nada injetado). Com `queryFn` injetada (teste), não valida — nem
     // importa o SDK. O transporte real é construído SOB DEMANDA e memoizado.
@@ -319,7 +321,7 @@ export class ClaudeAgentProvider implements AIProvider {
         if (msg.type === 'result') resultado = msg;
       }
       if (!resultado) throw new Error('provider não emitiu mensagem de resultado');
-      return mapearResultado(resultado, inicio, acumulado);
+      return mapearResultado(resultado, inicio, acumulado, this.log);
     } catch (err) {
       if (abortController.signal.aborted) throw new ErroProviderTimeout();
       throw err;
@@ -436,14 +438,30 @@ function verificarErroResultado(msg: MensagemSdk): void {
 // Mapeamento SDK → AIProviderResult (TESTADO sem rede)
 // ---------------------------------------------------------------------------
 
-/** Mapeia a mensagem de resultado do SDK no contrato canônico + telemetria real. */
+/**
+ * Mapeia a mensagem de resultado do SDK no contrato canônico + telemetria real.
+ *
+ * Saída ILEGÍVEL (sem `structured_output` e sem JSON parseável no texto) LANÇA
+ * `saida_estruturada_ilegivel` em vez de degradar para um "não entendeu" vazio
+ * — o silêncio dessa degradação foi a causa do incidente de 2026-07-22 (chamado
+ * respondido com questionário genérico fora de contexto). Falhando, o pipeline
+ * escalona a humano (specs/05 §8) e NADA é publicado ao cliente. O texto cru vai
+ * ao log (truncado) para diagnóstico — antes ele se perdia.
+ */
 export function mapearResultado(
   msg: MensagemSdk,
   inicioMs: number,
   acumulado?: TokensAcumulados,
+  log?: (msg: string, extra?: Record<string, unknown>) => void,
 ): AIProviderResult {
   verificarErroResultado(msg);
   const bruto = extrairEstruturado(msg);
+  if (bruto === null) {
+    log?.('saída estruturada ilegível — texto cru do resultado (truncado)', {
+      trecho: typeof msg.result === 'string' ? msg.result.slice(0, 1500) : null,
+    });
+    throw new Error('saida_estruturada_ilegivel');
+  }
   const telemetria = extrairTelemetria(msg, inicioMs, acumulado);
   return normalizarResultado(bruto, telemetria);
 }
@@ -468,8 +486,12 @@ export function mapearResultadoMapeamento(
   return { resumo, telemetria };
 }
 
-/** Obtém o objeto estruturado: `structured_output` (preferido) ou parse de `result`. */
-function extrairEstruturado(msg: MensagemSdk): Record<string, unknown> {
+/**
+ * Obtém o objeto estruturado: `structured_output` (preferido) ou parse de
+ * `result`. `null` = ILEGÍVEL (sem objeto e sem JSON parseável) — o chamador
+ * trata como falha do provider, nunca como "não entendeu".
+ */
+function extrairEstruturado(msg: MensagemSdk): Record<string, unknown> | null {
   if (msg.structured_output && typeof msg.structured_output === 'object') {
     return msg.structured_output as Record<string, unknown>;
   }
@@ -481,11 +503,11 @@ function extrairEstruturado(msg: MensagemSdk): Record<string, unknown> {
       try {
         return JSON.parse(txt.slice(inicio, fim + 1)) as Record<string, unknown>;
       } catch {
-        /* saída malformada → resultado default (não entendeu) */
+        /* malformado → ilegível (null) */
       }
     }
   }
-  return {};
+  return null;
 }
 
 function umDe<T extends string>(valores: readonly T[], v: unknown): T | null {

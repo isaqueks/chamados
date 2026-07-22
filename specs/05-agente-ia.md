@@ -239,7 +239,7 @@ Caso contrário → **não entendeu** → fluxo de perguntas (§5.3).
 
 ### 5.3 Formato das perguntas ao cliente
 
-Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e move status → `aguardando_cliente`. Regras da mensagem:
+Quando não entendeu, publica **uma** `Mensagem` de visibilidade `publica` e move status → `aguardando_cliente`. **Sem NENHUMA pergunta válida no resultado, nada é publicado**: não existe fallback genérico ("detalhe o passo a passo…") — a aplicação falha (`aplicacao_falhou:sem_perguntas`) e o chamado escalona a humano com nota interna (§8). Regra nascida do incidente de 2026-07-22, em que um resultado degradado do provider publicou o questionário genérico fora de contexto: **antes nenhuma mensagem do que uma mensagem vazia e genérica.** Regras da mensagem:
 
 - Objetiva, em linguagem do cliente (sem jargão interno, sem citar caminhos de código nem dados sensíveis do BD).
 - No máximo 3–5 perguntas, cada uma acionável e específica (o que, onde, quando, print/erro exato).
@@ -406,7 +406,7 @@ A promessa "nunca preso" é garantida em **três camadas** (D-016):
 
 - **Falha de `git pull`** (repo indisponível, credencial inválida): não analisa com código velho; escalona e alerta admin do tenant.
 - **Falha do provider** (rede, 5xx, rate limit): retry com backoff dentro do limite de tentativas; persistindo, escalona.
-- **Saída malformada**: 1 retry de reformatação; depois escalona.
+- **Saída malformada/ilegível**: sem `structured_output` e sem JSON parseável na última mensagem, o provider lança `saida_estruturada_ilegivel` → `ExecucaoIA.falhou` + escalonamento, com o texto cru registrado no log (truncado) para diagnóstico. _(Revisado em 2026-07-22 — incidente: a saída ilegível era degradada silenciosamente para "não entendeu" vazio e o cliente recebia um questionário genérico. Não há retry automático de reformatação: o custo de uma reexecução completa é do operador, via "Reexecutar triagem", nunca automático — supersede o "1 retry de reformatação" anterior.)_
 - **Ferramenta read-only retornando erro** (BD offline, log ausente): a IA prossegue com evidência parcial e sinaliza a lacuna; se crítica, trata como "não entendeu".
 - Toda falha registra causa em `ExecucaoIA.resultado` para diagnóstico e faturamento.
 

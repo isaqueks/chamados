@@ -22,20 +22,22 @@ import type { Complexidade, Natureza, Prioridade } from './enums';
  * Formata as perguntas ao cliente como UMA mensagem pública objetiva e numerada
  * (specs/05 §5.3): linguagem do cliente, sem jargão interno, explica brevemente
  * o porquê (transparência). Limita a 5 perguntas (o excedente é descartado).
+ *
+ * Sem NENHUMA pergunta válida devolve `null` — JAMAIS um questionário genérico
+ * (incidente de 2026-07-22: o fallback "detalhe o passo a passo para reproduzir"
+ * chegou fora de contexto a um cliente). Sem perguntas reais não há o que dizer;
+ * o pipeline escalona a humano em vez de publicar.
  */
-export function formatarPerguntasCliente(perguntas: string[]): string {
+export function formatarPerguntasCliente(perguntas: string[]): string | null {
   const limpas = perguntas
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
     .slice(0, 5);
-  const numeradas =
-    limpas.length > 0
-      ? limpas.map((p, i) => `${i + 1}. ${p}`).join('\n')
-      : '1. Você poderia detalhar o que aconteceu, com o passo a passo para reproduzir?';
+  if (limpas.length === 0) return null;
   return [
     'Olá! Para avançar com o seu chamado, preciso de alguns detalhes:',
     '',
-    numeradas,
+    limpas.map((p, i) => `${i + 1}. ${p}`).join('\n'),
     '',
     'Assim que você responder, retomo a análise automaticamente. Obrigado!',
   ].join('\n');

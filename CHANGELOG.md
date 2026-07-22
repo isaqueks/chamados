@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-22 — Triagem: fim do questionário genérico; saída ilegível escalona a humano
+
+- **Incidente (produção, chamado #8, 2ª execução):** o modelo devolveu a última mensagem sem JSON parseável; `extrairEstruturado` degradava silenciosamente para `{}` → "não entendeu" vazio → o aplicador publicava o fallback fixo "Você poderia detalhar o que aconteceu, com o passo a passo para reproduzir?" — fora de contexto (era `alteracao` já entendida, e a cliente tinha acabado de responder). Diretriz do usuário: **JAMAIS texto genérico ao cliente; antes não responder nada.**
+- **Provider:** saída ilegível (sem `structured_output` e sem JSON no texto) agora LANÇA `saida_estruturada_ilegivel` → `ExecucaoIA.falhou` + escalonamento a humano (nota interna, nenhuma mensagem pública). O texto cru vai ao log truncado (antes se perdia — era impossível diagnosticar). Sem retry automático (reexecução completa é decisão do operador via "Reexecutar triagem") — supersede o "1 retry de reformatação" de specs/05 §8.
+- **Aplicador:** `compreendido=false` SEM perguntas válidas também vira falha (`aplicacao_falhou:sem_perguntas`) com escalonamento — cobre qualquer engine. `formatarPerguntasCliente` perdeu o fallback genérico (devolve `null` sem perguntas; testes dos dois lados).
+- Specs 05 §5.3 e §8 atualizadas.
+
 ## 2026-07-22 — D-024: silenciar a IA por chamado (operador/admin)
 
 - **Caso real (produção, chamado #8):** após a resposta da cliente, a triagem publicou uma mensagem-template fora de contexto ("detalhe o passo a passo para reproduzir" numa `alteracao` já entendida) — e a equipe não tinha como impedir novas intervenções automáticas naquele chamado.

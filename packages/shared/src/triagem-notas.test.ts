@@ -28,9 +28,11 @@ describe('formatarPerguntasCliente', () => {
     expect(txt).not.toContain('6.');
   });
 
-  it('descarta perguntas vazias e cai num fallback objetivo quando não há nenhuma', () => {
-    const txt = formatarPerguntasCliente(['   ', '']);
-    expect(txt).toContain('1. ');
+  it('sem perguntas válidas devolve null — JAMAIS o questionário genérico (incidente 2026-07-22)', () => {
+    // Sem pergunta real, não há mensagem: o pipeline escalona a humano em vez
+    // de publicar um "detalhe o passo a passo" fora de contexto.
+    expect(formatarPerguntasCliente([])).toBeNull();
+    expect(formatarPerguntasCliente(['   ', ''])).toBeNull();
   });
 });
 

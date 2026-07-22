@@ -151,6 +151,30 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     await expect(p.executarTriagem(inputBase())).rejects.toBeInstanceOf(ErroProviderBudget);
   });
 
+  it('saída ILEGÍVEL (sem structured_output e sem JSON no texto) lança, nunca degrada', () => {
+    // Incidente 2026-07-22: o `{}` silencioso virava "não entendeu" vazio e o
+    // aplicador publicava questionário genérico ao cliente. Agora é FALHA do
+    // provider (→ escalonamento a humano), com o texto cru indo ao log.
+    const registros: Array<{ msg: string; extra?: Record<string, unknown> }> = [];
+    const log = (msg: string, extra?: Record<string, unknown>) => registros.push({ msg, extra });
+    const semJson: MensagemSdk = {
+      type: 'result',
+      subtype: 'success',
+      result: 'Analisei o chamado e concluí que se trata de um pedido de layout.',
+    };
+    expect(() => mapearResultado(semJson, Date.now(), undefined, log)).toThrow(
+      'saida_estruturada_ilegivel',
+    );
+    expect(registros[0]?.extra?.trecho).toContain('pedido de layout');
+
+    const jsonQuebrado: MensagemSdk = {
+      type: 'result',
+      subtype: 'success',
+      result: '{"compreendido": false, "spec": "linha 1\nlinha 2}',
+    };
+    expect(() => mapearResultado(jsonQuebrado, Date.now())).toThrow('saida_estruturada_ilegivel');
+  });
+
   it('erro genérico do SDK propaga como Error', () => {
     expect(() =>
       mapearResultado(
