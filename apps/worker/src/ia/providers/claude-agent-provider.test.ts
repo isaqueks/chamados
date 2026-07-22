@@ -319,6 +319,20 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(sp).toContain('ALTERAÇÃO simples (D-023)');
   });
 
+  it('montarSystemPrompt anuncia formatação markdown e a ferramenta de artefatos (D-026)', () => {
+    const sp = montarSystemPrompt();
+    // Formatação: o modelo sabe que markdown vira formatação real na resposta.
+    expect(sp).toContain('FORMATAÇÃO');
+    expect(sp).toMatch(/MARKDOWN[\s\S]*renderizado/);
+    // Artefatos: usar quando o cliente PEDE um material; anexado à resposta pública.
+    expect(sp).toContain('ARTEFATOS ENTREGÁVEIS');
+    expect(sp).toContain('artefato_gerar');
+    expect(sp).toMatch(/anexado automaticamente/);
+    expect(sp).toMatch(/NÃO gere artefatos que o cliente não pediu/);
+    // Conteúdo do artefato segue as regras de linguagem do cliente.
+    expect(sp).toMatch(/CONTEÚDO do artefato[\s\S]*NÃO entram jargão interno/);
+  });
+
   it('montarSystemPrompt injeta as instruções do tenant SUBORDINADAS às regras (D-020)', () => {
     const sp = montarSystemPrompt('Responda em tom formal. Faturamento é prioritário.');
     expect(sp).toContain('INSTRUÇÕES DO ADMINISTRADOR DO TENANT');

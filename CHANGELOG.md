@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-22 — D-026: IA entrega artefatos (relatório PDF/CSV anexado) + formatação anunciada no prompt
+
+- **Caso de uso:** chamado que pede um MATERIAL pronto (ex.: relatório de números do sistema) — a IA levanta os dados (`bd_consultar`/logs/código) e agora **entrega o arquivo**, não só texto de chat.
+- **Ferramenta nova `artefato_gerar`** (MCP, sempre disponível na triagem): `formato: pdf|csv|md|txt`; o provider entrega só CONTEÚDO textual e o worker materializa — PDF renderizado localmente do markdown (lexer do marked + pdfkit; títulos, listas, tabelas, sem browser headless), CSV com BOM UTF-8; nome sanitizado com extensão forçada; buffer validado com a MESMA allowlist do upload de usuário (erro volta ao modelo, corrigível). Tetos `IA_ARTEFATOS_MAX` (5) e `IA_ARTEFATO_MAX_CHARS` (500k); nome repetido substitui.
+- **Entrega pelo aplicador:** artefatos viram **anexos da resposta pública** (mesma entidade `Anexo`/storage/autorização/download — zero migration). Sem resposta pública → anexados à nota interna (nunca se perdem); resposta rebaixada mantém os anexos (o rebaixamento é do texto); `compreendido=false` descarta com log.
+- **Formatação:** o pipeline markdown → doc rico (com tabelas GFM) já existia; o system prompt agora ANUNCIA isso ao modelo e orienta quando usar (listas/tabelas em respostas com dados; parágrafo simples em conversa curta).
+- Specs 01 §4.1 e 05 (§4.2, §5.4, novo §5.6) atualizadas; ADR D-026; worker ganha `pdfkit`/`marked`; testes de sanitização/limites/validação/PDF real + prompt.
+
 ## 2026-07-22 — D-025: confiança da análise vira categórica (baixa/média/alta)
 
 - **Avaliação do usuário:** o `confianca: 0..1` pedido à IA era um chute com casas decimais — precisão ilusória ("Confiança da análise: 0.78" na nota interna, `0.78 >= 0.7` no gate é aritmética sobre ruído).

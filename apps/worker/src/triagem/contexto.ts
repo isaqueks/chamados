@@ -70,6 +70,8 @@ export interface PreparacaoContexto {
   copiaResolucao: FerramentasReais['copiaResolucao'];
   /** Diretório do checkout sincronizado (ou null) — usado pelo mapeamento (D-013). */
   checkout: FerramentasReais['checkout'];
+  /** Artefatos entregáveis gerados pela IA (D-026) — anexados na aplicação. */
+  artefatos: FerramentasReais['artefatos'];
   /** Encerra recursos das ferramentas (conexão de BD + cópia descartável). */
   encerrar: FerramentasReais['encerrar'];
   /** Metadados do gate de resolução (specs/05 §6). */
@@ -305,6 +307,7 @@ export async function montarInput(
     prepararResolucao: reais.prepararResolucao,
     copiaResolucao: reais.copiaResolucao,
     checkout: reais.checkout,
+    artefatos: reais.artefatos,
     encerrar: reais.encerrar,
     resolucao: {
       habilitadaPreCall,

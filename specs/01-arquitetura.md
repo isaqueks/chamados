@@ -205,6 +205,16 @@ interface AIProviderInput {
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
     bd_consultar(sql: string): Promise<Linha[]>; // SELECT-only, com timeout imposto pelo worker
 
+    // Artefatos entregáveis (D-026): o provider entrega CONTEÚDO textual; o worker
+    // materializa (markdown → PDF; texto → csv/md/txt), valida como upload e anexa
+    // à resposta pública. Erro de formato/limite volta ao modelo (corrigível).
+    artefato_gerar?(pedido: {
+      nome_arquivo: string;
+      formato: 'pdf' | 'csv' | 'md' | 'txt';
+      conteudo: string;
+      titulo?: string;
+    }): Promise<{ nome_arquivo: string; formato: string; tamanho_bytes: number }>;
+
     // Opcionais: só injetadas quando o gate de resolução automática está aberto
     // (05-agente-ia.md §6). Escrevem numa working copy DESCARTÁVEL, nunca no
     // cache persistente nem em produção; ausentes (undefined) fora do gate.

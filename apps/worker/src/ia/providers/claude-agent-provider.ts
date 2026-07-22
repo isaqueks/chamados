@@ -10,6 +10,7 @@ import {
   type AIProviderResult,
   type AIMapeamentoInput,
   type AIMapeamentoResult,
+  type FormatoArtefato,
   type ImagemContexto,
   type TelemetriaIA,
 } from '@chamados/shared';
@@ -683,6 +684,25 @@ export function montarSystemPrompt(instrucoesTenant?: string | null): string {
     '- Um validador automático REBAIXA para uma mensagem genérica qualquer resposta ao cliente que',
     '  ainda tenha cara de conteúdo técnico — então mantenha-a mesmo simples.',
     '',
+    'FORMATAÇÃO: todo texto que você produz é MARKDOWN e é renderizado com formatação real',
+    '(negrito, listas, tabelas, títulos). Use formatação quando ela ajudar a leitura — por',
+    'exemplo, uma lista ou uma tabela pequena numa resposta com vários itens/números. Não force:',
+    'uma resposta curta de conversa continua sendo um parágrafo simples.',
+    '',
+    'ARTEFATOS ENTREGÁVEIS (ferramenta artefato_gerar — D-026): quando o cliente PEDE um material',
+    'pronto — um relatório de números/indicadores, uma extração de dados, uma listagem — produza-o',
+    'DE VERDADE: levante os dados (bd_consultar/logs_consultar/código) e chame artefato_gerar com',
+    'o conteúdo COMPLETO. O arquivo é anexado automaticamente à sua resposta pública. Regras:',
+    '- formato "pdf" para relatórios (o conteudo é markdown e vira um PDF formatado — use títulos',
+    '  e tabelas); "csv" para dados tabulares que o cliente vá abrir em planilha; "md"/"txt" para',
+    '  texto simples. Prefira "pdf" para relatório e "csv" para dados.',
+    '- O CONTEÚDO do artefato é PARA O CLIENTE: linguagem clara e os dados que ele pediu (números,',
+    '  tabelas, períodos). Nele NÃO entram jargão interno, SQL, caminhos de código nem nomes de',
+    '  tabela — as mesmas regras da mensagem pública.',
+    '- Sempre que gerar artefatos, escreva também "respostaAoCliente" mencionando o material em',
+    '  anexo (ex.: "Segue em anexo o relatório solicitado, com ...").',
+    '- NÃO gere artefatos que o cliente não pediu, nem no fluxo compreendido=false.',
+    '',
     'Ao final, responda com um objeto JSON no formato AIProviderResult:',
     '{ compreendido, confianca ("baixa"|"media"|"alta"), perguntasAoCliente (string[]|null),',
     'respostaAoCliente (string|null), complexidade (facil|medio|dificil|null), naturezaAjustada',
@@ -907,6 +927,34 @@ function especToolsTriagem(ferramentas: AIProviderInput['ferramentas']): EspecTo
       handler: (a) => ferramentas.bd_consultar(String(a.sql)),
     },
   ];
+  // Artefatos entregáveis (D-026): a IA gera um ARQUIVO (relatório PDF, CSV,
+  // texto) que o worker anexa à resposta pública ao cliente.
+  const artefatoGerar = ferramentas.artefato_gerar;
+  if (artefatoGerar) {
+    specs.push({
+      nome: 'artefato_gerar',
+      descricao:
+        'Gera um ARQUIVO entregável ao cliente (relatório/extração) e o anexa automaticamente ' +
+        'à sua resposta pública. formato: "pdf" (conteudo em markdown, vira PDF formatado — ' +
+        'use títulos e tabelas), "csv" (dados tabulares), "md" ou "txt". Repetir o mesmo ' +
+        'nome_arquivo substitui a versão anterior.',
+      schema: (z) => ({
+        nome_arquivo: z.string(),
+        formato: z.string(),
+        conteudo: z.string(),
+        titulo: z.string().optional(),
+      }),
+      handler: (a) =>
+        artefatoGerar({
+          nome_arquivo: String(a.nome_arquivo ?? ''),
+          // O handle valida o formato (erro claro volta ao modelo) — o cast só
+          // atravessa a fronteira não tipada do MCP.
+          formato: String(a.formato ?? '') as FormatoArtefato,
+          conteudo: String(a.conteudo ?? ''),
+          titulo: typeof a.titulo === 'string' ? a.titulo : undefined,
+        }),
+    });
+  }
   // ESCRITA — só quando o gate PRÉ-call abriu (specs/05 §6). Ausentes → o modelo
   // nem enxerga como resolver, por construção. (Sem equivalente nativo: Write/Edit
   // ficam FORA de propósito; a escrita gated é um MCP escopado à cópia descartável.)

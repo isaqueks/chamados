@@ -65,6 +65,13 @@ export const ferramentasConfig = {
     /** Timeout de estabelecimento de conexão (ms). */
     conexaoTimeoutMs: num('IA_BD_CONEXAO_TIMEOUT_MS', 5000),
   },
+  /** ARTEFATOS entregáveis gerados pela IA (D-026): tetos por execução. */
+  artefatos: {
+    /** Teto de artefatos gerados numa mesma execução de triagem. */
+    maxPorExecucao: num('IA_ARTEFATOS_MAX', 5),
+    /** Teto de caracteres do `conteudo` de cada artefato. */
+    maxConteudoChars: num('IA_ARTEFATO_MAX_CHARS', 500_000),
+  },
   /**
    * RESOLUÇÃO automática (specs/05 §6): limites das ferramentas de ESCRITA na
    * working copy descartável + limiar de confiança do gate. `IA_RESOLUCAO_*`.

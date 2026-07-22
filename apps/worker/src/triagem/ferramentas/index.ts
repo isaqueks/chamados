@@ -1,12 +1,18 @@
 import type { EntityManager } from 'typeorm';
 import { IsNull } from 'typeorm';
 import type { AIProviderInput } from '@chamados/shared';
-import { SistemaAlvoSchema, criarSecretStore, type SecretStore } from '@chamados/db';
+import {
+  SistemaAlvoSchema,
+  criarSecretStore,
+  type ArquivoUpload,
+  type SecretStore,
+} from '@chamados/db';
 import type { Registrar } from './config';
 import { criarHandlesRepo, sincronizarRepo, type ConfigRepo } from './repo';
 import { criarHandleLogs, type ConfigLogs } from './logs';
 import { criarFerramentaBd, type ConfigBd } from './bd';
 import { criarHandlesEscrita, criarCopiaDescartavel, type CopiaDescartavel } from './escrita';
+import { criarFerramentaArtefatos } from './artefatos';
 
 /**
  * Montagem das FERRAMENTAS REAIS read-only (M7) e sua injeção como HANDLES no
@@ -38,6 +44,9 @@ export interface FerramentasReais {
   copiaResolucao(): CopiaDescartavel | null;
   /** Diretório do checkout sincronizado (ou null se não há repo / antes do sync). */
   checkout(): string | null;
+  /** Artefatos entregáveis gerados pela IA na execução (D-026) — o aplicador os
+   *  anexa à resposta pública. Vazio quando `artefato_gerar` não foi usada. */
+  artefatos(): ArquivoUpload[];
   /** Libera recursos (BD + destrói a cópia descartável) ao fim do job. */
   encerrar(): Promise<void>;
 }
@@ -113,6 +122,7 @@ export function montarFerramentasReais(
   const logs = criarHandleLogs(cfg.logs, registrar);
   const bd = criarFerramentaBd(cfg.bd, registrar);
   const escrita = criarHandlesEscrita(() => copia?.dir ?? null, registrar);
+  const artefatos = criarFerramentaArtefatos(registrar);
 
   const habilitada = opcoes.resolucaoHabilitada === true && cfg.repo !== null;
 
@@ -123,6 +133,8 @@ export function montarFerramentasReais(
       repo_arvore: repo.repo_arvore,
       logs_consultar: logs,
       bd_consultar: bd.bd_consultar,
+      // Artefatos entregáveis (D-026): sempre disponível na triagem.
+      artefato_gerar: artefatos.gerar,
       // Escrita SÓ quando o gate PRÉ-call passou (specs/05 §6).
       ...(habilitada
         ? {
@@ -143,6 +155,9 @@ export function montarFerramentasReais(
     },
     checkout() {
       return checkoutDir;
+    },
+    artefatos() {
+      return artefatos.coletar();
     },
     async encerrar() {
       await bd.encerrar();

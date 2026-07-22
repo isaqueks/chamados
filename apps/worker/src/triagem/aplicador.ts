@@ -32,6 +32,7 @@ import {
   alterarNatureza,
   alterarPrioridade,
   gravarEvento,
+  type ArquivoUpload,
   type Chamado,
   type AtorChamado,
   type Despachante,
@@ -119,11 +120,14 @@ export async function aplicarResultado(
     resultado: AIProviderResult;
     /** Desfecho da resolução automática (specs/05 §6); default `nenhuma`. */
     resolucao?: ResultadoResolucao;
+    /** Artefatos entregáveis gerados pela IA (D-026), já validados na geração. */
+    artefatos?: ArquivoUpload[];
   },
   deps: DepsAplicador,
 ): Promise<void> {
   const { tenantId, chamadoId, execucaoId, resultado } = args;
   const resolucao = args.resolucao ?? { tipo: 'nenhuma' };
+  const artefatos = args.artefatos ?? [];
 
   const chamado = await em.findOne(ChamadoSchema, {
     where: { id: chamadoId, deleted_at: IsNull() },
@@ -134,9 +138,13 @@ export async function aplicarResultado(
   if (!ator) throw new Error('aplicacao_falhou:agente_ia_ausente');
 
   if (!resultado.compreendido) {
-    await aplicarNaoEntendeu(em, { ator, chamado, execucaoId, resultado, resolucao }, deps);
+    await aplicarNaoEntendeu(
+      em,
+      { ator, chamado, execucaoId, resultado, resolucao, artefatos },
+      deps,
+    );
   } else {
-    await aplicarEntendeu(em, { ator, chamado, execucaoId, resultado, resolucao }, deps);
+    await aplicarEntendeu(em, { ator, chamado, execucaoId, resultado, resolucao, artefatos }, deps);
   }
 }
 
@@ -146,6 +154,8 @@ interface CtxAplicar {
   execucaoId: string;
   resultado: AIProviderResult;
   resolucao: ResultadoResolucao;
+  /** Artefatos entregáveis (D-026) — anexados à resposta pública no "entendeu". */
+  artefatos: ArquivoUpload[];
 }
 
 /** Fluxo "não entendeu" (specs/05 §5.3): pergunta pública + aguardando_cliente. */
@@ -164,6 +174,16 @@ async function aplicarNaoEntendeu(
   // (nota interna, nenhuma mensagem pública — specs/05 §8).
   const corpo = formatarPerguntasCliente(resultado.perguntasAoCliente ?? []);
   if (corpo === null) throw new Error('aplicacao_falhou:sem_perguntas');
+
+  // D-026: artefato só faz sentido quando a IA ENTENDEU e entrega algo — num
+  // "não entendeu" ele seria um entregável sem contexto. Descarta com log (o
+  // prompt orienta o modelo a não gerar nesse fluxo).
+  if (ctx.artefatos.length > 0) {
+    deps.log('artefatos descartados em fluxo não-entendeu', {
+      chamadoId: chamado.id,
+      quantidade: ctx.artefatos.length,
+    });
+  }
 
   // #19 (meta-análise): a classificação de INTENÇÃO vale mesmo sem compreensão
   // total — o modelo quase sempre sabe a natureza só pelo texto. Antes, o fluxo
@@ -248,6 +268,10 @@ async function aplicarEntendeu(
   const naturezaEfetiva = resultado.naturezaAjustada ?? chamado.natureza;
 
   let avisoRebaixamento = '';
+  // D-026: os artefatos vão como ANEXOS da resposta pública (o entregável que o
+  // cliente pediu). Sem resposta pública, caem na nota interna de diagnóstico —
+  // o operador decide o encaminhamento; nunca se perdem em silêncio.
+  let artefatosPendentes = ctx.artefatos;
   const respostaCru = (resultado.respostaAoCliente ?? '').trim();
   if (respostaCru.length > 0) {
     const deteccao = detectarConteudoTecnico(respostaCru);
@@ -267,12 +291,22 @@ async function aplicarEntendeu(
         chamado_id: chamado.id,
         visibilidade: VisibilidadeMensagem.publica,
         corpo: markdownParaDoc(corpoPublico),
+        // Mesmo REBAIXADA, a resposta leva os artefatos: o rebaixamento é do
+        // TEXTO (jargão/promessa); o arquivo é o entregável pedido pelo cliente.
+        anexos: artefatosPendentes.length > 0 ? artefatosPendentes : undefined,
         execucao_ia_id: execucaoId,
         created_at: proximoInstante(),
       },
       hooks,
     );
     exigir(msgPub.ok, 'mensagem_resposta_cliente');
+    if (artefatosPendentes.length > 0) {
+      deps.log('artefatos anexados à resposta pública', {
+        chamadoId: chamado.id,
+        quantidade: artefatosPendentes.length,
+      });
+      artefatosPendentes = [];
+    }
     if (deteccao.tecnica) {
       avisoRebaixamento = montarAvisoRespostaRebaixada(respostaCru, deteccao.motivos);
       deps.log('resposta pública rebaixada pelo validador', {
@@ -315,12 +349,21 @@ async function aplicarEntendeu(
       chamado_id: chamado.id,
       visibilidade: VisibilidadeMensagem.interna,
       corpo: markdownParaDoc(nota),
+      // D-026: artefatos SEM resposta pública ficam na nota interna (o operador
+      // baixa e encaminha) — nunca se perdem.
+      anexos: artefatosPendentes.length > 0 ? artefatosPendentes : undefined,
       execucao_ia_id: execucaoId,
       created_at: proximoInstante(),
     },
     hooks,
   );
   exigir(msgDiag.ok, 'nota_diagnostico');
+  if (artefatosPendentes.length > 0) {
+    deps.log('artefatos sem resposta pública: anexados à nota interna', {
+      chamadoId: chamado.id,
+      quantidade: artefatosPendentes.length,
+    });
+  }
 
   // 2) Classificações: complexidade, natureza (se divergir) e prioridade (se aplicável).
   exigir((await definirComplexidade(em, ator, chamado.id, complexidade, hooks)).ok, 'complexidade');
@@ -349,6 +392,7 @@ async function aplicarEntendeu(
       natureza: naturezaEfetiva,
       prioridade_aplicada: prioridadeAplicada,
       prioridade_sugerida: prioridadeSugerida,
+      artefatos: ctx.artefatos.length,
     },
   });
 

@@ -21,8 +21,10 @@
     "@chamados/storage": "^0.0.0",
     "bullmq": "^5.34.5",
     "ioredis": "^5.4.2",
+    "marked": "^18.0.7",
     "mysql2": "^3.23.0",
     "nodemailer": "^9.0.3",
+    "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "simple-git": "^3.36.0",
     "ssh2-sftp-client": "^12.1.1",
@@ -31,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/nodemailer": "^8.0.1",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.20.0",
     "@types/ssh2-sftp-client": "^9.0.6",
     "dotenv": "^16.4.7",

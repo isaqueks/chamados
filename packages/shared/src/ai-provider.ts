@@ -133,6 +133,34 @@ export interface LinhaLog {
 export type Linha = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
+// Artefatos entregáveis (D-026) — a IA gera um ARQUIVO para o cliente (ex.: um
+// relatório em PDF a partir de números do BD) e o worker o anexa à resposta
+// pública. O provider só entrega CONTEÚDO (texto/markdown); a materialização
+// (PDF, storage, anexo) é toda do worker.
+// ---------------------------------------------------------------------------
+
+/** Formatos aceitos de artefato gerado pela IA (D-026). */
+export type FormatoArtefato = 'pdf' | 'csv' | 'md' | 'txt';
+
+/** Pedido de geração de artefato (entrada do handle `artefato_gerar`). */
+export interface PedidoArtefato {
+  /** Nome do arquivo (sem diretórios; a extensão é forçada ao formato). */
+  nome_arquivo: string;
+  formato: FormatoArtefato;
+  /** Conteúdo textual: markdown (pdf/md), CSV cru (csv) ou texto puro (txt). */
+  conteudo: string;
+  /** Título do documento (capa/cabeçalho do PDF). Opcional. */
+  titulo?: string;
+}
+
+/** Confirmação devolvida ao modelo após a geração do artefato. */
+export interface ArtefatoConfirmado {
+  nome_arquivo: string;
+  formato: FormatoArtefato;
+  tamanho_bytes: number;
+}
+
+// ---------------------------------------------------------------------------
 // Ferramentas de ESCRITA (specs/05 §6) — presentes SÓ na tentativa de resolução
 // automática, quando o GATE do pipeline autorizou. Operam numa working copy
 // DESCARTÁVEL (clone do cache → diretório temp), nunca no cache nem em produção.
@@ -240,6 +268,13 @@ export interface AIProviderInput {
     logs_consultar(filtro: FiltroLogs): Promise<LinhaLog[]>;
     /** SELECT-only, com timeout imposto pelo worker. */
     bd_consultar(sql: string): Promise<Linha[]>;
+    /**
+     * Gera um ARQUIVO entregável ao cliente (D-026): o worker materializa o
+     * conteúdo (markdown → PDF; texto → csv/md/txt), valida como upload e o
+     * anexa à resposta pública ao fim da triagem. Lança com mensagem clara em
+     * formato/nome/limite inválido (o modelo pode corrigir e tentar de novo).
+     */
+    artefato_gerar?(pedido: PedidoArtefato): Promise<ArtefatoConfirmado>;
   } & Partial<FerramentasEscrita>;
 
   limites: {

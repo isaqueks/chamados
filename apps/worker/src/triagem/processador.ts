@@ -286,6 +286,9 @@ export async function processarTriagem(
     if (resultado) {
       const r = resultado;
       const rRegistro = resultadoRegistro ?? r;
+      // Artefatos entregáveis (D-026) gerados pela IA via `artefato_gerar` —
+      // buffers acumulados FORA da transação; o aplicador anexa em Tx2.
+      const artefatos = ctxAtivo.artefatos();
       try {
         await runInTenantContext(ds, job.tenantId, async (em) => {
           await aplicarResultado(
@@ -296,6 +299,7 @@ export async function processarTriagem(
               execucaoId: prep.execucaoId,
               resultado: r,
               resolucao: resolucaoOutcome,
+              artefatos,
             },
             { log, despachante: despachanteNotif },
           );
