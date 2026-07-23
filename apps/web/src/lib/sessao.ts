@@ -1,7 +1,8 @@
 import 'server-only';
 import { cache } from 'react';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { HEADER_CAMINHO, urlLoginCom } from './caminho';
 import {
   obterAppDataSource,
   carregarSessao,
@@ -50,8 +51,13 @@ export async function exigirUsuario(): Promise<{
 }> {
   const { tenant, usuario } = await obterContexto();
   // Sem tenant resolvido ou sem sessão: /login (que também trata "tenant
-  // desconhecido" na própria tela, sem vazar a lista de tenants).
-  if (!tenant || !usuario) redirect('/login');
+  // desconhecido" na própria tela, sem vazar a lista de tenants). O caminho
+  // atual (header do proxy) vai em `?next=` para o deep link sobreviver ao
+  // login (correção de 2026-07-22 — lib/caminho.ts).
+  if (!tenant || !usuario) {
+    const caminho = (await headers()).get(HEADER_CAMINHO);
+    redirect(urlLoginCom(caminho));
+  }
   return { tenant, usuario };
 }
 

@@ -9,11 +9,13 @@ import { acaoLogin, type EstadoLogin } from './actions';
 
 const INICIAL: EstadoLogin = {};
 
-export function LoginForm() {
+export function LoginForm({ next }: { next?: string | null }) {
   const [estado, acao, pendente] = useActionState(acaoLogin, INICIAL);
 
   return (
     <form action={acao} className="flex flex-col gap-4">
+      {/* Destino do deep link preservado através do POST (revalidado na action). */}
+      {next && <input type="hidden" name="next" value={next} />}
       {estado.erro && (
         <Alert variant="destructive">
           <AlertDescription>{estado.erro}</AlertDescription>

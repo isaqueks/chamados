@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Papel } from '@chamados/shared';
+import { HEADER_CAMINHO, equivalenteNaArea } from '@/lib/caminho';
 import { exigirUsuario } from '@/lib/sessao';
 import { obterTenantAtual } from '@/lib/tenant';
 import { urlLogo } from '@/lib/branding';
@@ -25,7 +27,11 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { usuario, tenant } = await exigirUsuario();
-  if (usuario.papel === Papel.cliente) redirect('/portal');
+  // Cliente: leva à página EQUIVALENTE do portal (deep link de chamado abre o
+  // chamado em /portal, não a raiz — correção de 2026-07-22).
+  if (usuario.papel === Papel.cliente) {
+    redirect(equivalenteNaArea((await headers()).get(HEADER_CAMINHO), 'portal'));
+  }
 
   // Sidebar e sheet mobile são superfícies ESCURAS nos dois temas (D-019 v2):
   // preferem a variante escura do logo, com fallback na clara.

@@ -63,6 +63,9 @@ export function proxy(request: NextRequest): NextResponse {
   else headers.delete('x-tenant-slug'); // evita spoofing quando não há slug real
   if (host) headers.set('x-tenant-host', host);
   else headers.delete('x-tenant-host');
+  // Caminho da requisição para os guards de layout (deep links entre áreas e
+  // pós-login — lib/caminho.ts). SEMPRE sobrescrito: imune a spoofing do cliente.
+  headers.set('x-caminho', request.nextUrl.pathname + request.nextUrl.search);
 
   return NextResponse.next({ request: { headers } });
 }

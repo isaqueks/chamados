@@ -2,6 +2,13 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-22 — Fix: deep link de chamado abre o chamado (não a raiz da área) + `?next=` no login
+
+- **Bug relatado:** abrir `/portal/chamados/<id>` logado como admin redirecionava para `/app` (raiz), perdendo o chamado. Causa: os guards de layout redirecionavam por papel sem saber o caminho pedido.
+- **Guards cientes do caminho:** o proxy injeta `x-caminho` (sempre sobrescrito — imune a spoofing); papel na área errada agora vai à página **equivalente** (`/portal/chamados/<id>` ↔ `/app/chamados/<id>` — `equivalenteNaArea` em `lib/caminho.ts`), senão à raiz da área correta (fix simétrico: cliente abrindo link de `/app` também).
+- **Login preserva o destino:** rota protegida sem sessão → `/login?next=<caminho>`; após autenticar, volta ao destino (importante para links de e-mail de notificação). `next` revalidado no servidor: só caminho interno, nunca `//host`/controle/`/login` (anti open-redirect e anti-loop; testes). Logado visitando `/login` também respeita o papel (antes: `/app` fixo, cliente quicava).
+- Spec 03 §4.1 atualizada; vitest passa a incluir `apps/web` (primeiro teste do workspace).
+
 ## 2026-07-22 — D-026: IA entrega artefatos (relatório PDF/CSV anexado) + formatação anunciada no prompt
 
 - **Caso de uso:** chamado que pede um MATERIAL pronto (ex.: relatório de números do sistema) — a IA levanta os dados (`bd_consultar`/logs/código) e agora **entrega o arquivo**, não só texto de chat.

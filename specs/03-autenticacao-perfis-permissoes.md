@@ -144,6 +144,14 @@ sequenceDiagram
 
 - Após login, redireciona conforme papel: `cliente` → portal do cliente;
   `operador`/`admin` → painel; ver mapa de telas em `08-ui-ux.md`.
+- **Deep links preservados (2026-07-22)**: acessar uma rota protegida sem sessão
+  leva a `/login?next=<caminho>` (o proxy injeta o caminho da requisição no
+  header `x-caminho`); após autenticar, o usuário volta ao destino. O `next` é
+  **revalidado no servidor** (só caminho interno começando com `/`; nunca
+  `//host`, controle, nem `/login` — anti open-redirect e anti-loop). Guardas de
+  área são **cientes do caminho**: papel errado na área errada redireciona para a
+  página **equivalente** da outra área quando existe (`/portal/chamados/<id>` ↔
+  `/app/chamados/<id>`), senão para a raiz da área do papel (`lib/caminho.ts`).
 
 > DECISÃO PENDENTE: 2FA (TOTP) obrigatório para `admin`, opcional para `operador`.
 > Recomendação: obrigatório para admin na fase 1.

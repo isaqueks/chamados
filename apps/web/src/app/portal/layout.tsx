@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Papel } from '@chamados/shared';
+import { HEADER_CAMINHO, equivalenteNaArea } from '@/lib/caminho';
 import { exigirUsuario } from '@/lib/sessao';
 import { obterTenantAtual } from '@/lib/tenant';
 import { urlLogo } from '@/lib/branding';
@@ -26,7 +28,11 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const { usuario, tenant } = await exigirUsuario();
-  if (usuario.papel !== Papel.cliente) redirect('/app');
+  // Papel ≠ cliente: leva à página EQUIVALENTE do painel (deep link de chamado
+  // abre o chamado em /app, não a raiz — correção de 2026-07-22).
+  if (usuario.papel !== Papel.cliente) {
+    redirect(equivalenteNaArea((await headers()).get(HEADER_CAMINHO), 'app'));
+  }
 
   const logo = urlLogo(tenant.config_branding, 'light');
   // A sidebar é superfície ESCURA: prefere a variante dark do logo (fallback light).
