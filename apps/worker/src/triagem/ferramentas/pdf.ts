@@ -1,6 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { marked, type Token, type Tokens } from 'marked';
-import { melhorTexto, normalizarHex, razaoContraste } from '@chamados/shared';
+import { melhorTexto } from '@chamados/shared';
 import { misturar, paletaGrafico } from './cores';
 import { alturaGrafico, renderizarGrafico, validarGrafico, MAX_FATIAS } from './graficos';
 
@@ -10,11 +10,11 @@ import { alturaGrafico, renderizarGrafico, validarGrafico, MAX_FATIAS } from './
  * `markdownParaDoc` — nunca o renderer HTML) + pdfkit com as fontes standard
  * (Helvetica/Courier, métricas embutidas — nenhum binário externo tipo chromium).
  *
- * D-027 — identidade visual do TENANT: capa com faixa na cor primária (logo ou
- * nome de exibição + data), títulos na cor da marca, tabelas com cabeçalho
- * colorido e zebra, blocos de código com fundo, rodapé paginado — e GRÁFICOS
- * vetoriais (bloco ```grafico, ver graficos.ts). Sem marca configurada, cai na
- * paleta padrão do produto (azul-petróleo — D-019).
+ * D-027 — template profissional NEUTRO (decisão do usuário: sem branding de
+ * tenant no PDF): capa com faixa colorida (título + data), títulos e links em
+ * cor, tabelas com cabeçalho colorido e zebra, blocos de código com fundo,
+ * rodapé paginado — e GRÁFICOS vetoriais (bloco ```grafico, ver graficos.ts).
+ * A paleta é sempre a padrão do produto (azul-petróleo — D-019).
  *
  * As fontes standard são WinAnsi (latin1): acentos pt-BR passam intactos;
  * pontuação tipográfica é normalizada e o restante fora do latin1 é descartado
@@ -28,31 +28,13 @@ const TAM_TITULOS = [16, 13, 11.5] as const; // h1..h3 (h4+ clampa em h3)
 /** Aproximação hex do azul-petróleo padrão do produto (`--primary`, D-019). */
 const COR_PADRAO = '#155e75';
 
-/** Identidade visual aplicada ao PDF (D-027) — tudo opcional, tudo com fallback. */
-export interface MarcaPdf {
-  /** Nome de exibição do tenant (capa e rodapé). */
-  nome?: string | null;
-  /** Cor primária do branding (hex). Inválida/ausente → paleta padrão. */
-  corPrimaria?: string | null;
-  /** Logo em PNG/JPEG (os formatos que o pdfkit embute). Ver `logoSuportado`. */
-  logo?: Buffer | null;
-}
-
-/** O buffer é um formato de imagem que o pdfkit sabe embutir (PNG/JPEG)? */
-export function logoSuportado(buffer: Buffer): boolean {
-  if (buffer.length < 4) return false;
-  const png = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
-  const jpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-  return png || jpeg;
-}
-
-/** Cores resolvidas do template a partir da marca. */
+/** Cores do template — fixas na paleta padrão (D-027: sem branding no PDF). */
 interface Tema {
-  /** Cor primária (faixa da capa, cabeçalho de tabela, gráficos). */
+  /** Cor de destaque (faixa da capa, cabeçalho de tabela, gráficos). */
   cor: string;
-  /** Texto sobre a cor primária (preto/branco por contraste WCAG). */
+  /** Texto sobre a cor de destaque (preto/branco por contraste WCAG). */
   corTexto: string;
-  /** Variante da cor com contraste garantido sobre fundo branco (títulos/links). */
+  /** Cor de títulos/links sobre fundo branco. */
   corTitulo: string;
   /** Tint suave para zebra de tabela. */
   zebra: string;
@@ -62,17 +44,14 @@ interface Tema {
   paleta: string[];
 }
 
-function temaDe(marca: MarcaPdf): Tema {
-  const cor = (marca.corPrimaria && normalizarHex(marca.corPrimaria)) || COR_PADRAO;
-  return {
-    cor,
-    corTexto: melhorTexto(cor).cor,
-    corTitulo: razaoContraste(cor, '#ffffff') >= 3 ? cor : misturar(cor, '#000000', 0.45),
-    zebra: misturar(cor, '#ffffff', 0.94),
-    borda: misturar(cor, '#ffffff', 0.72),
-    paleta: paletaGrafico(cor, MAX_FATIAS),
-  };
-}
+const TEMA: Tema = {
+  cor: COR_PADRAO,
+  corTexto: melhorTexto(COR_PADRAO).cor,
+  corTitulo: COR_PADRAO,
+  zebra: misturar(COR_PADRAO, '#ffffff', 0.94),
+  borda: misturar(COR_PADRAO, '#ffffff', 0.72),
+  paleta: paletaGrafico(COR_PADRAO, MAX_FATIAS),
+};
 
 /** Normaliza para WinAnsi: pontuação tipográfica → ASCII; resto fora do latin1 cai. */
 function paraWinAnsi(texto: string): string {
@@ -472,46 +451,24 @@ function renderizarBlocos(doc: Doc, tokens: Token[], tema: Tema): void {
   }
 }
 
-/** Capa (D-027): faixa na cor da marca com logo/nome, data e o título do documento. */
-function desenharCapa(doc: Doc, titulo: string | null, marca: MarcaPdf, tema: Tema): void {
+/** Capa (D-027): faixa colorida neutra com o título do documento e a data. */
+function desenharCapa(doc: Doc, titulo: string | null, tema: Tema): void {
   const pageW = doc.page.width;
   const wUtil = pageW - MARGEM * 2;
   const t = titulo?.trim() ? paraWinAnsi(titulo.trim()) : '';
   doc.font('Helvetica-Bold').fontSize(19);
   const hTitulo = t ? doc.heightOfString(t, { width: wUtil }) : 0;
-  const topoIdent = 26;
-  const hIdent = 34;
-  const faixaH = topoIdent + hIdent + (t ? hTitulo + 8 : 0) + 16;
+  const topo = 26;
+  const faixaH = topo + 20 + (t ? hTitulo + 10 : 0) + 16;
   doc.rect(0, 0, pageW, faixaH).fill(tema.cor);
 
-  let usouLogo = false;
-  if (marca.logo && logoSuportado(marca.logo)) {
-    try {
-      doc.image(marca.logo, MARGEM, topoIdent, { fit: [140, 30] });
-      usouLogo = true;
-    } catch {
-      // Logo corrompido: segue com o nome (nunca derruba a geração).
-    }
-  }
-  if (!usouLogo && marca.nome?.trim()) {
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(12)
-      .fillColor(tema.corTexto)
-      .text(paraWinAnsi(marca.nome.trim()), MARGEM, topoIdent + 9, {
-        width: wUtil - 160,
-        lineBreak: false,
-        height: 16,
-        ellipsis: true,
-      });
-  }
   const data = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date());
   doc
     .font('Helvetica')
     .fontSize(8.5)
     .fillColor(tema.corTexto)
     .fillOpacity(0.85)
-    .text(`Gerado em ${data}`, MARGEM, topoIdent + 12, {
+    .text(`Gerado em ${data}`, MARGEM, topo, {
       width: wUtil,
       align: 'right',
       lineBreak: false,
@@ -522,7 +479,7 @@ function desenharCapa(doc: Doc, titulo: string | null, marca: MarcaPdf, tema: Te
       .font('Helvetica-Bold')
       .fontSize(19)
       .fillColor(tema.corTexto)
-      .text(t, MARGEM, topoIdent + hIdent, { width: wUtil });
+      .text(t, MARGEM, topo + 20, { width: wUtil });
   }
   doc.x = MARGEM;
   doc.y = faixaH + 26;
@@ -530,7 +487,7 @@ function desenharCapa(doc: Doc, titulo: string | null, marca: MarcaPdf, tema: Te
 }
 
 /** Rodapé em todas as páginas (segunda passada, com `bufferPages`). */
-function desenharRodapes(doc: Doc, marca: MarcaPdf, tema: Tema): void {
+function desenharRodapes(doc: Doc, tema: Tema): void {
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
@@ -543,31 +500,27 @@ function desenharRodapes(doc: Doc, marca: MarcaPdf, tema: Tema): void {
       .moveTo(MARGEM, y - 6)
       .lineTo(doc.page.width - MARGEM, y - 6)
       .stroke();
-    doc.font('Helvetica').fontSize(7.5).fillColor('#8a8a8a');
-    if (marca.nome?.trim()) {
-      doc.text(paraWinAnsi(marca.nome.trim()), MARGEM, y, { lineBreak: false });
-    }
-    doc.text(`Página ${i + 1} de ${range.count}`, MARGEM, y, {
-      width: doc.page.width - MARGEM * 2,
-      align: 'right',
-      lineBreak: false,
-    });
+    doc
+      .font('Helvetica')
+      .fontSize(7.5)
+      .fillColor('#8a8a8a')
+      .text(`Página ${i + 1} de ${range.count}`, MARGEM, y, {
+        width: doc.page.width - MARGEM * 2,
+        align: 'right',
+        lineBreak: false,
+      });
     doc.page.margins.bottom = margemInferior;
   }
 }
 
 /**
- * Renderiza `markdown` num PDF (A4) com a identidade visual da `marca` (D-027) e
+ * Renderiza `markdown` num PDF (A4) com o template neutro do produto (D-027) e
  * devolve o buffer completo. `titulo`, quando presente, entra na capa. Lança
  * `pdf_falhou:<motivo>` em erro (inclusive `grafico_invalido:` de bloco ```grafico).
  */
-export async function gerarPdfDeMarkdown(
-  titulo: string | null,
-  markdown: string,
-  marca: MarcaPdf = {},
-): Promise<Buffer> {
+export async function gerarPdfDeMarkdown(titulo: string | null, markdown: string): Promise<Buffer> {
   try {
-    const tema = temaDe(marca);
+    const tema = TEMA;
     const tokens = marked.lexer(markdown, { gfm: true, breaks: true });
     const doc = new PDFDocument({
       size: 'A4',
@@ -582,9 +535,9 @@ export async function gerarPdfDeMarkdown(
       doc.on('error', reject);
     });
 
-    desenharCapa(doc, titulo, marca, tema);
+    desenharCapa(doc, titulo, tema);
     renderizarBlocos(doc, tokens, tema);
-    desenharRodapes(doc, marca, tema);
+    desenharRodapes(doc, tema);
     doc.end();
     return await pronto;
   } catch (err) {

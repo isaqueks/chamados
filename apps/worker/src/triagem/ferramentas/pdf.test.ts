@@ -1,42 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { gerarPdfDeMarkdown, logoSuportado } from './pdf';
+import { gerarPdfDeMarkdown } from './pdf';
 
 /**
- * Template de PDF com identidade visual (D-027): geração real com marca (cor,
- * nome, logo), gráficos vetoriais dos três tipos e os fallbacks (sem marca, logo
- * corrompido, spec de gráfico inválida → erro corrigível pelo modelo).
+ * Template de PDF (D-027, neutro — sem branding de tenant por decisão do
+ * usuário): geração real com capa/rodapé, gráficos vetoriais dos três tipos e a
+ * spec de gráfico inválida virando erro corrigível pelo modelo.
  */
-
-// PNG 1×1 válido (para o pdfkit embutir de verdade no teste de logo).
-const PNG_1PX = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64',
-);
-
-const MARCA = { nome: 'Top Veículos', corPrimaria: '#b91c1c', logo: null };
 
 function contarPaginas(pdf: Buffer): number {
   return pdf.toString('latin1').split('/Type /Page').length - 1;
 }
 
-describe('gerarPdfDeMarkdown com identidade visual (D-027)', () => {
-  it('gera PDF com marca completa (cor, nome e logo PNG real)', async () => {
-    const pdf = await gerarPdfDeMarkdown('Relatório de Chamados', '# Resumo\n\nTexto do corpo.', {
-      ...MARCA,
-      logo: PNG_1PX,
-    });
+describe('gerarPdfDeMarkdown com template neutro (D-027)', () => {
+  it('gera PDF com capa (título + data) e corpo', async () => {
+    const pdf = await gerarPdfDeMarkdown('Relatório de Chamados', '# Resumo\n\nTexto do corpo.');
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     expect(pdf.length).toBeGreaterThan(1500);
   });
 
-  it('sem marca, cai na paleta padrão e ainda gera capa/rodapé', async () => {
-    const pdf = await gerarPdfDeMarkdown('Título', 'Corpo simples.');
-    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
-  });
-
-  it('logo com magic de PNG mas corrompido não derruba a geração', async () => {
-    const corrompido = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(64, 7)]);
-    const pdf = await gerarPdfDeMarkdown('Título', 'Corpo.', { ...MARCA, logo: corrompido });
+  it('sem título ainda gera capa slim e rodapé', async () => {
+    const pdf = await gerarPdfDeMarkdown(null, 'Corpo simples.');
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
@@ -59,7 +42,7 @@ describe('gerarPdfDeMarkdown com identidade visual (D-027)', () => {
       grafico('linhas', 12) +
       '\nDistribuição:\n\n' +
       grafico('pizza', 5);
-    const pdf = await gerarPdfDeMarkdown('Relatório com gráficos', md, MARCA);
+    const pdf = await gerarPdfDeMarkdown('Relatório com gráficos', md);
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     // 3 gráficos de ~200pt cada + textos não cabem numa página só.
     expect(contarPaginas(pdf)).toBeGreaterThanOrEqual(2);
@@ -68,19 +51,15 @@ describe('gerarPdfDeMarkdown com identidade visual (D-027)', () => {
 
   it('bloco ```grafico inválido falha com erro corrigível (grafico_invalido)', async () => {
     await expect(
-      gerarPdfDeMarkdown('T', '```grafico\n{"tipo":"radar","dados":[]}\n```', MARCA),
+      gerarPdfDeMarkdown('T', '```grafico\n{"tipo":"radar","dados":[]}\n```'),
     ).rejects.toThrow(/pdf_falhou:grafico_invalido/);
-    await expect(
-      gerarPdfDeMarkdown('T', '```grafico\nisso não é json\n```', MARCA),
-    ).rejects.toThrow(/JSON malformado/);
+    await expect(gerarPdfDeMarkdown('T', '```grafico\nisso não é json\n```')).rejects.toThrow(
+      /JSON malformado/,
+    );
   });
 
   it('bloco de código comum continua sendo código (não gráfico)', async () => {
-    const pdf = await gerarPdfDeMarkdown(
-      'T',
-      '```sql\nSELECT 1;\n```\n\n```\nsem lang\n```',
-      MARCA,
-    );
+    const pdf = await gerarPdfDeMarkdown('T', '```sql\nSELECT 1;\n```\n\n```\nsem lang\n```');
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
@@ -98,7 +77,7 @@ describe('gerarPdfDeMarkdown com identidade visual (D-027)', () => {
       '',
       '> Observação em destaque.',
     ].join('\n');
-    const pdf = await gerarPdfDeMarkdown('Misto', md, MARCA);
+    const pdf = await gerarPdfDeMarkdown('Misto', md);
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
@@ -106,18 +85,7 @@ describe('gerarPdfDeMarkdown com identidade visual (D-027)', () => {
     const md = Array.from({ length: 80 }, (_, i) => `Parágrafo ${i + 1} com texto corrido.`).join(
       '\n\n',
     );
-    const pdf = await gerarPdfDeMarkdown('Longo', md, MARCA);
-    const paginas = contarPaginas(pdf);
-    expect(paginas).toBeGreaterThanOrEqual(2);
-  });
-});
-
-describe('logoSuportado', () => {
-  it('aceita PNG e JPEG, rejeita o resto (SVG, texto, vazio)', () => {
-    expect(logoSuportado(PNG_1PX)).toBe(true);
-    expect(logoSuportado(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]))).toBe(true);
-    expect(logoSuportado(Buffer.from('<svg xmlns="..."></svg>'))).toBe(false);
-    expect(logoSuportado(Buffer.from('logo.png'))).toBe(false);
-    expect(logoSuportado(Buffer.alloc(0))).toBe(false);
+    const pdf = await gerarPdfDeMarkdown('Longo', md);
+    expect(contarPaginas(pdf)).toBeGreaterThanOrEqual(2);
   });
 });

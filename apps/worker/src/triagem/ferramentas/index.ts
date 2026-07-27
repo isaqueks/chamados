@@ -12,9 +12,7 @@ import { criarHandlesRepo, sincronizarRepo, type ConfigRepo } from './repo';
 import { criarHandleLogs, type ConfigLogs } from './logs';
 import { criarFerramentaBd, type ConfigBd } from './bd';
 import { criarHandlesEscrita, criarCopiaDescartavel, type CopiaDescartavel } from './escrita';
-import { criarFerramentaArtefatos, type MarcaArtefatos } from './artefatos';
-
-export type { MarcaArtefatos } from './artefatos';
+import { criarFerramentaArtefatos } from './artefatos';
 
 /**
  * Montagem das FERRAMENTAS REAIS read-only (M7) e sua injeção como HANDLES no
@@ -116,7 +114,7 @@ function emptyBd(): ConfigBd {
 export function montarFerramentasReais(
   cfg: ConfigFerramentas,
   registrar: Registrar,
-  opcoes: { resolucaoHabilitada?: boolean; marca?: MarcaArtefatos } = {},
+  opcoes: { resolucaoHabilitada?: boolean } = {},
 ): FerramentasReais {
   let checkoutDir: string | null = null;
   let copia: CopiaDescartavel | null = null;
@@ -124,8 +122,7 @@ export function montarFerramentasReais(
   const logs = criarHandleLogs(cfg.logs, registrar);
   const bd = criarFerramentaBd(cfg.bd, registrar);
   const escrita = criarHandlesEscrita(() => copia?.dir ?? null, registrar);
-  // D-027: os PDFs de artefato saem com a identidade visual do tenant.
-  const artefatos = criarFerramentaArtefatos(registrar, opcoes.marca);
+  const artefatos = criarFerramentaArtefatos(registrar);
 
   const habilitada = opcoes.resolucaoHabilitada === true && cfg.repo !== null;
 

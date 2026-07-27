@@ -331,8 +331,8 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     expect(sp).toMatch(/NÃO gere artefatos que o cliente não pediu/);
     // Conteúdo do artefato segue as regras de linguagem do cliente.
     expect(sp).toMatch(/CONTEÚDO do artefato[\s\S]*NÃO entram jargão interno/);
-    // D-027: identidade visual automática + bloco ```grafico (só em PDF).
-    expect(sp).toMatch(/identidade visual da empresa/);
+    // D-027: layout profissional automático + bloco ```grafico (só em PDF).
+    expect(sp).toMatch(/layout profissional automático/);
     expect(sp).toMatch(/GRÁFICOS \(apenas em artefatos PDF/);
     expect(sp).toMatch(/"tipo":"barras"\|"linhas"\|"pizza"/);
     expect(sp).toMatch(/máx\. 8 fatias/);
