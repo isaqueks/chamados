@@ -1,13 +1,20 @@
 import PDFDocument from 'pdfkit';
 import { marked, type Token, type Tokens } from 'marked';
+import { melhorTexto, normalizarHex, razaoContraste } from '@chamados/shared';
+import { misturar, paletaGrafico } from './cores';
+import { alturaGrafico, renderizarGrafico, validarGrafico, MAX_FATIAS } from './graficos';
 
 /**
- * Gerador de PDF de ARTEFATOS entregáveis (D-026): renderiza markdown num PDF
- * paginado usando o LEXER do marked (o mesmo padrão de `markdownParaDoc` — nunca
- * o renderer HTML) + pdfkit com as fontes standard (Helvetica/Courier, métricas
- * embutidas — nenhum binário externo tipo chromium). Cobre títulos, parágrafos
- * (negrito/itálico/código/links), listas (aninhadas), tabelas GFM, blocos de
- * código, blockquote e hr — o suficiente para relatórios ao cliente.
+ * Gerador de PDF de ARTEFATOS entregáveis (D-026, template D-027): renderiza
+ * markdown num PDF paginado usando o LEXER do marked (o mesmo padrão de
+ * `markdownParaDoc` — nunca o renderer HTML) + pdfkit com as fontes standard
+ * (Helvetica/Courier, métricas embutidas — nenhum binário externo tipo chromium).
+ *
+ * D-027 — identidade visual do TENANT: capa com faixa na cor primária (logo ou
+ * nome de exibição + data), títulos na cor da marca, tabelas com cabeçalho
+ * colorido e zebra, blocos de código com fundo, rodapé paginado — e GRÁFICOS
+ * vetoriais (bloco ```grafico, ver graficos.ts). Sem marca configurada, cai na
+ * paleta padrão do produto (azul-petróleo — D-019).
  *
  * As fontes standard são WinAnsi (latin1): acentos pt-BR passam intactos;
  * pontuação tipográfica é normalizada e o restante fora do latin1 é descartado
@@ -18,6 +25,55 @@ const MARGEM = 50;
 const TAM_TEXTO = 10;
 const TAM_TITULOS = [16, 13, 11.5] as const; // h1..h3 (h4+ clampa em h3)
 
+/** Aproximação hex do azul-petróleo padrão do produto (`--primary`, D-019). */
+const COR_PADRAO = '#155e75';
+
+/** Identidade visual aplicada ao PDF (D-027) — tudo opcional, tudo com fallback. */
+export interface MarcaPdf {
+  /** Nome de exibição do tenant (capa e rodapé). */
+  nome?: string | null;
+  /** Cor primária do branding (hex). Inválida/ausente → paleta padrão. */
+  corPrimaria?: string | null;
+  /** Logo em PNG/JPEG (os formatos que o pdfkit embute). Ver `logoSuportado`. */
+  logo?: Buffer | null;
+}
+
+/** O buffer é um formato de imagem que o pdfkit sabe embutir (PNG/JPEG)? */
+export function logoSuportado(buffer: Buffer): boolean {
+  if (buffer.length < 4) return false;
+  const png = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  const jpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  return png || jpeg;
+}
+
+/** Cores resolvidas do template a partir da marca. */
+interface Tema {
+  /** Cor primária (faixa da capa, cabeçalho de tabela, gráficos). */
+  cor: string;
+  /** Texto sobre a cor primária (preto/branco por contraste WCAG). */
+  corTexto: string;
+  /** Variante da cor com contraste garantido sobre fundo branco (títulos/links). */
+  corTitulo: string;
+  /** Tint suave para zebra de tabela. */
+  zebra: string;
+  /** Tint para bordas/réguas discretas. */
+  borda: string;
+  /** Paleta dos gráficos. */
+  paleta: string[];
+}
+
+function temaDe(marca: MarcaPdf): Tema {
+  const cor = (marca.corPrimaria && normalizarHex(marca.corPrimaria)) || COR_PADRAO;
+  return {
+    cor,
+    corTexto: melhorTexto(cor).cor,
+    corTitulo: razaoContraste(cor, '#ffffff') >= 3 ? cor : misturar(cor, '#000000', 0.45),
+    zebra: misturar(cor, '#ffffff', 0.94),
+    borda: misturar(cor, '#ffffff', 0.72),
+    paleta: paletaGrafico(cor, MAX_FATIAS),
+  };
+}
+
 /** Normaliza para WinAnsi: pontuação tipográfica → ASCII; resto fora do latin1 cai. */
 function paraWinAnsi(texto: string): string {
   return (
@@ -26,10 +82,11 @@ function paraWinAnsi(texto: string): string {
       .replace(/[“”„]/g, '"')
       .replace(/[–—]/g, '-')
       .replace(/…/g, '...')
-      .replace(/[•●▪]/g, '*')
+      .replace(/[●▪]/g, '•')
       .replace(/\u00a0/g, ' ')
+      // • (•) fica: o pdfkit o mapeia para o bullet do WinAnsi (0x95).
       // eslint-disable-next-line no-control-regex
-      .replace(/[^\x09\x0A\x0D\x20-\x7E¡-ÿ]/g, '')
+      .replace(/[^\x09\x0A\x0D\x20-\x7E¡-ÿ•]/g, '')
   );
 }
 
@@ -40,6 +97,8 @@ interface Trecho {
   italico: boolean;
   codigo: boolean;
   href?: string;
+  /** Cor específica (marcador de lista, etc.); ausente → cor de texto padrão. */
+  cor?: string;
 }
 
 function desescapar(texto: string): string {
@@ -135,7 +194,12 @@ function larguraUtil(doc: Doc): number {
 }
 
 /** Escreve trechos estilizados como um parágrafo contínuo (com wrap do pdfkit). */
-function escreverTrechos(doc: Doc, trechos: Trecho[], opts: { indent?: number } = {}): void {
+function escreverTrechos(
+  doc: Doc,
+  trechos: Trecho[],
+  tema: Tema,
+  opts: { indent?: number } = {},
+): void {
   const uteis = trechos.filter((t) => t.texto.length > 0);
   if (uteis.length === 0) {
     doc.moveDown(0.5);
@@ -149,7 +213,7 @@ function escreverTrechos(doc: Doc, trechos: Trecho[], opts: { indent?: number } 
     doc
       .font(fonteDe(t))
       .fontSize(TAM_TEXTO)
-      .fillColor(t.href ? '#1d4ed8' : '#111111');
+      .fillColor(t.href ? tema.corTitulo : (t.cor ?? '#111111'));
     const continuar = i < uteis.length - 1;
     if (i === 0) {
       doc.text(t.texto, x, doc.y, {
@@ -175,47 +239,91 @@ function garantirEspaco(doc: Doc, altura: number): void {
   if (doc.y + altura > limite) doc.addPage();
 }
 
-function renderizarTabela(doc: Doc, tb: Tokens.Table): void {
+function renderizarTabela(doc: Doc, tb: Tokens.Table, tema: Tema): void {
   const nCols = tb.header.length;
   if (nCols === 0) return;
   const largura = larguraUtil(doc);
-  const colW = largura / nCols;
-  const padding = 4;
+  const padding = 6;
+  const padV = 5;
 
   const linhaCells = (cells: Array<{ tokens?: Token[] }>): string[] =>
     cells.map((c) => paraWinAnsi(textoPlano(trechosDe(c.tokens))));
+  const cabecalho = linhaCells(tb.header);
+  const corpo = tb.rows.map(linhaCells);
 
-  const desenharLinha = (celulas: string[], negrito: boolean): void => {
-    doc.font(negrito ? 'Helvetica-Bold' : 'Helvetica').fontSize(TAM_TEXTO - 0.5);
+  // Larguras proporcionais ao conteúdo (com piso) — coluna de rótulo respira,
+  // coluna de número não desperdiça página.
+  const pesos = cabecalho.map((h, i) => {
+    let m = Math.min(h.length, 40);
+    for (const linha of corpo) m = Math.max(m, Math.min((linha[i] ?? '').length, 40));
+    return Math.max(m, 5);
+  });
+  const somaPesos = pesos.reduce((a, b) => a + b, 0);
+  const piso = Math.min(56, largura / nCols);
+  const brutas = pesos.map((p) => Math.max((p / somaPesos) * largura, piso));
+  const somaBrutas = brutas.reduce((a, b) => a + b, 0);
+  const colWs = brutas.map((w) => (w * largura) / somaBrutas);
+
+  // Colunas 100% numéricas alinham à direita (número se lê pela ordem de grandeza).
+  const numerica = cabecalho.map(
+    (_, i) =>
+      corpo.length > 0 &&
+      corpo.every((l) => {
+        const c = (l[i] ?? '').trim();
+        return c !== '' && /^[0-9.,%+\-R$()\s]+$/.test(c);
+      }),
+  );
+
+  const desenharLinha = (
+    celulas: string[],
+    opcoes: { cabecalho?: boolean; zebra?: boolean },
+  ): void => {
+    const fonte = opcoes.cabecalho ? 'Helvetica-Bold' : 'Helvetica';
+    doc.font(fonte).fontSize(TAM_TEXTO - 0.5);
     const alturas = celulas.map(
-      (c) => doc.heightOfString(c || ' ', { width: colW - padding * 2 }) + padding * 2,
+      (c, i) => doc.heightOfString(c || ' ', { width: colWs[i]! - padding * 2 }) + padV * 2,
     );
-    const alturaLinha = Math.max(...alturas, TAM_TEXTO + padding * 2);
+    const alturaLinha = Math.max(...alturas, TAM_TEXTO + padV * 2);
     garantirEspaco(doc, alturaLinha);
     const y = doc.y;
     const x0 = doc.page.margins.left;
-    for (let i = 0; i < celulas.length; i++) {
-      const x = x0 + i * colW;
-      doc.lineWidth(0.5).strokeColor('#bbbbbb').rect(x, y, colW, alturaLinha).stroke();
+    if (opcoes.cabecalho) doc.rect(x0, y, largura, alturaLinha).fill(tema.cor);
+    else if (opcoes.zebra) doc.rect(x0, y, largura, alturaLinha).fill(tema.zebra);
+    let x = x0;
+    for (let i = 0; i < nCols; i++) {
       doc
-        .fillColor('#111111')
-        .text(celulas[i] || ' ', x + padding, y + padding, { width: colW - padding * 2 });
+        .font(fonte)
+        .fontSize(TAM_TEXTO - 0.5)
+        .fillColor(opcoes.cabecalho ? tema.corTexto : '#26262b')
+        .text(celulas[i] || ' ', x + padding, y + padV, {
+          width: colWs[i]! - padding * 2,
+          align: numerica[i] ? 'right' : 'left',
+        });
+      x += colWs[i]!;
     }
-    doc.x = doc.page.margins.left;
+    if (!opcoes.cabecalho) {
+      doc
+        .lineWidth(0.5)
+        .strokeColor('#e4e4e7')
+        .moveTo(x0, y + alturaLinha)
+        .lineTo(x0 + largura, y + alturaLinha)
+        .stroke();
+    }
+    doc.x = x0;
     doc.y = y + alturaLinha;
   };
 
-  desenharLinha(linhaCells(tb.header), true);
-  for (const row of tb.rows) desenharLinha(linhaCells(row), false);
-  doc.moveDown(0.5);
+  desenharLinha(cabecalho, { cabecalho: true });
+  corpo.forEach((linha, idx) => desenharLinha(linha, { zebra: idx % 2 === 1 }));
+  doc.fillColor('#111111').moveDown(0.6);
 }
 
-function renderizarLista(doc: Doc, lista: Tokens.List, nivel: number): void {
+function renderizarLista(doc: Doc, lista: Tokens.List, nivel: number, tema: Tema): void {
   const indent = nivel * 16;
   lista.items.forEach((item, idx) => {
     const marcador = lista.ordered
       ? `${(typeof lista.start === 'number' && lista.start > 1 ? lista.start : 1) + idx}. `
-      : '- ';
+      : '• ';
     // Separa sub-listas (renderizadas recursivamente) do conteúdo inline do item.
     const blocos = item.tokens.filter((t) => t.type !== 'checkbox');
     const sublistas = blocos.filter((t): t is Tokens.List => t.type === 'list');
@@ -229,68 +337,119 @@ function renderizarLista(doc: Doc, lista: Tokens.List, nivel: number): void {
       }
     }
     const prefixo = item.task ? (item.checked ? '[x] ' : '[ ] ') : '';
-    const trechos = [trecho(marcador + prefixo, { negrito: false }), ...trechosDe(inlineTokens)];
+    const marca: Trecho = {
+      texto: paraWinAnsi(marcador + prefixo),
+      negrito: lista.ordered,
+      italico: false,
+      codigo: false,
+      cor: tema.corTitulo,
+    };
+    const trechos = [marca, ...trechosDe(inlineTokens)];
     garantirEspaco(doc, TAM_TEXTO * 2);
-    escreverTrechos(doc, trechos, { indent });
+    escreverTrechos(doc, trechos, tema, { indent });
     doc.moveDown(-0.3); // itens de lista mais compactos que parágrafos
-    for (const sub of sublistas) renderizarLista(doc, sub, nivel + 1);
+    for (const sub of sublistas) renderizarLista(doc, sub, nivel + 1, tema);
   });
   doc.moveDown(0.5);
 }
 
-function renderizarBlocos(doc: Doc, tokens: Token[]): void {
+function renderizarCodigo(doc: Doc, texto: string): void {
+  doc.font('Courier').fontSize(TAM_TEXTO - 1.5);
+  const largura = larguraUtil(doc);
+  const hTexto = doc.heightOfString(texto || ' ', { width: largura - 24 });
+  const hBloco = hTexto + 16;
+  const alturaPagina = doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
+  if (hBloco <= alturaPagina) {
+    garantirEspaco(doc, hBloco);
+    const x0 = doc.page.margins.left;
+    const y0 = doc.y;
+    doc.lineWidth(0.5).roundedRect(x0, y0, largura, hBloco, 4).fillAndStroke('#f4f4f5', '#e4e4e7');
+    doc
+      .font('Courier')
+      .fontSize(TAM_TEXTO - 1.5)
+      .fillColor('#3f3f46')
+      .text(texto, x0 + 12, y0 + 8, { width: largura - 24 });
+    doc.x = x0;
+    doc.y = y0 + hBloco;
+  } else {
+    // Maior que uma página: sem fundo (o pdfkit pagina o texto sozinho).
+    doc.fillColor('#3f3f46').text(texto, doc.page.margins.left + 12, doc.y, {
+      width: largura - 12,
+    });
+  }
+  doc.fillColor('#111111').moveDown(0.6);
+}
+
+function renderizarBlocos(doc: Doc, tokens: Token[], tema: Tema): void {
   for (const t of tokens) {
     switch (t.type) {
       case 'space':
         break;
       case 'heading': {
         const h = t as Tokens.Heading;
-        const tam = TAM_TITULOS[Math.min(h.depth, 3) - 1]!;
+        const nivel = Math.min(h.depth, 3);
+        const tam = TAM_TITULOS[nivel - 1]!;
         garantirEspaco(doc, tam * 3);
-        doc.moveDown(0.4);
+        doc.moveDown(nivel === 1 ? 0.6 : 0.4);
         doc
           .font('Helvetica-Bold')
           .fontSize(tam)
-          .fillColor('#111111')
+          .fillColor(nivel === 1 ? tema.corTitulo : nivel === 2 ? '#18181b' : '#3f3f46')
           .text(paraWinAnsi(textoPlano(trechosDe(h.tokens))), doc.page.margins.left, doc.y, {
             width: larguraUtil(doc),
           });
-        doc.moveDown(0.4);
+        doc.fillColor('#111111').moveDown(0.4);
         break;
       }
       case 'paragraph':
-        escreverTrechos(doc, trechosDe((t as Tokens.Paragraph).tokens));
+        escreverTrechos(doc, trechosDe((t as Tokens.Paragraph).tokens), tema);
         break;
       case 'code': {
         const c = t as Tokens.Code;
-        doc
-          .font('Courier')
-          .fontSize(TAM_TEXTO - 1)
-          .fillColor('#333333');
-        doc.text(paraWinAnsi(c.text), doc.page.margins.left + 12, doc.y, {
-          width: larguraUtil(doc) - 12,
-        });
-        doc.fillColor('#111111').moveDown(0.5);
+        if ((c.lang ?? '').trim().toLowerCase() === 'grafico') {
+          // Bloco ```grafico (D-027): JSON validado → gráfico vetorial desenhado.
+          const spec = validarGrafico(c.text);
+          garantirEspaco(doc, alturaGrafico(spec));
+          renderizarGrafico(
+            doc,
+            spec,
+            { cor: tema.cor, paleta: tema.paleta },
+            { x: doc.page.margins.left, largura: larguraUtil(doc) },
+          );
+          doc.moveDown(0.6);
+        } else {
+          renderizarCodigo(doc, paraWinAnsi(c.text));
+        }
         break;
       }
       case 'blockquote': {
-        doc.fillColor('#555555');
-        renderizarBlocos(doc, (t as Tokens.Blockquote).tokens);
+        const paginasAntes = doc.bufferedPageRange().count;
+        const x0 = doc.page.margins.left;
+        const y0 = doc.y;
+        doc.fillColor('#52525b');
+        doc.page.margins.left = MARGEM + 14;
+        renderizarBlocos(doc, (t as Tokens.Blockquote).tokens, tema);
+        doc.page.margins.left = MARGEM;
+        doc.x = MARGEM;
+        // Barra lateral só quando o bloco coube numa página (sem quebra no meio).
+        if (doc.bufferedPageRange().count === paginasAntes && doc.y > y0) {
+          doc.rect(x0 + 2, y0 - 2, 3, doc.y - y0 - 4).fill(tema.cor);
+        }
         doc.fillColor('#111111');
         break;
       }
       case 'list':
-        renderizarLista(doc, t as Tokens.List, 0);
+        renderizarLista(doc, t as Tokens.List, 0, tema);
         break;
       case 'table':
-        renderizarTabela(doc, t as Tokens.Table);
+        renderizarTabela(doc, t as Tokens.Table, tema);
         break;
       case 'hr': {
         garantirEspaco(doc, 16);
         const y = doc.y + 4;
         doc
           .lineWidth(0.5)
-          .strokeColor('#bbbbbb')
+          .strokeColor(tema.borda)
           .moveTo(doc.page.margins.left, y)
           .lineTo(doc.page.width - doc.page.margins.right, y)
           .stroke();
@@ -299,29 +458,120 @@ function renderizarBlocos(doc: Doc, tokens: Token[]): void {
       }
       case 'html': {
         const texto = paraWinAnsi((t as Tokens.HTML).raw.trim());
-        if (texto) escreverTrechos(doc, [trecho(texto, {})]);
+        if (texto) escreverTrechos(doc, [trecho(texto, {})], tema);
         break;
       }
       case 'text':
-        escreverTrechos(doc, trechosDe((t as Tokens.Text).tokens ?? [t]));
+        escreverTrechos(doc, trechosDe((t as Tokens.Text).tokens ?? [t]), tema);
         break;
       default: {
         const cru = 'raw' in t && typeof t.raw === 'string' ? t.raw.trim() : '';
-        if (cru) escreverTrechos(doc, [trecho(cru, {})]);
+        if (cru) escreverTrechos(doc, [trecho(cru, {})], tema);
       }
     }
   }
 }
 
+/** Capa (D-027): faixa na cor da marca com logo/nome, data e o título do documento. */
+function desenharCapa(doc: Doc, titulo: string | null, marca: MarcaPdf, tema: Tema): void {
+  const pageW = doc.page.width;
+  const wUtil = pageW - MARGEM * 2;
+  const t = titulo?.trim() ? paraWinAnsi(titulo.trim()) : '';
+  doc.font('Helvetica-Bold').fontSize(19);
+  const hTitulo = t ? doc.heightOfString(t, { width: wUtil }) : 0;
+  const topoIdent = 26;
+  const hIdent = 34;
+  const faixaH = topoIdent + hIdent + (t ? hTitulo + 8 : 0) + 16;
+  doc.rect(0, 0, pageW, faixaH).fill(tema.cor);
+
+  let usouLogo = false;
+  if (marca.logo && logoSuportado(marca.logo)) {
+    try {
+      doc.image(marca.logo, MARGEM, topoIdent, { fit: [140, 30] });
+      usouLogo = true;
+    } catch {
+      // Logo corrompido: segue com o nome (nunca derruba a geração).
+    }
+  }
+  if (!usouLogo && marca.nome?.trim()) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(12)
+      .fillColor(tema.corTexto)
+      .text(paraWinAnsi(marca.nome.trim()), MARGEM, topoIdent + 9, {
+        width: wUtil - 160,
+        lineBreak: false,
+        height: 16,
+        ellipsis: true,
+      });
+  }
+  const data = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(new Date());
+  doc
+    .font('Helvetica')
+    .fontSize(8.5)
+    .fillColor(tema.corTexto)
+    .fillOpacity(0.85)
+    .text(`Gerado em ${data}`, MARGEM, topoIdent + 12, {
+      width: wUtil,
+      align: 'right',
+      lineBreak: false,
+    });
+  doc.fillOpacity(1);
+  if (t) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(19)
+      .fillColor(tema.corTexto)
+      .text(t, MARGEM, topoIdent + hIdent, { width: wUtil });
+  }
+  doc.x = MARGEM;
+  doc.y = faixaH + 26;
+  doc.fillColor('#111111');
+}
+
+/** Rodapé em todas as páginas (segunda passada, com `bufferPages`). */
+function desenharRodapes(doc: Doc, marca: MarcaPdf, tema: Tema): void {
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    const margemInferior = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0; // sem isso, escrever aqui embaixo criaria página nova
+    const y = doc.page.height - 30;
+    doc
+      .lineWidth(0.5)
+      .strokeColor(tema.borda)
+      .moveTo(MARGEM, y - 6)
+      .lineTo(doc.page.width - MARGEM, y - 6)
+      .stroke();
+    doc.font('Helvetica').fontSize(7.5).fillColor('#8a8a8a');
+    if (marca.nome?.trim()) {
+      doc.text(paraWinAnsi(marca.nome.trim()), MARGEM, y, { lineBreak: false });
+    }
+    doc.text(`Página ${i + 1} de ${range.count}`, MARGEM, y, {
+      width: doc.page.width - MARGEM * 2,
+      align: 'right',
+      lineBreak: false,
+    });
+    doc.page.margins.bottom = margemInferior;
+  }
+}
+
 /**
- * Renderiza `markdown` num PDF (A4) e devolve o buffer completo. `titulo`, quando
- * presente, vira o cabeçalho do documento. Lança `pdf_falhou:<motivo>` em erro.
+ * Renderiza `markdown` num PDF (A4) com a identidade visual da `marca` (D-027) e
+ * devolve o buffer completo. `titulo`, quando presente, entra na capa. Lança
+ * `pdf_falhou:<motivo>` em erro (inclusive `grafico_invalido:` de bloco ```grafico).
  */
-export async function gerarPdfDeMarkdown(titulo: string | null, markdown: string): Promise<Buffer> {
+export async function gerarPdfDeMarkdown(
+  titulo: string | null,
+  markdown: string,
+  marca: MarcaPdf = {},
+): Promise<Buffer> {
   try {
+    const tema = temaDe(marca);
     const tokens = marked.lexer(markdown, { gfm: true, breaks: true });
     const doc = new PDFDocument({
       size: 'A4',
+      bufferPages: true,
       margins: { top: MARGEM, bottom: MARGEM, left: MARGEM, right: MARGEM },
       info: titulo ? { Title: paraWinAnsi(titulo) } : {},
     });
@@ -332,20 +582,9 @@ export async function gerarPdfDeMarkdown(titulo: string | null, markdown: string
       doc.on('error', reject);
     });
 
-    if (titulo && titulo.trim().length > 0) {
-      doc.font('Helvetica-Bold').fontSize(18).fillColor('#111111');
-      doc.text(paraWinAnsi(titulo.trim()), { width: larguraUtil(doc) });
-      const y = doc.y + 6;
-      doc
-        .lineWidth(1)
-        .strokeColor('#333333')
-        .moveTo(doc.page.margins.left, y)
-        .lineTo(doc.page.width - doc.page.margins.right, y)
-        .stroke();
-      doc.y = y + 14;
-    }
-
-    renderizarBlocos(doc, tokens);
+    desenharCapa(doc, titulo, marca, tema);
+    renderizarBlocos(doc, tokens, tema);
+    desenharRodapes(doc, marca, tema);
     doc.end();
     return await pronto;
   } catch (err) {

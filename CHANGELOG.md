@@ -2,6 +2,14 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-07-27 — D-027: PDFs da IA com identidade visual do tenant + gráficos vetoriais nativos
+
+- **Avaliação do usuário:** os PDFs de artefato (D-026) estavam "básicos, feios". Restrição: nada de chromium (tem que rodar leve no servidor) — HTML→PDF e DOCX→PDF (LibreOffice) descartados; o pdfkit desenha vetor puro, então o motor fica e ganha template + gráficos, **zero dependência nova**.
+- **Template branded (`pdf.ts`):** capa com faixa na `cor_primaria` do tenant (logo claro PNG/JPEG carregado lazy do storage, best-effort; senão `nome_exibicao`) + data; títulos/links/marcadores na cor da marca (escurecida se reprovar contraste 3:1 sobre branco); tabelas com cabeçalho na cor da marca (texto por contraste WCAG), zebra em tint, larguras proporcionais e colunas numéricas à direita; código com fundo; blockquote com barra; rodapé paginado ("Página X de Y" + nome) em todas as páginas. Sem branding → paleta padrão azul-petróleo (D-019). Tints/paleta todos derivados da cor da marca (`cores.ts`).
+- **Gráficos (`graficos.ts`):** bloco ```` ```grafico ```` com JSON `{tipo: barras|linhas|pizza, titulo?, dados: [{rotulo, valor}]}` vira gráfico vetorial desenhado pelo pdfkit — barras/linhas com grade, escala 1|2|5×10^k e valores; pizza com paleta da marca e legenda com %. Tetos: 24 pontos, 8 fatias ("Outros"). Spec inválida → `grafico_invalido:<motivo>` com a forma esperada (erro de ferramenta corrigível pelo modelo, como em D-026).
+- **Encanamento:** `contexto.ts` → `montarFerramentasReais({ marca })` → `criarFerramentaArtefatos`; logo só é baixado se um PDF for de fato gerado e nunca derruba a triagem (magic bytes PNG/JPEG). System prompt anuncia o estilo automático ("escreva APENAS o conteúdo") e o bloco `grafico` (linhas=evolução, barras=comparação, pizza=proporção; só em artefato PDF).
+- ADR D-027; spec 05 (§4.2, §5.6) atualizada; testes novos de spec/paleta/template/3 tipos de gráfico (amostra visual conferida em A4).
+
 ## 2026-07-22 — Fix: deep link de chamado abre o chamado (não a raiz da área) + `?next=` no login
 
 - **Bug relatado:** abrir `/portal/chamados/<id>` logado como admin redirecionava para `/app` (raiz), perdendo o chamado. Causa: os guards de layout redirecionavam por papel sem saber o caminho pedido.

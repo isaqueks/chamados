@@ -3,6 +3,7 @@ import { IsNull } from 'typeorm';
 import { obterObjeto } from '@chamados/storage';
 import {
   Papel,
+  corHexValida,
   type AIProviderInput,
   type ImagemContexto,
   type MensagemTimeline,
@@ -21,7 +22,9 @@ import {
   resolverConfigFerramentas,
   montarFerramentasReais,
   type FerramentasReais,
+  type MarcaArtefatos,
 } from './ferramentas';
+import { logoSuportado } from './ferramentas/pdf';
 import type { ConfigRepo } from './ferramentas/repo';
 import { portaResolucaoAberta } from './resolucao';
 
@@ -214,6 +217,37 @@ async function timelineCompleta(em: EntityManager, chamadoId: string): Promise<M
   });
 }
 
+/**
+ * Identidade visual do tenant para os PDFs de artefato (D-027): nome de exibição,
+ * cor primária (só se hex válida) e um loader LAZY do logo claro — o download do
+ * storage só acontece se a IA de fato gerar um PDF, é best-effort (falha → sem
+ * logo, nunca derruba a triagem) e aceita apenas PNG/JPEG (o que o pdfkit embute).
+ */
+function marcaDoTenant(
+  tenant: Awaited<ReturnType<typeof carregarTenant>>,
+): MarcaArtefatos | undefined {
+  if (!tenant) return undefined;
+  const branding = tenant.config_branding ?? {};
+  const corPrimaria =
+    branding.cor_primaria && corHexValida(branding.cor_primaria) ? branding.cor_primaria : null;
+  const chaveLogo = branding.logo_light_url?.trim() ? branding.logo_light_url.trim() : null;
+  return {
+    nome: tenant.nome_exibicao ?? null,
+    corPrimaria,
+    carregarLogo: chaveLogo
+      ? async (): Promise<Buffer | null> => {
+          try {
+            const obj = await obterObjeto(chaveLogo);
+            if (!obj || !logoSuportado(obj.corpo)) return null;
+            return obj.corpo;
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
+  };
+}
+
 /** Registrador da trilha de ações: loga a chamada da ferramenta (SEM segredos). */
 function registradorDe(deps: DepsContexto): Registrar {
   return (ferramenta, args) => {
@@ -275,6 +309,7 @@ export async function montarInput(
 
   const reais = montarFerramentasReais(configFerramentas, registrar, {
     resolucaoHabilitada: habilitadaPreCall,
+    marca: marcaDoTenant(tenant),
   });
 
   // #16: coleta as REFERÊNCIAS das imagens inline ainda na Tx1 (só metadados);

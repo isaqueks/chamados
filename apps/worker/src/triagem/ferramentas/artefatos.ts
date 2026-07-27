@@ -4,6 +4,17 @@ import { ferramentasConfig, type Registrar } from './config';
 import { gerarPdfDeMarkdown } from './pdf';
 
 /**
+ * Identidade visual do tenant aplicada aos PDFs (D-027). `carregarLogo` é lazy e
+ * best-effort (I/O de storage só acontece se/quando a IA gerar um PDF); o
+ * resultado é cacheado por execução.
+ */
+export interface MarcaArtefatos {
+  nome: string | null;
+  corPrimaria: string | null;
+  carregarLogo?: () => Promise<Buffer | null>;
+}
+
+/**
  * Ferramenta `artefato_gerar` (D-026): a IA produz um ARQUIVO entregável ao
  * cliente (relatório em PDF, extração em CSV, texto) durante a triagem. O handle
  * materializa o conteúdo em buffer AQUI (worker), valida-o com o MESMO
@@ -40,9 +51,19 @@ export function sanitizarNomeArtefato(nome: string, formato: FormatoArtefato): s
   return `${nomeUtil}.${formato}`;
 }
 
-export function criarFerramentaArtefatos(registrar: Registrar): FerramentaArtefatos {
+export function criarFerramentaArtefatos(
+  registrar: Registrar,
+  marca?: MarcaArtefatos,
+): FerramentaArtefatos {
   const { maxPorExecucao, maxConteudoChars } = ferramentasConfig.artefatos;
   const acumulados = new Map<string, ArquivoUpload>();
+  // Logo do tenant: carregado UMA vez por execução, só se um PDF for gerado.
+  let logoCarregado: Promise<Buffer | null> | null = null;
+  const obterLogo = (): Promise<Buffer | null> => {
+    if (!marca?.carregarLogo) return Promise.resolve(null);
+    logoCarregado ??= marca.carregarLogo().catch(() => null);
+    return logoCarregado;
+  };
 
   return {
     async gerar(pedido: PedidoArtefato): Promise<ArtefatoConfirmado> {
@@ -67,7 +88,11 @@ export function criarFerramentaArtefatos(registrar: Registrar): FerramentaArtefa
 
       const buffer =
         formato === 'pdf'
-          ? await gerarPdfDeMarkdown(pedido.titulo?.trim() || null, conteudo)
+          ? await gerarPdfDeMarkdown(pedido.titulo?.trim() || null, conteudo, {
+              nome: marca?.nome ?? null,
+              corPrimaria: marca?.corPrimaria ?? null,
+              logo: await obterLogo(),
+            })
           : // BOM no CSV: Excel/LibreOffice abrem UTF-8 (acentos pt-BR) sem mojibake.
             Buffer.from(formato === 'csv' ? '\ufeff' + conteudo : conteudo, 'utf8');
 
