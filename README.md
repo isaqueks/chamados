@@ -32,6 +32,7 @@ Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs
 | [08-ui-ux.md](specs/08-ui-ux.md)                                                   | Mapa de telas, fluxos, portal do cliente vs painel operador/admin           |
 | [09-seguranca-lgpd.md](specs/09-seguranca-lgpd.md)                                 | Ameaças, prompt injection, uploads, XSS, segredos, LGPD                     |
 | [10-roadmap-mvp.md](specs/10-roadmap-mvp.md)                                       | Corte do MVP, fases 2 e 3, riscos, ordem de implementação                   |
+| [11-api-mcp.md](specs/11-api-mcp.md)                                               | API HTTP `/api/v1` (login/senha) e servidor MCP para assistentes            |
 
 ## Conceitos-chave
 
@@ -40,3 +41,4 @@ Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs
 - **SistemaAlvo:** cada tenant cadastra os sistemas sobre os quais abre chamados — repositório git, logs e conexão read-only ao BD, que a IA usa na triagem (com `git pull` a cada análise).
 - **IA fase 1:** Claude Agent SDK com Opus 4.8 (D-006), atrás da interface `AIProvider` para permitir troca de engine.
 - **Stack (D-001):** Next.js 16 App Router · PostgreSQL 16 + RLS · TypeORM · Redis/BullMQ · MinIO · TipTap · autenticação própria conforme spec 03 (D-010) — infraestrutura sempre em Docker (D-002).
+- **API + MCP (D-028):** API HTTP `/api/v1` (login por e-mail/senha, Bearer-only) e servidor MCP (`apps/mcp`) para usar o Chamados dentro do Claude — ler chamados e timeline, publicar mensagens, mudar status, sempre no escopo do papel do usuário. Ver [specs/11](specs/11-api-mcp.md) e o guia em [docs/desenvolvimento.md](docs/desenvolvimento.md) §3.11.

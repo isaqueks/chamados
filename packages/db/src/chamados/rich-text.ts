@@ -486,3 +486,33 @@ export function textoParaDoc(texto: string): DocRico {
 export function normalizarEntradaRich(entrada: string | DocRico | unknown): unknown {
   return typeof entrada === 'string' ? textoParaDoc(entrada) : entrada;
 }
+
+// ---------------------------------------------------------------------------
+// Projeção textual (caminho INVERSO: HTML sanitizado → texto puro)
+// ---------------------------------------------------------------------------
+
+/**
+ * Converte o HTML JÁ SANITIZADO numa projeção de texto puro. Usado onde o
+ * consumidor não é um navegador: o contexto do modelo na triagem (specs/05 §4.1)
+ * e a API `/api/v1` (specs/11 §1) — em ambos, HTML seria só ruído/tokens.
+ *
+ * Opera sobre o HTML que ESTE módulo produziu (allowlist, tags fechadas, texto
+ * escapado), não sobre HTML arbitrário do cliente: é uma projeção de saída, nunca
+ * uma barreira de segurança — a sanitização acontece na ESCRITA.
+ */
+export function htmlParaTexto(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<\/t[dh]>/gi, '\t')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}

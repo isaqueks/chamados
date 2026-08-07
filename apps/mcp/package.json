@@ -1,0 +1,25 @@
+{
+  "name": "@chamados/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor MCP (stdio) do Chamados: expõe a API /api/v1 a assistentes (specs/11)",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke:api": "tsx src/scripts/smoke-api.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.0.0",
+    "@chamados/db": "*",
+    "@chamados/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "dotenv": "^16.4.7"
+  }
+}

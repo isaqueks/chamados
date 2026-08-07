@@ -12,6 +12,7 @@ export default defineConfig({
       'packages/**/src/**/*.test.ts',
       'apps/worker/src/**/*.test.ts',
       'apps/web/src/**/*.test.ts',
+      'apps/mcp/src/**/*.test.ts',
     ],
     environment: 'node',
   },

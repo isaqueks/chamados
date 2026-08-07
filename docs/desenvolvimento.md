@@ -26,8 +26,9 @@ em PowerShell e em Git Bash.
 ```
 Chamados/
 ├─ apps/
-│  ├─ web/       Next.js (App Router) — UI + API (rota /api/health)
-│  └─ worker/    Worker BullMQ (fila "healthcheck")
+│  ├─ web/       Next.js (App Router) — UI + API (inclui /api/v1 — specs/11)
+│  ├─ worker/    Worker BullMQ (triagem de IA, notificações, manutenção)
+│  └─ mcp/       Servidor MCP (stdio) que consome /api/v1 — ver §3.11
 ├─ packages/
 │  ├─ shared/    Enums canônicos (status, natureza, prioridade, papel, ...)
 │  └─ db/        TypeORM DataSource, entidades, migrations, RLS, smoke test
@@ -231,8 +232,8 @@ aplicadas; usa `IA_PROVIDER=fake` internamente, sem custo nem rede.
 
 ### 3.9 Resolução automática via PR (M8)
 
-Quando o chamado é `problema` + `complexidade=facil` + compreendido acima do
-limiar de confiança, a IA tenta resolver: escreve a correção numa working copy
+Quando o chamado é `problema` **ou** `alteracao` (D-023) + `complexidade=facil` +
+compreendido com confiança acima do limiar, a IA tenta resolver: escreve a correção numa working copy
 descartável e o worker cria a branch, comita, faz push e (GitHub) abre o PR —
 detalhes do fluxo e do gate duplo (pré-call/pós-call) em `specs/05-agente-ia.md`
 §6. **A IA nunca faz merge**: o PR fica sempre aguardando aprovação humana.
@@ -241,7 +242,7 @@ Variáveis de ambiente da resolução (ver `.env.example` para os defaults reais
 
 | Variável                         | Default   | Descrição                                                                 |
 | -------------------------------- | --------- | ------------------------------------------------------------------------- |
-| `IA_RESOLUCAO_CONFIANCA_MIN`     | `0.7`     | confiança mínima do gate pós-call para o worker tentar branch/PR          |
+| `IA_RESOLUCAO_CONFIANCA_MIN`     | `alta`    | confiança mínima (categórica — D-025) do gate pós-call para branch/PR     |
 | `IA_RESOLUCAO_MAX_ARQUIVOS`      | `10`      | teto de arquivos que a tentativa pode criar/alterar                       |
 | `IA_RESOLUCAO_MAX_ARQUIVO_BYTES` | `262144`  | teto de tamanho de cada arquivo escrito                                   |
 | `IA_RESOLUCAO_MAX_BYTES_TOTAL`   | `1048576` | teto de bytes totais escritos na tentativa                                |
@@ -309,6 +310,74 @@ npm run smoke:notificacoes
 Requer Postgres + Redis de pé; usa um transporte SMTP fake e um servidor HTTP local
 (não precisa do Mailpit). Deve terminar com `RESULTADO: PASSOU`.
 
+### 3.11 API HTTP `/api/v1` e servidor MCP (D-028)
+
+A aplicação expõe uma **API HTTP mínima** (`specs/11-api-mcp.md`) para leitura e
+atendimento de chamados, e um **servidor MCP** que a consome — é assim que o
+Chamados entra no Claude Code / Claude Desktop.
+
+**Autenticação:** só e-mail + senha. `POST /api/v1/sessao` devolve o mesmo token
+opaco de sessão do cookie (server-side, revogável). Todas as demais rotas exigem
+`Authorization: Bearer <token>`; o **cookie do navegador não autentica a API**
+(Bearer-only, anti-CSRF — specs/11 §1.4).
+
+| Método   | Rota                               | O que faz                                     |
+| -------- | ---------------------------------- | --------------------------------------------- |
+| `POST`   | `/api/v1/sessao`                   | login → token (rate-limited como a tela)      |
+| `DELETE` | `/api/v1/sessao`                   | revoga a sessão                               |
+| `GET`    | `/api/v1/chamados`                 | lista/filtra (status, natureza, prioridade…)  |
+| `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline (`{ref}` = número ou UUID) |
+| `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`       |
+| `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                          |
+
+O escopo é sempre o do **papel do usuário autenticado**: operador/admin leem
+notas internas e complexidade; cliente vê só os próprios chamados e só mensagens
+públicas. A API não é um bypass — mesma `autorizar()`, mesma máquina de estados,
+mesma RLS.
+
+**Plugando no Claude Code / Desktop** (`~/.claude.json` ou o `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "chamados": {
+      "command": "/caminho/para/chamados/node_modules/.bin/tsx",
+      "args": ["/caminho/para/chamados/apps/mcp/src/index.ts"],
+      "env": {
+        "CHAMADOS_URL": "https://suporte.suaempresa.com",
+        "CHAMADOS_EMAIL": "assistente@suaempresa.com",
+        "CHAMADOS_SENHA": "…",
+        "CHAMADOS_TENANT": "acme"
+      }
+    }
+  }
+}
+```
+
+| Variável                       | Obrigatória | Descrição                                                                  |
+| ------------------------------ | ----------- | -------------------------------------------------------------------------- |
+| `CHAMADOS_URL`                 | sim         | Base da instalação. HTTPS obrigatório fora de `localhost`                  |
+| `CHAMADOS_EMAIL` / `_SENHA`    | sim         | Credenciais do usuário (recomendado: um `operador` dedicado, p/ auditoria) |
+| `CHAMADOS_TENANT`              | não         | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`)  |
+| `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas `chamados_listar` e `chamado_obter`                 |
+
+Ferramentas expostas: `chamados_listar`, `chamado_obter` (leitura),
+`chamado_publicar_mensagem`, `chamado_alterar_status` (escrita). O login é
+preguiçoso (só na primeira ferramenta usada) e a sessão se renova sozinha ao
+expirar. Erros da API voltam ao modelo com o código estável do contrato (ex.:
+`transicao_invalida`), que ele pode corrigir sozinho.
+
+Para validar a API + o cliente MCP de ponta a ponta (login, Bearer-only,
+filtros, fronteira cliente × nota interna, publicação e transição):
+
+```bash
+npm run dev:web        # em outro terminal (a aplicação precisa estar no ar)
+npm run smoke:api
+```
+
+Requer Postgres de pé e migrations aplicadas; cria um tenant descartável e o
+remove ao final. Deve terminar com `RESULTADO: PASSOU`.
+
 ---
 
 ## 4. Portas e URLs
@@ -330,25 +399,27 @@ Todas as portas são configuráveis via `.env`.
 
 ## 5. Comandos úteis
 
-| Comando (na raiz)                        | O que faz                                              |
-| ---------------------------------------- | ------------------------------------------------------ |
-| `npm install`                            | instala todos os workspaces                            |
-| `docker compose up -d`                   | sobe Postgres, Redis, MinIO                            |
-| `docker compose ps`                      | status/health dos containers                           |
-| `docker compose down`                    | derruba os containers (mantém volumes)                 |
-| `docker compose down -v`                 | derruba e **apaga os volumes** (reset total)           |
-| `npm run migration:run`                  | aplica as migrations                                   |
-| `npm run migration:revert`               | reverte a última migration                             |
-| `npm run smoke:rls`                      | testa o isolamento por RLS                             |
-| `npm run smoke:triagem`                  | testa a infra de triagem (fila/dedupe/lock)            |
-| `npm run smoke:resolucao`                | testa a resolução automática via PR (gate/branch/push) |
-| `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)              |
-| `npm run dev`                            | sobe web + worker juntos                               |
-| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                            |
-| `npm run build`                          | build de produção do web                               |
-| `npm run typecheck`                      | typecheck de todos os workspaces                       |
-| `npm run lint`                           | ESLint (flat config)                                   |
-| `npm run format`                         | Prettier (escreve)                                     |
+| Comando (na raiz)                        | O que faz                                                      |
+| ---------------------------------------- | -------------------------------------------------------------- |
+| `npm install`                            | instala todos os workspaces                                    |
+| `docker compose up -d`                   | sobe Postgres, Redis, MinIO                                    |
+| `docker compose ps`                      | status/health dos containers                                   |
+| `docker compose down`                    | derruba os containers (mantém volumes)                         |
+| `docker compose down -v`                 | derruba e **apaga os volumes** (reset total)                   |
+| `npm run migration:run`                  | aplica as migrations                                           |
+| `npm run migration:revert`               | reverte a última migration                                     |
+| `npm run smoke:rls`                      | testa o isolamento por RLS                                     |
+| `npm run smoke:triagem`                  | testa a infra de triagem (fila/dedupe/lock)                    |
+| `npm run smoke:resolucao`                | testa a resolução automática via PR (gate/branch/push)         |
+| `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)                      |
+| `npm run smoke:api`                      | testa a API `/api/v1` + cliente MCP (web precisa estar no ar)  |
+| `npm run mcp`                            | roda o servidor MCP (stdio) — normalmente iniciado pelo Claude |
+| `npm run dev`                            | sobe web + worker juntos                                       |
+| `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                                    |
+| `npm run build`                          | build de produção do web                                       |
+| `npm run typecheck`                      | typecheck de todos os workspaces                               |
+| `npm run lint`                           | ESLint (flat config)                                           |
+| `npm run format`                         | Prettier (escreve)                                             |
 
 ---
 

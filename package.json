@@ -35,6 +35,8 @@
     "smoke:conhecimento": "npm run smoke:conhecimento -w @chamados/worker",
     "smoke:notificacoes": "npm run smoke:notificacoes -w @chamados/worker",
     "smoke:manutencao": "npm run smoke:manutencao -w @chamados/worker",
+    "smoke:api": "npm run smoke:api -w @chamados/mcp",
+    "mcp": "npm run start -w @chamados/mcp",
     "seed:dev": "npm run seed:dev -w @chamados/db",
     "tenant:provisionar": "npm run tenant:provisionar -w @chamados/db --",
     "test": "vitest run",

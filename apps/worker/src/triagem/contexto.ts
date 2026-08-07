@@ -15,6 +15,7 @@ import {
   SistemaAlvoSchema,
   CategoriaSchema,
   carregarTenant,
+  htmlParaTexto,
 } from '@chamados/db';
 import type { Registrar } from './ferramentas/config';
 import {
@@ -135,22 +136,6 @@ async function coletarRefsImagens(em: EntityManager, chamadoId: string): Promise
       mediaType: l.content_type,
       storageKey: l.storage_key,
     }));
-}
-
-/** Converte HTML sanitizado numa projeção de texto puro (para o contexto do modelo). */
-function htmlParaTexto(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 /** Deriva um resumo de stack (SEM credenciais) a partir dos tipos configurados. */

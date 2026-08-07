@@ -367,6 +367,34 @@ export async function obterChamado(
   return serializarPorPapel(ator.papel, c);
 }
 
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RE_NUMERO = /^#?(\d{1,18})$/;
+
+/**
+ * Resolve uma REFERÊNCIA de chamado — UUID interno ou número legível por tenant
+ * (`12` ou `#12`, specs/02 "Numeração") — para o `id`. Existe para a API/MCP
+ * (specs/11 §4), onde o humano fala em "#12" e não em UUID.
+ *
+ * NÃO autoriza nada: é só tradução de identificador. O escopo de tenant vem da
+ * RLS (`UNIQUE (tenant_id, numero)` garante unicidade dentro do contexto) e a
+ * autorização por papel continua sendo de `obterChamado`/`listarChamados`.
+ * Referência sem formato válido → `null` (sem ida ao banco).
+ */
+export async function resolverIdChamado(em: EntityManager, ref: string): Promise<string | null> {
+  const valor = ref.trim();
+  if (RE_UUID.test(valor)) {
+    const porId = await carregar(em, valor);
+    return porId?.id ?? null;
+  }
+  const m = RE_NUMERO.exec(valor);
+  if (!m) return null;
+  const c = await em.findOne(ChamadoSchema, {
+    where: { numero: m[1]!, deleted_at: IsNull() },
+    select: { id: true },
+  });
+  return c?.id ?? null;
+}
+
 export type Atribuicao = 'atribuido' | 'nao_atribuido' | { operador_id: string };
 
 export interface FiltrosChamado {
