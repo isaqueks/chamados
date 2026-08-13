@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-08-07 — D-029: admin edita nome e e-mail de outras contas
+
+- **Pedido do usuário:** o admin precisava corrigir o cadastro de quem já está ativo (nome errado, sobrenome novo, e-mail corporativo trocado). Antes a única saída era desativar e reconvidar — troca o `Usuario` de lugar e suja o histórico. A matriz de specs/03 §8.2 já reservava "Usuário · editar" ao admin, mas a linha falava só de papel e nada disso existia.
+- **Serviço `atualizarPerfilUsuario`** (`@chamados/db`): autoriza pelo `autorizar()` de sempre (admin), valida nome (2–120) e e-mail, normaliza o endereço e grava. Sem migration — só UPDATE em colunas existentes.
+- **Quatro regras de borda, cada uma com motivo:** (a) **própria conta recusada** (`proprio_usuario`) — perfil próprio é outro fluxo e a revogação abaixo deslogaria o admin no meio da edição; (b) **`agente_ia` recusado** (`conta_de_servico`) — service account sem login, e o nome de exibição da IA é branding; (c) **troca de e-mail revoga as sessões da conta alterada** — o e-mail É a credencial de login (specs/03 §4.1), mesma política do reset de senha; a senha não muda e a pessoa reentra com o endereço novo; (d) **unicidade cobre convite pendente** além do `UNIQUE (tenant_id, email)` — senão a colisão só apareceria no aceite, falhando na ativação de alguém.
+- **UI (`/app/usuarios`)**: edição inline por linha (nome + e-mail), com aviso de que trocar o e-mail encerra as sessões da pessoa. A própria linha do admin aparece marcada com "(você)" e sem botão; o `agente_ia` também não tem. A UI só ESCONDE — quem recusa é o serviço.
+- **Validação de e-mail deliberadamente frouxa**: barra o inequivocamente quebrado (sem `@`, domínio sem ponto, `..`, quebra de linha e separadores de endereço) e deixa o resto passar; regex "RFC completa" reprova endereço legítimo e não impede o inválido de verdade. Apóstrofo é aceito (`o'brien@…` é real e inofensivo em header).
+- **Auditoria** em log estruturado (`usuario_editado`): não existe tabela de auditoria de configuração — a lacuna virou decisão pendente em specs/03 §5.1, junto com a equivalente de specs/07 §4.2.
+- ADR D-029; specs/03 (§5.1 nova, §8.2) atualizada; 5 testes unitários do validador + 16 asserts novos no `smoke:auth` (fronteira de papel, própria conta, agente_ia, e-mail em uso, nome só não revoga sessão, e-mail antigo deixa de autenticar e o novo passa a valer).
+
 ## 2026-08-07 — D-028: API HTTP `/api/v1` + servidor MCP (usar o Chamados dentro do Claude)
 
 - **Pedido do usuário:** um servidor MCP para ler chamados, filtrar por status, ler mensagens (públicas e internas), publicar mensagens e mudar status — "usando a API existente, pedindo só login e senha". **Constatação:** não existia API de chamados (só `/api/health`, `/api/anexos/[id]` e `/api/branding/logo`); tudo vive em Server Components/Actions, que não são contrato consumível de fora. Daí o ADR D-028: expor uma API HTTP mínima e um MCP que a consome como cliente comum (alternativa descartada: MCP falando direto com o Postgres — exigiria credencial de banco na máquina do assistente, não funcionaria contra a instalação remota e furaria a autorização por papel).

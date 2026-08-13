@@ -197,4 +197,17 @@
 - **Superfície de escrita mínima**: publicar mensagem e transicionar status — exatamente o pedido. Criar chamado, atribuir, mudar prioridade/complexidade, silenciar IA e administração do tenant ficam de fora.
 - **Corpo em markdown, saída em texto puro**: entrada passa pelo `markdownParaDoc` + sanitização do editor; a timeline sai como texto (projeção do HTML), econômico e sem tags para o modelo interpretar.
 
-**Consequências:** nova spec `specs/11-api-mcp.md` (contrato canônico dos endpoints e das ferramentas MCP); novo workspace `apps/mcp` (única dependência nova: `@modelcontextprotocol/sdk`, já presente na árvore como transitiva do Agent SDK); `htmlParaTexto` promovido de privado do worker a utilitário compartilhado em `@chamados/db` (fonte única, sem cópia divergente); smoke `smoke:api` prova login, isolamento por papel e as mutações de ponta a ponta. Fica pendente (spec §8): token de aplicação de longa duração como alternativa a senha em variável de ambiente.
+**Consequências (D-028):** nova spec `specs/11-api-mcp.md` (contrato canônico dos endpoints e das ferramentas MCP); novo workspace `apps/mcp` (única dependência nova: `@modelcontextprotocol/sdk`, já presente na árvore como transitiva do Agent SDK); `htmlParaTexto` promovido de privado do worker a utilitário compartilhado em `@chamados/db` (fonte única, sem cópia divergente); smoke `smoke:api` prova login, isolamento por papel e as mutações de ponta a ponta. Fica pendente (spec §8): token de aplicação de longa duração como alternativa a senha em variável de ambiente.
+
+## D-029 — Admin edita nome e e-mail de outras contas do tenant (2026-08-07)
+
+**Status:** aceita.
+**Contexto:** o admin não tinha como corrigir o cadastro de uma pessoa já ativa — nome digitado errado, sobrenome que mudou, e-mail corporativo trocado. A única saída era desativar e reconvidar, o que troca o `Usuario` de lugar e suja o histórico. A matriz de specs/03 §8.2 já reservava "Usuário · editar" ao admin, mas a linha falava só de papel e nada disso estava implementado.
+**Decisão:** o admin passa a editar **nome** e **e-mail** de outras contas do tenant (`atualizarPerfilUsuario`, painel `/app/usuarios`). Quatro regras decidem os casos de borda:
+
+- **Nunca a própria conta.** Perfil próprio é outro fluxo; misturá-lo aqui traria o auto-logout da regra seguinte para dentro da tela de gestão de terceiros. Tentativa → `proprio_usuario`.
+- **Nunca o `agente_ia`** (service account sem login por senha, specs/03 §6); o nome de exibição da IA pertence ao branding (specs/08 §7), não a esta tela.
+- **Trocar e-mail revoga as sessões da conta alterada.** O e-mail É a credencial de login (specs/03 §4.1): mudá-lo sem revogar deixaria sessões vivas autenticadas por uma identidade que não existe mais. Mesma política de troca/reset de senha (§4.3). A senha em si não muda.
+- **Unicidade inclui convite pendente.** Além do `UNIQUE (tenant_id, email)`, um e-mail com convite pendente é recusado: aceitar aquele convite depois colidiria com a conta editada e falharia no pior momento possível (na ativação de alguém).
+
+**Consequências:** specs/03 §5.1 (nova) e §8.2 atualizadas; sem migration (só UPDATE em colunas existentes); auditoria fica em **log estruturado** — não há tabela de auditoria de configuração, o que virou DECISÃO PENDENTE registrada em §5.1 junto com a lacuna equivalente de specs/07 §4.2. A API `/api/v1` (D-028) **não** ganha gestão de usuários: continua restrita a chamados.

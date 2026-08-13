@@ -229,6 +229,38 @@ stateDiagram-v2
 > global + N vínculos". O modelo canônico adotado é **identidade por-tenant** (uma linha
 > de `Usuario` por tenant), conforme `02-modelo-de-dados.md` e `07-multitenancy-whitelabel.md`.
 
+### 5.1 Edição de identidade pelo admin (D-029)
+
+O `admin` corrige **nome** e **e-mail** de outras contas do seu tenant (troca de
+sobrenome, e-mail digitado errado no convite, mudança de endereço corporativo) —
+sem precisar revogar a conta e reconvidar. Regras:
+
+- **Quem**: apenas `admin` (`autorizar(ator, 'usuario', 'editar')`), e sempre dentro
+  do próprio tenant (RLS é o backstop).
+- **Sobre quem**: qualquer conta humana do tenant, **exceto**:
+  - **a própria conta do admin** — o perfil próprio é outro fluxo (o admin não se
+    edita por uma tela de gestão de terceiros; evita, entre outras coisas, o
+    auto-logout descrito abaixo);
+  - o **`agente_ia`** — service account sem login por senha (§6); o nome de exibição
+    da IA pertence ao branding do tenant (`08-ui-ux.md` §7), não a esta tela.
+- **E-mail é credencial de login** (§4.1): trocá-lo muda a identidade com que a
+  pessoa autentica. Por isso a troca **revoga todas as sessões ativas da conta
+  alterada** — mesma política de troca/reset de senha (§4.3). Ela reentra com o
+  endereço novo; a senha não muda.
+- **Unicidade**: o novo e-mail precisa estar livre no tenant — não pode colidir com
+  outra conta (`UNIQUE (tenant_id, email)`) **nem com um convite pendente** para o
+  mesmo endereço, que quebraria no aceite. Colisão → erro, nada é gravado.
+- **Normalização**: o e-mail é gravado normalizado (minúsculas, sem espaços), como
+  em todo o resto do subsistema de auth.
+- **Auditoria**: a alteração é registrada em log estruturado (quem alterou, alvo,
+  campos alterados — nunca o valor de segredos). `EventoChamado` não serve aqui: é
+  auditoria de chamado, não de configuração do tenant.
+
+> DECISÃO PENDENTE: trilha de auditoria persistida para mudanças administrativas
+> (usuários, sistemas-alvo, branding, guardrails) — hoje só há log estruturado.
+> Vale junto com `07-multitenancy-whitelabel.md` §4.2 ("mudanças em configurações
+> sensíveis geram registro de auditoria").
+
 ---
 
 ## 6. agente_ia como service account
@@ -333,7 +365,7 @@ Convenções: ✅ permitido · ⚠️ condicional (nota) · ❌ negado. `admin` 
 | Recurso · Ação                                                                                                | admin | operador                        | cliente | agente_ia |
 | ------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------- | ------- | --------- |
 | Usuário · convidar                                                                                            | ✅    | ⚠️ só `cliente` (se habilitado) | ❌      | ❌        |
-| Usuário · listar/editar papel/desativar                                                                       | ✅    | ❌                              | ❌      | ❌        |
+| Usuário · listar/editar (nome, e-mail, papel)/desativar                                                       | ✅    | ❌                              | ❌      | ❌        |
 | `SistemaAlvo` · CRUD (repo, logs, DB read-only)                                                               | ✅    | ⚠️ leitura                      | ❌      | ❌        |
 | `Categoria` · CRUD                                                                                            | ✅    | ⚠️ leitura                      | ❌      | ❌        |
 | Branding / domínio / whitelabel                                                                               | ✅    | ❌                              | ❌      | ❌        |
@@ -346,6 +378,9 @@ Convenções: ✅ permitido · ⚠️ condicional (nota) · ❌ negado. `admin` 
 
 Notas condicionais:
 
+- "Usuário · editar" cobre **nome e e-mail** de outras contas do tenant, com as regras
+  de §5.1 (nunca a própria conta, nunca o `agente_ia`; troca de e-mail revoga as
+  sessões da conta alterada).
 - Cliente só acessa recursos cujo **autor/solicitante é ele mesmo** e cujo `tenant_id`
   bate com o tenant resolvido.
 - "operador convidar cliente" depende de flag de configuração do tenant (default

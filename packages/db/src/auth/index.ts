@@ -11,6 +11,12 @@ export {
   garantirAgenteIA,
   definirSenha,
   registrarUltimoAcesso,
+  atualizarPerfilUsuario,
+  emailValido,
+  LIMITE_NOME_MIN,
+  LIMITE_NOME_MAX,
+  type MotivoAtualizarPerfil,
+  type ResultadoAtualizarPerfil,
 } from './usuario-service';
 export {
   criarSessao,

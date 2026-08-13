@@ -10,7 +10,10 @@
  *   5. a sessão do cliente NÃO acessa recurso de admin (authorize nega) e o
  *      admin acessa;
  *   6. logout revoga a sessão (o cookie deixa de resolver);
- *   7. reset de senha invalida todas as sessões da conta.
+ *   7. reset de senha invalida todas as sessões da conta;
+ *   8. admin edita nome/e-mail de OUTRA conta (D-029): recusa a própria conta e
+ *      o agente_ia, recusa e-mail em uso, e a troca de e-mail revoga as sessões
+ *      da conta alterada (que passa a logar com o novo endereço).
  * Ao final, limpa o tenant de teste.
  *
  * Sai com 0 se tudo passa; 1 caso contrário.
@@ -33,7 +36,10 @@ const {
   criarUsuarioAtivoComSenha,
   solicitarRedefinicao,
   redefinirComToken,
+  atualizarPerfilUsuario,
+  buscarUsuarioPorId,
 } = await import('../auth');
+const { UsuarioSchema } = await import('../entities/usuario');
 const { autorizar } = await import('@chamados/shared');
 const { Papel, StatusTenant } = await import('@chamados/shared');
 
@@ -163,6 +169,116 @@ async function main(): Promise<void> {
       senha: SENHA_NOVA,
     });
     ok(loginSenhaNova.ok, 'admin loga com a nova senha');
+
+    // 8) Admin edita nome/e-mail de outra conta (D-029, specs/03 §5.1) -------
+    const emailClienteNovo = `cliente.novo.${sufixo}@smoke.dev`;
+    const loginClienteAntes = await autenticarComSenha(ds, tenant!, {
+      email: emailCliente,
+      senha: SENHA,
+    });
+    ok(loginClienteAntes.ok, 'cliente tem sessão ativa antes da edição');
+
+    await runInTenantContext(ds, tenantId, async (em) => {
+      const admin = await em.findOne(UsuarioSchema, { where: { email: emailAdmin } });
+      const cliente = await em.findOne(UsuarioSchema, { where: { email: emailCliente } });
+      const agente = await em.findOne(UsuarioSchema, { where: { papel: Papel.agente_ia } });
+      const atorAdmin = { id: admin!.id, tenant_id: tenantId, papel: Papel.admin };
+      const atorCliente = { id: cliente!.id, tenant_id: tenantId, papel: Papel.cliente };
+
+      // Fronteira de papel: só admin edita.
+      const porCliente = await atualizarPerfilUsuario(em, atorCliente, admin!.id, {
+        nome: 'Invasor',
+        email: 'invasor@smoke.dev',
+      });
+      ok(
+        !porCliente.ok && porCliente.motivo === 'sem_permissao',
+        'cliente NÃO edita a conta de outra pessoa',
+      );
+
+      // A própria conta e o agente_ia ficam fora desta tela.
+      const proprio = await atualizarPerfilUsuario(em, atorAdmin, admin!.id, {
+        nome: 'Eu Mesmo',
+        email: emailAdmin,
+      });
+      ok(
+        !proprio.ok && proprio.motivo === 'proprio_usuario',
+        'admin NÃO edita a própria conta por aqui',
+      );
+
+      const servico = await atualizarPerfilUsuario(em, atorAdmin, agente!.id, {
+        nome: 'Robô',
+        email: 'robo@smoke.dev',
+      });
+      ok(
+        !servico.ok && servico.motivo === 'conta_de_servico',
+        'admin NÃO edita o agente_ia (service account)',
+      );
+
+      // Validações de campo.
+      const nomeCurto = await atualizarPerfilUsuario(em, atorAdmin, cliente!.id, {
+        nome: 'x',
+        email: emailCliente,
+      });
+      ok(!nomeCurto.ok && nomeCurto.motivo === 'nome_invalido', 'nome muito curto é recusado');
+
+      const emailRuim = await atualizarPerfilUsuario(em, atorAdmin, cliente!.id, {
+        nome: 'Cliente Editado',
+        email: 'sem-arroba.dev',
+      });
+      ok(!emailRuim.ok && emailRuim.motivo === 'email_invalido', 'e-mail sem @ é recusado');
+
+      // Unicidade por tenant: não pode colidir com outra conta.
+      const emUso = await atualizarPerfilUsuario(em, atorAdmin, cliente!.id, {
+        nome: 'Cliente Editado',
+        email: emailAdmin,
+      });
+      ok(!emUso.ok && emUso.motivo === 'email_em_uso', 'e-mail de outra conta é recusado');
+
+      // Só o nome: e-mail intacto ⇒ nenhuma sessão é derrubada.
+      const soNome = await atualizarPerfilUsuario(em, atorAdmin, cliente!.id, {
+        nome: 'Cliente Renomeado',
+        email: emailCliente,
+      });
+      ok(soNome.ok && soNome.sessoesRevogadas === 0, 'editar só o nome NÃO revoga sessões');
+
+      // Nome + e-mail: identidade de login muda ⇒ sessões caem.
+      const completo = await atualizarPerfilUsuario(em, atorAdmin, cliente!.id, {
+        nome: '  Cliente Editado  ',
+        email: `  ${emailClienteNovo.toUpperCase()}  `,
+      });
+      ok(completo.ok, 'admin edita nome e e-mail de outra conta');
+      ok(
+        completo.ok && completo.nome === 'Cliente Editado',
+        'nome é gravado sem espaços nas pontas',
+      );
+      ok(completo.ok && completo.email === emailClienteNovo, 'e-mail é normalizado (minúsculas)');
+      ok(
+        completo.ok && completo.sessoesRevogadas >= 1,
+        'troca de e-mail revoga as sessões da conta',
+      );
+
+      const depois = await buscarUsuarioPorId(em, cliente!.id);
+      ok(depois?.email === emailClienteNovo, 'alteração persistida no banco');
+    });
+
+    const sessaoClienteAposEdicao = await carregarSessao(
+      ds,
+      tenantId,
+      loginClienteAntes.ok ? loginClienteAntes.token : '',
+    );
+    ok(sessaoClienteAposEdicao === null, 'a sessão antiga do cliente não resolve mais');
+
+    const loginEmailAntigo = await autenticarComSenha(ds, tenant!, {
+      email: emailCliente,
+      senha: SENHA,
+    });
+    ok(!loginEmailAntigo.ok, 'e-mail ANTIGO não autentica mais');
+
+    const loginEmailNovo = await autenticarComSenha(ds, tenant!, {
+      email: emailClienteNovo,
+      senha: SENHA,
+    });
+    ok(loginEmailNovo.ok, 'cliente entra com o e-mail NOVO e a mesma senha');
 
     console.log('\n[smoke-auth] RESULTADO: PASSOU — fluxo de auth confirmado.');
   } finally {

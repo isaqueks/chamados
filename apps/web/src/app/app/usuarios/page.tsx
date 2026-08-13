@@ -10,8 +10,9 @@ import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ROTULO_PAPEL, ROTULO_STATUS_USUARIO } from '@/lib/rotulos';
+import { ROTULO_PAPEL } from '@/lib/rotulos';
 import { ConviteForm } from './convite-form';
+import { UsuarioLinha } from './usuario-linha';
 import { acaoRevogarConvite } from './actions';
 
 const fmtData = new Intl.DateTimeFormat('pt-BR', {
@@ -20,7 +21,7 @@ const fmtData = new Intl.DateTimeFormat('pt-BR', {
 });
 
 export default async function UsuariosPage() {
-  const { tenant } = await exigirPapel(Papel.admin);
+  const { tenant, usuario: eu } = await exigirPapel(Papel.admin);
   const ds = await obterAppDataSource();
 
   const { usuarios, convites } = await runInTenantContext(ds, tenant.id, async (em) => ({
@@ -52,7 +53,9 @@ export default async function UsuariosPage() {
       <Card>
         <CardHeader>
           <CardTitle>Equipe ({usuarios.length})</CardTitle>
-          <CardDescription>Contas existentes neste tenant.</CardDescription>
+          <CardDescription>
+            Contas existentes neste tenant. Você pode corrigir o nome e o e-mail de outras pessoas.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -63,26 +66,22 @@ export default async function UsuariosPage() {
                   <th className="pb-2 font-medium">E-mail</th>
                   <th className="pb-2 font-medium">Papel</th>
                   <th className="pb-2 font-medium">Status</th>
+                  <th className="pb-2 font-medium sr-only">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {usuarios.map((u) => (
-                  <tr key={u.id} className="border-b last:border-0">
-                    <td className="py-2.5 font-medium">{u.nome}</td>
-                    <td className="py-2.5 text-muted-foreground">
-                      {u.papel === Papel.agente_ia ? (
-                        <span className="italic">service account</span>
-                      ) : (
-                        u.email
-                      )}
-                    </td>
-                    <td className="py-2.5">
-                      <Badge variant="secondary">{ROTULO_PAPEL[u.papel]}</Badge>
-                    </td>
-                    <td className="py-2.5">
-                      <Badge variant="muted">{ROTULO_STATUS_USUARIO[u.status]}</Badge>
-                    </td>
-                  </tr>
+                  <UsuarioLinha
+                    key={u.id}
+                    usuario={{
+                      id: u.id,
+                      nome: u.nome,
+                      email: u.email,
+                      papel: u.papel,
+                      status: u.status,
+                    }}
+                    ehVoce={u.id === eu.id}
+                  />
                 ))}
               </tbody>
             </table>
