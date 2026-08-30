@@ -3,7 +3,15 @@
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, X } from 'lucide-react';
-import { StatusChamado, Natureza, Prioridade, Complexidade } from '@chamados/shared';
+import {
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  STATUS_ABERTOS,
+  STATUS_ENCERRADOS,
+  type SituacaoChamado,
+} from '@chamados/shared';
 import type { ContadoresFila } from '@chamados/db';
 import {
   ROTULO_STATUS_CHAMADO,
@@ -14,7 +22,7 @@ import {
 import { cn } from '@/lib/utils';
 
 const SELECT_CLS =
-  'h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-campo outline-none transition-[color,box-shadow] hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
+  'h-8 rounded-lg border border-input bg-card px-2.5 text-sm shadow-campo outline-none transition-[color,box-shadow] hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30';
 
 interface Opcao {
   id: string;
@@ -23,6 +31,7 @@ interface Opcao {
 
 interface Props {
   atual: {
+    situacao: SituacaoChamado;
     status: string;
     natureza: string;
     prioridade: string;
@@ -37,15 +46,11 @@ interface Props {
   categorias: Opcao[];
 }
 
-/** Ordem de exibição dos chips de status. */
-const ORDEM_STATUS: StatusChamado[] = [
-  StatusChamado.novo,
-  StatusChamado.em_triagem,
-  StatusChamado.aguardando_cliente,
-  StatusChamado.em_atendimento,
-  StatusChamado.resolvido,
-  StatusChamado.fechado,
-  StatusChamado.cancelado,
+/** Filtros rápidos de situação (D-030): o recorte que a equipe usa o dia inteiro. */
+const SITUACOES: { valor: SituacaoChamado; rotulo: string }[] = [
+  { valor: 'abertos', rotulo: 'Em aberto' },
+  { valor: 'encerrados', rotulo: 'Encerrados' },
+  { valor: 'todos', rotulo: 'Todos' },
 ];
 
 export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) {
@@ -55,6 +60,9 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
 
   function navegar(mudancas: Record<string, string | null>) {
     const p = new URLSearchParams(searchParams.toString());
+    // A situação padrão depende de `q`/`status` (ver page.tsx): a partir da
+    // primeira interação ela vai explícita, para não mudar sozinha depois.
+    p.set('situacao', atual.situacao);
     for (const [chave, valor] of Object.entries(mudancas)) {
       if (valor === null || valor === '') p.delete(chave);
       else p.set(chave, valor);
@@ -65,6 +73,7 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
   }
 
   const temFiltro =
+    atual.situacao !== 'abertos' ||
     atual.status ||
     atual.natureza ||
     atual.prioridade ||
@@ -73,6 +82,26 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
     atual.sistema_alvo_id ||
     atual.categoria_id ||
     atual.busca;
+
+  const contaSituacao = (s: SituacaoChamado) =>
+    s === 'todos' ? contadores.porSituacao.total : contadores.porSituacao[s];
+
+  // O dropdown de status oferece só os status da situação escolhida — a interseção
+  // "Em aberto + Fechado" não existe e não deve ser oferecida —, e só os que têm
+  // chamado (opção que filtra para zero não é opção). O status atual entra sempre,
+  // mesmo vazio ou fora do grupo, para o select nunca ficar sem o próprio valor.
+  const statusDaSituacao =
+    atual.situacao === 'abertos'
+      ? STATUS_ABERTOS
+      : atual.situacao === 'encerrados'
+        ? STATUS_ENCERRADOS
+        : [...STATUS_ABERTOS, ...STATUS_ENCERRADOS];
+  const statusOpcoes = statusDaSituacao.filter(
+    (s) => contadores.porStatus[s] > 0 || atual.status === s,
+  );
+  if (atual.status && !statusOpcoes.includes(atual.status as StatusChamado)) {
+    statusOpcoes.push(atual.status as StatusChamado);
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -93,51 +122,60 @@ export function FilaFiltros({ atual, contadores, sistemas, categorias }: Props) 
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar por número, título ou descrição…"
           aria-label="Buscar chamados"
-          className="h-9 w-full rounded-lg border border-input bg-transparent pr-3 pl-8 text-sm shadow-campo outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-9 w-full rounded-lg border border-input bg-card pr-3 pl-8 text-sm shadow-campo outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
         />
       </form>
 
-      {/* Atribuição + status como chips com contadores */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Chip
-          rotulo="Todos"
-          contador={contadores.total}
-          ativo={!atual.atribuicao || atual.atribuicao === 'todos'}
-          onClick={() => navegar({ atribuicao: null })}
-        />
-        <Chip
-          rotulo="Meus"
-          contador={contadores.meus}
-          ativo={atual.atribuicao === 'meus'}
-          onClick={() => navegar({ atribuicao: 'meus' })}
-        />
-        <Chip
-          rotulo="Não atribuídos"
-          contador={contadores.naoAtribuidos}
-          ativo={atual.atribuicao === 'nao_atribuidos'}
-          onClick={() => navegar({ atribuicao: 'nao_atribuidos' })}
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Chip
-          rotulo="Qualquer status"
-          ativo={!atual.status}
-          onClick={() => navegar({ status: null })}
-        />
-        {ORDEM_STATUS.filter((s) => contadores.porStatus[s] > 0 || atual.status === s).map((s) => (
+      {/* Três filtros rápidos de situação — D-030 */}
+      <div
+        role="group"
+        aria-label="Situação dos chamados"
+        className="flex flex-wrap items-center gap-1.5"
+      >
+        {SITUACOES.map((s) => (
           <Chip
-            key={s}
-            rotulo={ROTULO_STATUS_CHAMADO[s]}
-            contador={contadores.porStatus[s]}
-            ativo={atual.status === s}
-            onClick={() => navegar({ status: atual.status === s ? null : s })}
+            key={s.valor}
+            rotulo={s.rotulo}
+            contador={contaSituacao(s.valor)}
+            ativo={atual.situacao === s.valor}
+            onClick={() => navegar({ situacao: s.valor, status: null })}
           />
         ))}
       </div>
 
-      {/* Selects para as demais dimensões */}
+      {/* Demais dimensões: só dropdowns */}
       <div className="flex flex-wrap items-center gap-2">
+        <label className="sr-only" htmlFor="f-atribuicao">
+          Atribuição
+        </label>
+        <select
+          id="f-atribuicao"
+          className={SELECT_CLS}
+          value={atual.atribuicao === 'todos' ? '' : atual.atribuicao}
+          onChange={(e) => navegar({ atribuicao: e.target.value || null })}
+        >
+          <option value="">Qualquer atribuição ({contadores.total})</option>
+          <option value="meus">Meus ({contadores.meus})</option>
+          <option value="nao_atribuidos">Não atribuídos ({contadores.naoAtribuidos})</option>
+        </select>
+
+        <label className="sr-only" htmlFor="f-status">
+          Status
+        </label>
+        <select
+          id="f-status"
+          className={SELECT_CLS}
+          value={atual.status}
+          onChange={(e) => navegar({ status: e.target.value || null })}
+        >
+          <option value="">Qualquer status</option>
+          {statusOpcoes.map((s) => (
+            <option key={s} value={s}>
+              {ROTULO_STATUS_CHAMADO[s]} ({contadores.porStatus[s]})
+            </option>
+          ))}
+        </select>
+
         <label className="sr-only" htmlFor="f-natureza">
           Natureza
         </label>
@@ -285,7 +323,7 @@ function Chip({
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
         ativo
           ? 'border-transparent bg-primary text-primary-foreground'
-          : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground',
+          : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
       )}
     >
       {rotulo}

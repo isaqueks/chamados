@@ -10,7 +10,9 @@
  *  3. escopo por papel: o cliente só enxerga os PRÓPRIOS chamados;
  *  4. isolamento RLS: o tenant B não enxerga chamados do tenant A;
  *  5. limites de título (3..160) violados → erro de domínio;
- *  6. complexidade nunca é serializada ao cliente.
+ *  6. complexidade nunca é serializada ao cliente;
+ *  7. filtros rápidos de situação da fila (D-030): abertos/encerrados/todos,
+ *     interseção com status, contadores que ignoram o próprio filtro e RLS.
  *
  * Sai com 0 se passa; 1 caso contrário.
  */
@@ -30,6 +32,7 @@ const {
   definirComplexidade,
   atorSistema,
 } = await import('../chamados/chamado-service');
+const { listarFilaChamados, contarFila } = await import('../chamados/consulta-service');
 const { Papel, StatusTenant, StatusChamado, Natureza, Prioridade, Complexidade } =
   await import('@chamados/shared');
 
@@ -203,7 +206,7 @@ async function main(): Promise<void> {
       // ch2 é do cliente2 — cliente2 PODE cancelá-lo (novo → cancelado).
       ok(alheio.ok, 'cliente2: cancela o próprio chamado novo — ok');
     });
-    await runInTenantContext(ds, tenantA, async (em) => {
+    const chOutro = await runInTenantContext(ds, tenantA, async (em) => {
       // cliente1 tentando cancelar um chamado de cliente2 é bloqueado por ownership.
       const outro = await criarChamado(em, atorC2, {
         titulo: 'Outro do cliente2',
@@ -214,6 +217,7 @@ async function main(): Promise<void> {
       const r = await transicionarStatus(em, atorC1, outro.id, StatusChamado.cancelado);
       ok(!r.ok, 'cliente1: cancelar chamado de cliente2 — NEGADO (ownership)');
       if (!r.ok) ok(r.motivo === 'sem_permissao', 'motivo = sem_permissao');
+      return outro.id;
     });
 
     // 3) Escopo por papel: cliente só vê os próprios -------------------------
@@ -285,6 +289,56 @@ async function main(): Promise<void> {
           comoOperador.complexidade === Complexidade.facil,
         'projeção do operador contém complexidade = facil',
       );
+    });
+
+    // 7) Filtros rápidos de situação na fila (D-030) --------------------------
+    // Estado do tenant A: ch1 em_atendimento (aberto), chOutro novo (aberto),
+    // ch2 cancelado (encerrado).
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const abertos = await listarFilaChamados(em, atorOp, { situacao: 'abertos' });
+      const ids = abertos.itens.map((c) => c.id);
+      ok(ids.includes(ch1.id) && ids.includes(chOutro), 'situação "abertos" traz os dois abertos');
+      ok(!ids.includes(ch2.id), 'situação "abertos" NÃO traz o cancelado');
+
+      const encerrados = await listarFilaChamados(em, atorOp, { situacao: 'encerrados' });
+      const idsEnc = encerrados.itens.map((c) => c.id);
+      ok(idsEnc.includes(ch2.id), 'situação "encerrados" traz o cancelado');
+      ok(!idsEnc.includes(ch1.id), 'situação "encerrados" NÃO traz o em_atendimento');
+
+      const todos = await listarFilaChamados(em, atorOp, { situacao: 'todos' });
+      ok(todos.itens.length === 3, `situação "todos" traz os 3 (traz ${todos.itens.length})`);
+
+      // Situação combina com status por interseção: aberto + cancelado = vazio.
+      const vazio = await listarFilaChamados(em, atorOp, {
+        situacao: 'abertos',
+        status: StatusChamado.cancelado,
+      });
+      ok(vazio.itens.length === 0, 'situação "abertos" + status cancelado → vazio (interseção)');
+
+      // Contadores ignoram o PRÓPRIO filtro de situação: os chips somam igual
+      // esteja o operador em qual aba estiver.
+      for (const situacao of ['abertos', 'encerrados', 'todos'] as const) {
+        const c = await contarFila(em, atorOp, { situacao });
+        ok(
+          c.porSituacao.abertos === 2 && c.porSituacao.encerrados === 1,
+          `contadores em "${situacao}": 2 abertos / 1 encerrado`,
+        );
+        ok(
+          c.porSituacao.total === c.porSituacao.abertos + c.porSituacao.encerrados,
+          `total = abertos + encerrados em "${situacao}" (partição dos 7 status)`,
+        );
+      }
+
+      // A fila é área de equipe: cliente não lê nem contando.
+      const filaCliente = await listarFilaChamados(em, atorC1, { situacao: 'todos' });
+      ok(filaCliente.itens.length === 0, 'cliente não enxerga a fila (área de equipe)');
+    });
+
+    // A fila também respeita RLS: do tenant B não se conta o tenant A.
+    await runInTenantContext(ds, tenantB, async (em) => {
+      const atorOpB = { id: clienteB, tenant_id: tenantB, papel: Papel.operador };
+      const c = await contarFila(em, atorOpB, { situacao: 'todos' });
+      ok(c.porSituacao.total === 1, 'contadores do tenant B não somam chamados do tenant A (RLS)');
     });
 
     console.log(

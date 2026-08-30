@@ -70,6 +70,30 @@ export function ehTerminal(status: StatusChamado): boolean {
   return TERMINAIS.includes(status);
 }
 
+/**
+ * Situação agregada do chamado (D-030): a partição de EXIBIÇÃO usada nos filtros
+ * rápidos da fila e nas abas do portal. Não confundir com `ehTerminal`:
+ * `resolvido` NÃO é terminal (o cliente ainda pode reabrir), mas para quem olha
+ * a fila ele já saiu do trabalho do dia — por isso conta como encerrado.
+ */
+export type SituacaoChamado = 'abertos' | 'encerrados' | 'todos';
+
+/** Status em que o chamado ainda demanda trabalho da equipe ou do cliente. */
+export const STATUS_ABERTOS: readonly StatusChamado[] = [
+  novo,
+  em_triagem,
+  aguardando_cliente,
+  em_atendimento,
+];
+
+/** Status que saíram da fila de trabalho. Complemento exato de `STATUS_ABERTOS`. */
+export const STATUS_ENCERRADOS: readonly StatusChamado[] = [resolvido, fechado, cancelado];
+
+/** A que situação um status pertence (nunca devolve `'todos'`). */
+export function situacaoDoStatus(status: StatusChamado): 'abertos' | 'encerrados' {
+  return STATUS_ABERTOS.includes(status) ? 'abertos' : 'encerrados';
+}
+
 /** Um papel pode disparar uma transição cujos papéis autorizados são `papeis`? */
 function papelAutorizado(papel: PapelTransicao, papeis: readonly PapelTransicao[]): boolean {
   if (papeis.includes(papel)) return true;

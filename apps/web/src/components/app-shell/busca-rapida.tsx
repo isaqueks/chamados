@@ -30,7 +30,7 @@ export function BuscaRapida() {
         type="search"
         placeholder="Buscar por número ou título…"
         aria-label="Buscar chamados"
-        className="h-9 w-full rounded-md border border-input bg-transparent pr-3 pl-8 text-sm shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="h-9 w-full rounded-md border border-input bg-card pr-3 pl-8 text-sm shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
       />
     </form>
   );

@@ -127,7 +127,7 @@ export function RichTextEditor({
   return (
     <div
       className={cn(
-        'rte overflow-hidden rounded-lg border border-input bg-transparent shadow-sm transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30',
+        'rte overflow-hidden rounded-lg border border-input bg-card shadow-sm transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30',
         disabled && 'pointer-events-none opacity-60',
         className,
       )}

@@ -2,6 +2,17 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-08-30 — D-030: fila de chamados com três filtros rápidos + campos deixam de ser transparentes
+
+- **Pedido do usuário:** a aba "Chamados" tinha "muita informação, muitos filtros, muitos campos" — duas fileiras de chips (3 de atribuição + até 8 de status) somadas a 5 dropdowns e à busca, tudo antes da primeira linha de dado. Pedido: **três filtros rápidos** (Em aberto — padrão —, Encerrados, Todos), o resto só como dropdown e caixa de texto.
+- **Situação como recorte de primeira ordem:** `abertos` = `novo`/`em_triagem`/`aguardando_cliente`/`em_atendimento`; `encerrados` = `resolvido`/`fechado`/`cancelado`; os dois **particionam** os sete status. `resolvido` conta como encerrado embora **não** seja terminal (o cliente ainda reabre) — na fila ele já saiu do trabalho do dia. Agrupamento agora é canônico em `@chamados/shared` (`STATUS_ABERTOS`/`STATUS_ENCERRADOS`/`situacaoDoStatus`), no lugar das duas cópias soltas (dashboard e portal).
+- **Padrão `abertos`, com duas exceções que evitam tela vazia:** um `status` explícito na URL manda (o card "Resolvidos" do dashboard aponta para um status encerrado) e uma busca textual varre `todos` (quem procura "#27" quer achar o #27 mesmo fechado). Da primeira interação em diante a situação vai explícita na URL — não muda sozinha ao digitar uma busca, e a página 2 herda o recorte da página 1.
+- **Os demais filtros viraram dropdown**, atribuição inclusive; os contadores que estavam nos chips sobrevivem nos rótulos das opções ("Meus (3)", "Fechado (22)"). O dropdown de status lista só os status da situação escolhida — a interseção vazia ("Em aberto" + "Fechado") deixa de ser oferecida, mas continua respeitada se vier por URL.
+- **Contadores dos chips ignoram o próprio filtro de situação** (mesma regra que já valia para status/atribuição): trocar de aba não mexe nos números. Como os grupos particionam os status, `total = abertos + encerrados` — **nenhuma query nova**.
+- **Campos transparentes corrigidos:** todo controle de formulário nascia `bg-transparent` e sumia sobre o `--background` da página. Agora `bg-card` (o `dark:bg-input/30` já existia e segue mandando no escuro), aplicado nos primitivos (`ui/input`, `ui/textarea`, `ui/select`) **e** nas classes ad-hoc que os duplicavam (busca do header, filtros da fila, painel de propriedades, convite, formulário do portal, sistemas) — corrigir só a tela reclamada deixaria o app inconsistente (D-009).
+- **Vazio honesto:** com a fila limpa mas 22 chamados fechados no tenant, a tela dizia "Nenhum chamado ainda". Passa a dizer "Nenhum chamado em aberto" e apontar Encerrados/Todos.
+- ADR D-030; specs/04 §10.2 (tabela da partição) e specs/08 §2.3/§4.4 (wireframe e regra "campo é campo") atualizadas; sem migration; 3 testes de partição em `@chamados/shared` + seção 7 do `smoke:chamados` (14 asserts: recorte, interseção com status, invariância dos contadores, fila fechada para cliente e RLS entre tenants).
+
 ## 2026-08-07 — D-029: admin edita nome e e-mail de outras contas
 
 - **Pedido do usuário:** o admin precisava corrigir o cadastro de quem já está ativo (nome errado, sobrenome novo, e-mail corporativo trocado). Antes a única saída era desativar e reconvidar — troca o `Usuario` de lugar e suja o histórico. A matriz de specs/03 §8.2 já reservava "Usuário · editar" ao admin, mas a linha falava só de papel e nada disso existia.

@@ -7,6 +7,9 @@ import {
   Prioridade,
   Complexidade,
   valoresEnum,
+  STATUS_ABERTOS,
+  STATUS_ENCERRADOS,
+  type SituacaoChamado,
   type Ator,
 } from '@chamados/shared';
 import { ChamadoSchema, type Chamado } from '../entities/chamado';
@@ -34,6 +37,12 @@ export interface FiltrosFila {
    * Ver `busca.ts`.
    */
   busca?: string;
+  /**
+   * Filtro rápido por situação (D-030): `abertos` (padrão da UI), `encerrados`
+   * ou `todos`. Combina com `status` por interseção — quem escolhe um status
+   * específico normalmente já está na situação correspondente.
+   */
+  situacao?: SituacaoChamado;
   status?: StatusChamado;
   natureza?: Natureza;
   prioridade?: Prioridade;
@@ -75,6 +84,12 @@ export interface ContadoresFila {
   meus: number;
   naoAtribuidos: number;
   porStatus: Record<StatusChamado, number>;
+  /**
+   * Contagem dos filtros rápidos de situação (D-030), ignorando o próprio filtro
+   * de situação. `total` = `abertos + encerrados`, pois os dois grupos particionam
+   * exatamente os sete status canônicos.
+   */
+  porSituacao: { abertos: number; encerrados: number; total: number };
 }
 
 const LIMITE_PADRAO = 25;
@@ -133,7 +148,7 @@ function aplicarFiltros(
   qb: SelectQueryBuilder<Chamado>,
   ator: Ator,
   filtros: FiltrosFila,
-  exceto?: { status?: boolean; atribuicao?: boolean },
+  exceto?: { status?: boolean; atribuicao?: boolean; situacao?: boolean },
 ): void {
   const b = interpretarBusca(filtros.busca);
   if (b.modo === 'numero') {
@@ -152,6 +167,10 @@ function aplicarFiltros(
     qb.andWhere('c.sistema_alvo_id = :sa', { sa: filtros.sistema_alvo_id });
   if (filtros.categoria_id) qb.andWhere('c.categoria_id = :cat', { cat: filtros.categoria_id });
 
+  if (!exceto?.situacao && filtros.situacao && filtros.situacao !== 'todos') {
+    const grupo = filtros.situacao === 'abertos' ? STATUS_ABERTOS : STATUS_ENCERRADOS;
+    qb.andWhere('c.status IN (:...grupoSituacao)', { grupoSituacao: [...grupo] });
+  }
   if (!exceto?.status && filtros.status) {
     qb.andWhere('c.status = :status', { status: filtros.status });
   }
@@ -289,9 +308,10 @@ export async function listarFilaChamados(
 }
 
 /**
- * Contadores das facetas da fila. `porStatus` conta ignorando o filtro de status
- * (para o chip mostrar quantos há de cada status dentro dos demais filtros);
- * `meus`/`naoAtribuidos`/`total` ignoram o filtro de atribuição.
+ * Contadores das facetas da fila. `porStatus` conta ignorando os filtros de status
+ * E de situação (para cada opção mostrar quantos há dentro dos demais filtros);
+ * `porSituacao` deriva dele; `meus`/`naoAtribuidos`/`total` ignoram o filtro de
+ * atribuição (e portanto refletem a situação selecionada).
  */
 export async function contarFila(
   em: EntityManager,
@@ -303,7 +323,13 @@ export async function contarFila(
     number
   >;
   if (!equipePodeVerFila(ator)) {
-    return { total: 0, meus: 0, naoAtribuidos: 0, porStatus: zero };
+    return {
+      total: 0,
+      meus: 0,
+      naoAtribuidos: 0,
+      porStatus: zero,
+      porSituacao: { abertos: 0, encerrados: 0, total: 0 },
+    };
   }
 
   // Contagem por status (ignora o próprio filtro de status).
@@ -313,10 +339,15 @@ export async function contarFila(
     .addSelect('COUNT(*)', 'n')
     .where('c.deleted_at IS NULL')
     .groupBy('c.status');
-  aplicarFiltros(qbStatus, ator, filtros, { status: true });
+  aplicarFiltros(qbStatus, ator, filtros, { status: true, situacao: true });
   const linhasStatus = await qbStatus.getRawMany<{ status: StatusChamado; n: string }>();
   const porStatus = { ...zero };
   for (const l of linhasStatus) porStatus[l.status] = Number(l.n);
+
+  // Filtros rápidos de situação (ignora o próprio filtro de situação). Os dois
+  // grupos particionam os sete status, então o total sai da soma.
+  const abertos = STATUS_ABERTOS.reduce((soma, s) => soma + porStatus[s], 0);
+  const encerrados = STATUS_ENCERRADOS.reduce((soma, s) => soma + porStatus[s], 0);
 
   // Totais e atribuição (ignora o próprio filtro de atribuição).
   const qbAtrib = em
@@ -334,6 +365,7 @@ export async function contarFila(
     meus: Number(totais?.meus ?? 0),
     naoAtribuidos: Number(totais?.nao ?? 0),
     porStatus,
+    porSituacao: { abertos, encerrados, total: abertos + encerrados },
   };
 }
 

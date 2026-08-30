@@ -4,6 +4,9 @@ import {
   podeTransicionar,
   ehTerminal,
   transicoesDoPapel,
+  situacaoDoStatus,
+  STATUS_ABERTOS,
+  STATUS_ENCERRADOS,
   TRANSICOES,
   ATOR_SISTEMA,
   type PapelTransicao,
@@ -227,6 +230,29 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
         StatusChamado.em_atendimento,
       ]);
       expect(transicoesDoPapel(Papel.operador, StatusChamado.fechado)).toEqual([]);
+    });
+  });
+
+  describe('situação agregada (D-030)', () => {
+    it('abertos e encerrados PARTICIONAM os sete status canônicos', () => {
+      const uniao = [...STATUS_ABERTOS, ...STATUS_ENCERRADOS];
+      expect(uniao.slice().sort()).toEqual(TODOS_STATUS.slice().sort());
+      expect(new Set(uniao).size).toBe(uniao.length); // sem interseção
+    });
+
+    it('situacaoDoStatus classifica todo status em exatamente um grupo', () => {
+      for (const s of TODOS_STATUS) {
+        const g = situacaoDoStatus(s);
+        expect(g === 'abertos' ? STATUS_ABERTOS : STATUS_ENCERRADOS).toContain(s);
+      }
+    });
+
+    it('todo status TERMINAL é encerrado, mas encerrado ⊅ terminal (resolvido reabre)', () => {
+      for (const s of TODOS_STATUS) {
+        if (ehTerminal(s)) expect(situacaoDoStatus(s)).toBe('encerrados');
+      }
+      expect(ehTerminal(StatusChamado.resolvido)).toBe(false);
+      expect(situacaoDoStatus(StatusChamado.resolvido)).toBe('encerrados');
     });
   });
 });

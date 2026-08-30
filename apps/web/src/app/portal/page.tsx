@@ -6,7 +6,7 @@ import {
   listarChamados,
   type ChamadoView,
 } from '@chamados/db';
-import { StatusChamado } from '@chamados/shared';
+import { StatusChamado, STATUS_ABERTOS, STATUS_ENCERRADOS } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 import { ROTULO_STATUS_CHAMADO } from '@/lib/rotulos';
 import { cn } from '@/lib/utils';
@@ -16,17 +16,9 @@ import { tempoRelativo, dataHoraAbsoluta } from '@/components/portal/tempo';
 
 type Aba = 'abertos' | 'historico';
 
-const ABERTOS: StatusChamado[] = [
-  StatusChamado.novo,
-  StatusChamado.em_triagem,
-  StatusChamado.aguardando_cliente,
-  StatusChamado.em_atendimento,
-];
-const HISTORICO: StatusChamado[] = [
-  StatusChamado.resolvido,
-  StatusChamado.fechado,
-  StatusChamado.cancelado,
-];
+// As abas do portal usam o agrupamento canônico de @chamados/shared (D-030).
+const ABERTOS = STATUS_ABERTOS;
+const HISTORICO = STATUS_ENCERRADOS;
 
 const LIMITE = 25;
 
@@ -61,7 +53,7 @@ export default async function PortalHomePage({ searchParams }: { searchParams: P
   const ds = await obterAppDataSource();
   const pagina = await runInTenantContext(ds, tenant.id, (em) =>
     listarChamados(em, usuario, {
-      status: statusFiltro ? [statusFiltro] : grupo,
+      status: statusFiltro ? [statusFiltro] : [...grupo],
       cursor,
       limite: LIMITE,
     }),

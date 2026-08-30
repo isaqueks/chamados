@@ -3,6 +3,7 @@ import {
   autorizar,
   Papel,
   StatusChamado,
+  STATUS_ABERTOS,
   Prioridade,
   TipoEvento,
   type Ator,
@@ -17,14 +18,7 @@ import { EventoChamadoSchema } from '../entities/evento-chamado';
  * expõe dado interno ao cliente: o dashboard é área de operador/admin.
  */
 
-/** Status considerados "abertos" (não terminais e ainda não resolvidos). */
-const STATUS_ABERTOS: StatusChamado[] = [
-  StatusChamado.novo,
-  StatusChamado.em_triagem,
-  StatusChamado.aguardando_cliente,
-  StatusChamado.em_atendimento,
-];
-
+// O agrupamento aberto/encerrado é canônico em @chamados/shared (D-030).
 const MS_48H = 48 * 60 * 60 * 1000;
 const MS_7D = 7 * 24 * 60 * 60 * 1000;
 
@@ -105,7 +99,7 @@ export async function metricasDashboard(em: EntityManager, ator: Ator): Promise<
     .where('c.deleted_at IS NULL')
     .andWhere('c.operador_id IS NULL')
     .andWhere('c.prioridade = :urg', { urg: Prioridade.urgente })
-    .andWhere('c.status IN (:...abertos)', { abertos: STATUS_ABERTOS })
+    .andWhere('c.status IN (:...abertos)', { abertos: [...STATUS_ABERTOS] })
     .getCount();
 
   // Aguardando cliente há mais de 48h.
@@ -228,7 +222,7 @@ export async function blocosPrecisaDeVoce(
   const urgentes = await baseItemQb(em)
     .andWhere('c.operador_id IS NULL')
     .andWhere('c.prioridade = :urg', { urg: Prioridade.urgente })
-    .andWhere('c.status IN (:...abertos)', { abertos: STATUS_ABERTOS })
+    .andWhere('c.status IN (:...abertos)', { abertos: [...STATUS_ABERTOS] })
     .orderBy('c.created_at', 'ASC')
     .limit(limite)
     .getRawMany();

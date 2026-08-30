@@ -70,6 +70,7 @@ graph TD
 
 A estética do design system (refina D-009, sem substituí-lo): controles **levemente 3D** — botões e inputs com gradiente vertical sutil, borda 1px um tom mais escura que o preenchimento, realce interno no topo e estado _pressed_ afundando; cards com borda nítida + sombra sutil (hover eleva); superfícies flutuantes (dialog/menu/select) com sombra própria; cabeçalhos de tabela discretos (caps/muted); sidebar com indicador de item ativo em barra de acento. Regras estruturais:
 
+- **Campo é campo**: todo controle de formulário (input, textarea, select, editor) tem superfície **`bg-card`** no claro e `bg-input/30` no escuro — nunca `bg-transparent`, que sobre o `--background` da página apaga a leitura de "aqui se digita" (corrigido em D-030, na tela e nos primitivos ao mesmo tempo).
 - **Tudo vive nos tokens** (`globals.css`): sombras (`--shadow-ctrl*`, `--shadow-campo`, `--shadow-cartao*`, `--shadow-flutuante`), gradientes (`--grad-*`) e realces (`--realce-*`); componentes `ui/*` apenas referenciam os tokens — um único lugar controla a linguagem.
 - **Whitelabel intocado**: todo efeito que envolve a cor primária DERIVA de `var(--primary)` via `color-mix()` — o branding por tenant recolore a UI inteira; sombras/realces são neutros (profundidade, não marca). Claro/escuro têm overrides próprios dos realces.
 - **Fonte**: Geist (via `next/font`) — a v1 tinha um bug de auto-referência (`--font-sans: var(--font-sans)`) que fazia o app inteiro renderizar na serifada do navegador.
@@ -218,8 +219,9 @@ Elementos-chave:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ Chamados        [🔎 buscar…]   Filtros: Status▾ Natureza▾ Prioridade▾ Sistema▾ │
-│                 Salvos: [ Meus ] [ Não atribuídos ] [ Aguardando cliente ] +  │
+│ Chamados        [🔎 buscar por número, título ou descrição…]                  │
+│  ( Em aberto 10 ) ( Encerrados 22 ) ( Todos 32 )                             │
+│  Atribuição▾ Status▾ Natureza▾ Prioridade▾ Complexidade▾ Sistema▾ Categoria▾  │
 ├────┬────────────────────────────┬─────────┬──────────┬──────────┬───────────┤
 │ ☐  │ Chamado                    │ Status  │ Prior.   │ Complex. │ Atribuído │
 ├────┼────────────────────────────┼─────────┼──────────┼──────────┼───────────┤
@@ -233,7 +235,8 @@ Elementos-chave:
 ```
 
 - Ícones de linha: 🤖 = IA processando/aguardando; ✎ = `natureza = alteracao`.
-- Filtros combinam-se com a busca full-text (ver `04-`); conjuntos de filtros podem ser **salvos** por usuário.
+- **Um só nível de chips (D-030)**: os três filtros rápidos de situação — **Em aberto** (padrão), **Encerrados**, **Todos** —, cada um com contador. Nada mais vira chip; as demais dimensões (atribuição, status, natureza, prioridade, complexidade, sistema-alvo, categoria) são **dropdowns**, com o contador no rótulo da opção ("Meus (3)", "Fechado (22)"). O dropdown de status oferece só os status da situação escolhida — a fila não convida o operador para uma interseção vazia.
+- Filtros combinam-se com a busca full-text (ver `04-`); conjuntos de filtros salvos por usuário ficam fora do MVP.
 - Ordenação default: prioridade desc + atualização recente. Densidade compacta; virtualização para listas longas.
 
 ### 4.5 Dashboard (operador/admin)

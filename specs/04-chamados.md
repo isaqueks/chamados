@@ -290,6 +290,16 @@ Todo acesso é filtrado por `tenant_id` no servidor (Row-Level Security no Postg
 
 Filtros combináveis: status, natureza, prioridade, complexidade (só operador/admin), sistema-alvo, operador atribuído, autor/cliente, intervalo de datas (criação/última atualização), com/sem atividade da IA.
 
+**Situação (D-030).** Acima de tudo isso, a fila do painel tem um recorte de primeira ordem em três valores:
+
+| Situação     | Status incluídos                                             |
+| ------------ | ------------------------------------------------------------ |
+| `abertos`    | `novo`, `em_triagem`, `aguardando_cliente`, `em_atendimento` |
+| `encerrados` | `resolvido`, `fechado`, `cancelado`                          |
+| `todos`      | os sete                                                      |
+
+Os dois grupos **particionam** os sete status canônicos (fonte única: `STATUS_ABERTOS`/`STATUS_ENCERRADOS` em `@chamados/shared`). `resolvido` conta como encerrado embora **não** seja terminal (§1.1): ainda é reabrível pelo cliente, mas já saiu do trabalho do dia. O padrão da tela é `abertos`; um `status` explícito na URL define a situação correspondente e uma busca textual varre `todos` (para não esconder um chamado fechado de quem procurou por ele). Situação e `status` combinam por **interseção**.
+
 ### 10.3 Ordenação
 
 Por última atualização (default, desc), data de criação, prioridade, status.

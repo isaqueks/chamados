@@ -23,7 +23,7 @@ import {
 } from '../actions';
 
 const SELECT_CLS =
-  'h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60';
+  'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60';
 
 /** Verbo de ação por status-alvo (rótulo dos botões de transição — specs/08 §4.3). */
 const ACAO_STATUS: Record<StatusChamado, string> = {
