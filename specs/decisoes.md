@@ -36,6 +36,8 @@
 **Status:** aceita.
 **Decisão:** a fase 1 usa o **Claude Agent SDK** (programático — controle de ferramentas, structured output, telemetria) em vez de invocar o Claude Code CLI cru, sempre atrás da interface `AIProvider` (`01-arquitetura.md §4.1`) para permitir troca de engine sem reescrever o pipeline.
 
+**Atualização (2026-08-30):** o SDK continua; o MODELO passou de Opus 4.8 para **Opus 5** com esforço `high` — ver **D-031**. Foi exatamente a troca que a abstração previa: uma variável de ambiente, zero mudança no pipeline.
+
 ## D-007 — better-auth para autenticação (2026-07-15)
 
 **Status:** ~~aceita~~ **substituída por D-010** (better-auth descartado na implementação do M1).
@@ -228,3 +230,17 @@
 **Correção junto (mesma tela, mesmo pedido):** todos os campos de formulário nasceram com `bg-transparent` e apareciam **transparentes** sobre o `--background` da página, sem leitura de "campo". Passam a usar `bg-card` (o `dark:bg-input/30` já existia e continua mandando no escuro). A troca foi feita nos primitivos do design system (`ui/input`, `ui/textarea`, `ui/select`) **e** nas classes ad-hoc que os duplicavam (busca do header, filtros da fila, painel de propriedades, convite, formulário do portal, sistemas) — deixar metade transparente reproduziria exatamente a inconsistência reclamada (D-009).
 **Alternativas descartadas:** manter os chips de status e só esconder atrás de um "mais filtros" (continua sendo dois níveis de decisão para a mesma pergunta); usar `ehTerminal` como corte de "encerrado" (jogaria `resolvido` — o status mais numeroso depois de `fechado` — de volta na fila de trabalho).
 **Consequências:** `FiltrosFila.situacao` e `ContadoresFila.porSituacao` em `@chamados/db`; specs/04 §10.2 e specs/08 §4.4 atualizadas; sem migration; testes de partição em `@chamados/shared` e seção 7 do `smoke:chamados` (recorte, interseção com status, invariância dos contadores e RLS). A "salvar conjuntos de filtros" de specs/08 §4.4 continua fora do MVP — os três rápidos cobrem o caso que motivava aquilo.
+
+## D-031 — Agente de IA passa a Opus 5 com esforço de raciocínio `high` (2026-08-30)
+
+**Status:** aceita. Atualiza o modelo de **D-006** (o SDK e a abstração `AIProvider` continuam iguais).
+**Contexto:** o `agente_ia` rodava com `claude-opus-4-8`, default herdado de julho. O usuário pediu a troca para **Opus 5** com **esforço `high`**. O Agent SDK instalado (`0.3.210`) expõe `options.effort` (`low|medium|high|xhigh|max`), que guia a profundidade do raciocínio adaptativo.
+**Decisão:**
+
+- **`MODELO_PADRAO = 'claude-opus-5'`** e **`ESFORCO_PADRAO = 'high'`**, ambos no provider (fonte única) e sobrescrevíveis por `IA_MODELO`/`IA_ESFORCO`.
+- **O esforço é EXPLÍCITO no `options.effort`, não herdado do SDK.** `high` é o default do SDK hoje, mas default de biblioteca muda de versão para versão — e aqui isso mudaria o custo e a latência de cada triagem sem ninguém pedir. O que a spec promete, o código passa.
+- **`IA_ESFORCO` inválido cai no default, não derruba o worker.** Um typo no `.env` de produção não pode parar a fila de triagem; o valor é normalizado (trim + minúsculas) e validado contra os cinco níveis do SDK.
+- **O esforço atravessa a mesma fronteira injetável do modelo** (`ParametrosQuery`/`ParametrosTransporte`), então é testável sem rede — e vale igual para triagem e para o mapeamento de sistema (D-013), que exploram o mesmo repositório.
+
+**Alternativas descartadas:** deixar só `IA_MODELO` no `.env` da VPS e não mexer no código (o default do repositório continuaria em Opus 4.8, e qualquer instalação nova nasceria no modelo velho); fixar `xhigh`/`max` (o pedido foi `high`, e cada degrau acima cobra em latência e tokens numa fila que já tem budget por execução).
+**Consequências:** `apps/worker` (config, resolver, provider, boot) e `.env.example`/`docs/desenvolvimento.md` atualizados; specs 00/01/05/09/10 e README/CLAUDE.md passam a dizer Opus 5; D-006 ganhou nota de atualização. Sem migration — `ExecucaoIA.modelo` já grava o modelo concreto por execução, então o histórico continua legível com as duas gerações. O log de boot passa a registrar o esforço junto do modelo. Testes: fronteira (modelo + esforço default e override) e validação do `IA_ESFORCO`. A regra de **subagentes** do `CLAUDE.md` (metodologia de desenvolvimento, não o produto) segue como estava — é outra decisão, do usuário.

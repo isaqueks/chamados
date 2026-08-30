@@ -150,15 +150,16 @@ alimentam os dois pipelines de uma vez (um despachante composto em
 
 Variáveis de ambiente da triagem (ver `.env.example` para os defaults reais):
 
-| Variável             | Default           | Descrição                                                                                                                                                                  |
-| -------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IA_PROVIDER`        | `fake`            | `fake` (determinístico, SEM rede nem custo, controlado por marcadores no texto do chamado — ex.: `[[falhar]]`, `[[timeout]]`, `[[budget]]`) ou `claude` (Claude Agent SDK) |
-| `ANTHROPIC_API_KEY`  | vazio             | só necessária quando `IA_PROVIDER=claude`. NUNCA versionar                                                                                                                 |
-| `IA_MODELO`          | `claude-opus-4-8` | modelo do provider real; ignorado pelo `fake`                                                                                                                              |
-| `IA_TIMEOUT_MS`      | `600000`          | timeout por execução (honrado via abort)                                                                                                                                   |
-| `IA_BUDGET_USD`      | `5`               | teto de custo por execução                                                                                                                                                 |
-| `IA_MAX_TURNOS`      | `50`              | limite de turnos/chamadas de ferramenta por execução (D-014: exploração nível Claude Code com Read/Grep/Glob nativas, restritas ao checkout)                               |
-| `TRIAGEM_DEBOUNCE_S` | `45`              | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
+| Variável             | Default         | Descrição                                                                                                                                                                  |
+| -------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IA_PROVIDER`        | `fake`          | `fake` (determinístico, SEM rede nem custo, controlado por marcadores no texto do chamado — ex.: `[[falhar]]`, `[[timeout]]`, `[[budget]]`) ou `claude` (Claude Agent SDK) |
+| `ANTHROPIC_API_KEY`  | vazio           | só necessária quando `IA_PROVIDER=claude`. NUNCA versionar                                                                                                                 |
+| `IA_MODELO`          | `claude-opus-5` | modelo do provider real; ignorado pelo `fake`                                                                                                                              |
+| `IA_ESFORCO`         | `high`          | esforço de raciocínio (`low                                                                                                                                                | medium | high | xhigh | max`); valor inválido cai no default |
+| `IA_TIMEOUT_MS`      | `600000`        | timeout por execução (honrado via abort)                                                                                                                                   |
+| `IA_BUDGET_USD`      | `5`             | teto de custo por execução                                                                                                                                                 |
+| `IA_MAX_TURNOS`      | `50`            | limite de turnos/chamadas de ferramenta por execução (D-014: exploração nível Claude Code com Read/Grep/Glob nativas, restritas ao checkout)                               |
+| `TRIAGEM_DEBOUNCE_S` | `45`            | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
 
 Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com
 `status='falhou'` e `erro='timeout'` / `erro='budget_excedido'`

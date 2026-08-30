@@ -26,7 +26,7 @@ export interface ExecucaoIA {
   status: StatusExecucaoIA;
   /** Abstração de provider (ex.: 'claude-agent-sdk', 'fake'). */
   provider: string;
-  /** Modelo concreto (ex.: 'claude-opus-4-8'). */
+  /** Modelo concreto (ex.: 'claude-opus-5'). */
   modelo: string;
   /** Gatilho (specs/05 §2): 'chamado_criado' | 'resposta_cliente' | 'reprocessamento_manual'. */
   gatilho: string;

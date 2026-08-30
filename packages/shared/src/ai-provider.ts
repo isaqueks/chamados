@@ -400,7 +400,7 @@ export interface AIMapeamentoResult {
 export interface AIProvider {
   /** ex.: "claude-agent-sdk" | "fake" */
   nome: string;
-  /** ex.: "claude-opus-4-8" */
+  /** ex.: "claude-opus-5" */
   modelo: string;
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;

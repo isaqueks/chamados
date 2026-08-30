@@ -125,7 +125,28 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
       tokensSaida: 300,
     });
     expect(p.nome).toBe('claude-agent-sdk');
-    expect(p.modelo).toBe('claude-opus-4-8');
+    expect(p.modelo).toBe('claude-opus-5');
+  });
+
+  it('leva modelo e esforço à fronteira do SDK: default Opus 5 / high (D-031)', async () => {
+    const vistos: Array<{ modelo: string; esforco: string }> = [];
+    const espiao: QueryFn = async function* (params) {
+      vistos.push({ modelo: params.modelo, esforco: params.esforco });
+      yield RESULTADO_SUCESSO;
+    };
+    const padrao = new ClaudeAgentProvider({ queryFn: espiao });
+    await padrao.executarTriagem(inputBase());
+    expect(vistos[0]).toEqual({ modelo: 'claude-opus-5', esforco: 'high' });
+
+    // Override explícito chega intacto — o esforço não é decidido pelo SDK.
+    const custom = new ClaudeAgentProvider({
+      queryFn: espiao,
+      modelo: 'claude-sonnet-5',
+      esforco: 'low',
+    });
+    await custom.executarTriagem(inputBase());
+    expect(vistos[1]).toEqual({ modelo: 'claude-sonnet-5', esforco: 'low' });
+    expect(custom.esforco).toBe('low');
   });
 
   it('extrai o resultado do texto (result JSON) quando não há structured_output', () => {
@@ -421,7 +442,7 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
         // Bug de D-013: usage do result só reflete o último turno (input=6).
         usage: { input_tokens: 6, output_tokens: 3886 },
         modelUsage: {
-          'claude-opus-4-8': {
+          'claude-opus-5': {
             inputTokens: 5000,
             cacheReadInputTokens: 90000,
             cacheCreationInputTokens: 1000,
@@ -449,7 +470,7 @@ describe('ClaudeAgentProvider — mapeamento (D-013)', () => {
         total_cost_usd: 0.05,
         duration_ms: 3000,
         modelUsage: {
-          'claude-opus-4-8': {
+          'claude-opus-5': {
             inputTokens: 1000,
             cacheReadInputTokens: 500,
             cacheCreationInputTokens: 0,
@@ -525,15 +546,13 @@ describe('ClaudeAgentProvider — autenticação (D-012)', () => {
   it('construir o provider REAL (sem queryFn) sem credencial falha na inicialização', () => {
     // Sem `queryFn` injetada → monta o transporte real → valida credenciais (via opts)
     // já na construção. O guard checa as opções, não o ambiente do processo de teste.
-    expect(() => new ClaudeAgentProvider({ modelo: 'claude-opus-4-8' })).toThrow(
+    expect(() => new ClaudeAgentProvider({ modelo: 'claude-opus-5' })).toThrow(
       /IA_PROVIDER=claude requer credencial/,
     );
   });
 
   it('construir o provider REAL com apiKey NÃO lança (constrói o transporte)', () => {
-    expect(
-      () => new ClaudeAgentProvider({ modelo: 'claude-opus-4-8', apiKey: 'sk' }),
-    ).not.toThrow();
+    expect(() => new ClaudeAgentProvider({ modelo: 'claude-opus-5', apiKey: 'sk' })).not.toThrow();
   });
 });
 

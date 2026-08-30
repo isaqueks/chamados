@@ -23,18 +23,18 @@ Derivados dos princípios de produto (formulários mínimos, UX moderna, IA-firs
 
 > DECIDIDO (2026-07-15): a stack abaixo está **confirmada** (com TypeORM no lugar de Prisma e autenticação própria conforme spec 03 no lugar de better-auth) — ver specs/decisoes.md (D-001, D-010).
 
-| Camada                | Escolha confirmada                            | Papel                                                               |
-| --------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
-| Monorepo / linguagem  | TypeScript, monorepo (npm workspaces)         | Código compartilhado entre web e worker (tipos, validação, clients) |
-| Web full-stack        | Next.js 16 (App Router)                       | UI + API (Route Handlers / Server Actions) numa base só             |
-| Banco de dados        | PostgreSQL 16                                 | Persistência transacional; `tenant_id` + RLS                        |
-| ORM                   | TypeORM                                       | Acesso ao banco (entities/repositories), migrações                  |
-| Fila                  | Redis + BullMQ                                | Jobs de triagem de IA, notificações, manutenção                     |
-| Cache / sessão        | Redis                                         | Cache, rate limiting, locks distribuídos                            |
-| Storage de anexos     | S3-compatível (MinIO em dev; S3/R2 em prod)   | `Anexo`, imagens inline do rich text                                |
-| Editor rich text      | TipTap + sanitização server-side              | Descrição/mensagens; imagens e anexos inline                        |
-| Autenticação          | Autenticação própria conforme spec 03 (D-010) | Login, sessão, resolução de tenant por subdomínio/domínio           |
-| Engine de IA (fase 1) | Claude Agent SDK, modelo Opus 4.8             | Execução da triagem em worker isolado                               |
+| Camada                | Escolha confirmada                               | Papel                                                               |
+| --------------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| Monorepo / linguagem  | TypeScript, monorepo (npm workspaces)            | Código compartilhado entre web e worker (tipos, validação, clients) |
+| Web full-stack        | Next.js 16 (App Router)                          | UI + API (Route Handlers / Server Actions) numa base só             |
+| Banco de dados        | PostgreSQL 16                                    | Persistência transacional; `tenant_id` + RLS                        |
+| ORM                   | TypeORM                                          | Acesso ao banco (entities/repositories), migrações                  |
+| Fila                  | Redis + BullMQ                                   | Jobs de triagem de IA, notificações, manutenção                     |
+| Cache / sessão        | Redis                                            | Cache, rate limiting, locks distribuídos                            |
+| Storage de anexos     | S3-compatível (MinIO em dev; S3/R2 em prod)      | `Anexo`, imagens inline do rich text                                |
+| Editor rich text      | TipTap + sanitização server-side                 | Descrição/mensagens; imagens e anexos inline                        |
+| Autenticação          | Autenticação própria conforme spec 03 (D-010)    | Login, sessão, resolução de tenant por subdomínio/domínio           |
+| Engine de IA (fase 1) | Claude Agent SDK, modelo Opus 5 (esforço `high`) | Execução da triagem em worker isolado                               |
 
 ### 2.1 Justificativas e alternativas consideradas
 
@@ -170,7 +170,7 @@ O contrato do `AIProvider` é definido **canonicamente aqui** (§4.1) — este �
 ```typescript
 interface AIProvider {
   nome: string; // ex.: "claude-agent-sdk"
-  modelo: string; // ex.: "opus-4.8"
+  modelo: string; // ex.: "claude-opus-5"
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;
 }
@@ -270,7 +270,7 @@ Notas de contrato (perspectiva arquitetural):
 
 ### 4.2 Implementação fase 1 e troca de engine
 
-`ClaudeAgentProvider` implementa `AIProvider` usando o Claude Agent SDK com Opus 4.8 (D-006), rodando no worker isolado. Trocar de engine (o "hermes ou algo assim" do RF-17) significa escrever outra classe que implemente `AIProvider` e selecioná-la por configuração:
+`ClaudeAgentProvider` implementa `AIProvider` usando o Claude Agent SDK com Opus 5 em esforço `high` (D-006, D-031), rodando no worker isolado. Trocar de engine (o "hermes ou algo assim" do RF-17) significa escrever outra classe que implemente `AIProvider` e selecioná-la por configuração:
 
 ```typescript
 function resolverProvider(cfg: TenantAIConfig): AIProvider {

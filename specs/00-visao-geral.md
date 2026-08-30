@@ -244,7 +244,7 @@ flowchart TD
 
 ## 10. Restrições e decisões herdadas do brief
 
-- **Implementação da IA (fase 1):** Claude Agent SDK com modelo Opus 4.8, em worker isolado (D-006). Camada de abstração de provider **obrigatória** para trocar engine/modelo no futuro. — RF-17 (detalhes em `01-arquitetura.md` e `05-agente-ia.md`).
+- **Implementação da IA (fase 1):** Claude Agent SDK com modelo Opus 5 em esforço `high`, em worker isolado (D-006, D-031). Camada de abstração de provider **obrigatória** para trocar engine/modelo no futuro. — RF-17 (detalhes em `01-arquitetura.md` e `05-agente-ia.md`).
 - **Notificações:** gateways plugáveis (adapter pattern). Fase 1 e-mail (SMTP); fase 2 WhatsApp e outros. — RF-18 (detalhes em `06-notificacoes.md`).
 - **Guardrail de resolução automática:** a IA nunca faz merge/deploy; sempre PR com aprovação humana. Relaxável por configuração do tenant no futuro. — `05-agente-ia.md`.
 

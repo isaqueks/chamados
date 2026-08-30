@@ -73,11 +73,16 @@ async function main(): Promise<void> {
   const provider = resolverProvider({
     provider: iaConfig.provider,
     modelo: iaConfig.modelo,
+    esforco: iaConfig.esforco,
     apiKey: iaConfig.apiKey,
     oauthToken: iaConfig.oauthToken,
     log,
   });
-  log('provider de IA resolvido', { nome: provider.nome, modelo: provider.modelo });
+  log('provider de IA resolvido', {
+    nome: provider.nome,
+    modelo: provider.modelo,
+    esforco: iaConfig.provider === 'claude' ? iaConfig.esforco : null,
+  });
 
   // Registro modular das filas (M9 adiciona notificacoes aqui).
   const workers: Worker[] = [

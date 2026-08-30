@@ -14,7 +14,7 @@ Helpdesk IA-first, whitelabel multi-tenant, substituto do osTicket. Metodologia 
 
 ## Stack (D-001)
 
-Monorepo TypeScript · Next.js App Router · PostgreSQL 16 + RLS · **TypeORM** · Redis + BullMQ · MinIO/S3 · TipTap · better-auth · Claude Agent SDK (Opus 4.8) atrás da interface `AIProvider`.
+Monorepo TypeScript · Next.js App Router · PostgreSQL 16 + RLS · **TypeORM** · Redis + BullMQ · MinIO/S3 · TipTap · better-auth · Claude Agent SDK (Opus 5, esforço `high`) atrás da interface `AIProvider`.
 
 ## Enums canônicos (resumo — fonte: specs/02)
 

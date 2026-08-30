@@ -1,8 +1,21 @@
+import {
+  MODELO_PADRAO,
+  ESFORCO_PADRAO,
+  type EsforcoIA,
+} from './ia/providers/claude-agent-provider';
+
 /** Conexão Redis do worker (defaults batem com o docker-compose). */
 export const redisConnection = {
   host: process.env.REDIS_HOST ?? 'localhost',
   port: Number(process.env.REDIS_PORT ?? '6379'),
 };
+
+const ESFORCOS: readonly EsforcoIA[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export function esforcoValido(v: string | undefined): EsforcoIA {
+  const n = v?.trim().toLowerCase();
+  return (ESFORCOS as readonly string[]).includes(n ?? '') ? (n as EsforcoIA) : ESFORCO_PADRAO;
+}
 
 function num(nome: string, padrao: number): number {
   const v = Number(process.env[nome]);
@@ -17,8 +30,13 @@ function num(nome: string, padrao: number): number {
 export const iaConfig = {
   /** 'fake' (default, determinístico) | 'claude' (Claude Agent SDK). */
   provider: (process.env.IA_PROVIDER ?? 'fake') as 'fake' | 'claude',
-  /** Modelo do provider real (specs/05 §10 — Opus 4.8). */
-  modelo: process.env.IA_MODELO ?? 'claude-opus-4-8',
+  /** Modelo do provider real (specs/05 §10 — Opus 5, D-031). */
+  modelo: process.env.IA_MODELO ?? MODELO_PADRAO,
+  /**
+   * Esforço de raciocínio (D-031). Valor inválido cai no default em vez de
+   * derrubar o worker: um typo no `.env` não pode parar a fila de triagem.
+   */
+  esforco: esforcoValido(process.env.IA_ESFORCO),
   apiKey: process.env.ANTHROPIC_API_KEY,
   /**
    * Token de assinatura (D-012): `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.

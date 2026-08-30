@@ -104,7 +104,7 @@ flowchart TD
 
 ## 4. Segurança do agente_ia
 
-O `agente_ia` é o componente de maior superfície de risco: recebe texto não confiável (chamado/anexos), executa uma engine de IA (Claude Agent SDK, Opus 4.8) e tem acesso a código-fonte, logs e BD read-only do `SistemaAlvo`. A camada de abstração de provider (ver `05-agente-ia.md`) não altera os controles abaixo.
+O `agente_ia` é o componente de maior superfície de risco: recebe texto não confiável (chamado/anexos), executa uma engine de IA (Claude Agent SDK, Opus 5) e tem acesso a código-fonte, logs e BD read-only do `SistemaAlvo`. A camada de abstração de provider (ver `05-agente-ia.md`) não altera os controles abaixo.
 
 ### 4.1 Prompt injection via texto do chamado e anexos
 

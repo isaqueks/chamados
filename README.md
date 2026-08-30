@@ -39,6 +39,6 @@ Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs
 - **Papéis:** `admin`, `operador`, `cliente`, `agente_ia` (a IA é um usuário de serviço).
 - **Chamado:** natureza (`problema` | `alteracao`), prioridade (`baixa`→`urgente`), complexidade interna (`facil` | `medio` | `dificil`), status (`novo` → `em_triagem` → `aguardando_cliente`/`em_atendimento` → `resolvido` → `fechado`).
 - **SistemaAlvo:** cada tenant cadastra os sistemas sobre os quais abre chamados — repositório git, logs e conexão read-only ao BD, que a IA usa na triagem (com `git pull` a cada análise).
-- **IA fase 1:** Claude Agent SDK com Opus 4.8 (D-006), atrás da interface `AIProvider` para permitir troca de engine.
+- **IA fase 1:** Claude Agent SDK com Opus 5, esforço `high` (D-006, D-031), atrás da interface `AIProvider` para permitir troca de engine.
 - **Stack (D-001):** Next.js 16 App Router · PostgreSQL 16 + RLS · TypeORM · Redis/BullMQ · MinIO · TipTap · autenticação própria conforme spec 03 (D-010) — infraestrutura sempre em Docker (D-002).
 - **API + MCP (D-028):** API HTTP `/api/v1` (login por e-mail/senha, Bearer-only) e servidor MCP (`apps/mcp`) para usar o Chamados dentro do Claude — ler chamados e timeline, publicar mensagens, mudar status, sempre no escopo do papel do usuário. Ver [specs/11](specs/11-api-mcp.md) e o guia em [docs/desenvolvimento.md](docs/desenvolvimento.md) §3.11.

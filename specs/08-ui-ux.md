@@ -185,7 +185,7 @@ Layout de três colunas em telas largas; empilha no mobile.
 │              │                                    │                      │
 │ #1042        │  🧑 Cliente · 14:02                │ ExecucaoIA #3        │
 │ Portal Vendas│  Ao clicar em "gerar segunda...    │ ● Concluída          │
-│              │                                    │ Opus 4.8 · 42s       │
+│              │                                    │ Opus 5 · 42s         │
 │ Status       │  🤖 Assistente (pública) · 14:03   │ custo: US$0,08       │
 │ [Em atend. ▾]│  Para investigar, informe o...     │                      │
 │              │                                    │ Diagnóstico:         │

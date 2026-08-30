@@ -18,7 +18,8 @@ import { ErroProviderBudget, ErroProviderTimeout } from '../erros';
 
 /**
  * `ClaudeAgentProvider` — implementação fase 1 da abstração `AIProvider` usando o
- * `@anthropic-ai/claude-agent-sdk` com Opus 4.8 (D-006, specs/01 §4.2, specs/05
+ * `@anthropic-ai/claude-agent-sdk` com Opus 5 em esforço `high` (D-006/D-031,
+ * specs/01 §4.2, specs/05
  * §10). Responsabilidades:
  *  - monta o PROMPT a partir do contexto (separação de canais: instruções no
  *    system prompt; dados do cliente demarcados como conteúdo NÃO confiável —
@@ -211,12 +212,26 @@ interface TokensAcumulados {
   saida: number;
 }
 
+/**
+ * Nível de esforço de raciocínio do modelo (D-031). Mapeia 1:1 no `options.effort`
+ * do Agent SDK; níveis acima do que o modelo suporta caem para o mais alto que ele
+ * tenha (o SDK rebaixa em silêncio).
+ */
+export type EsforcoIA = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** Esforço default da triagem (D-031): raciocínio profundo, sem entrar no xhigh. */
+export const ESFORCO_PADRAO: EsforcoIA = 'high';
+
+/** Modelo default do provider real (D-031). */
+export const MODELO_PADRAO = 'claude-opus-5';
+
 /** Parâmetros entregues à fronteira do SDK (triagem). */
 export interface ParametrosQuery {
   prompt: string;
   systemPrompt: string;
   input: AIProviderInput;
   modelo: string;
+  esforco: EsforcoIA;
   abortController: AbortController;
 }
 
@@ -226,6 +241,7 @@ export interface ParametrosQueryMapeamento {
   systemPrompt: string;
   input: AIMapeamentoInput;
   modelo: string;
+  esforco: EsforcoIA;
   abortController: AbortController;
 }
 
@@ -236,6 +252,8 @@ export type QueryMapFn = (params: ParametrosQueryMapeamento) => AsyncIterable<Me
 export interface OpcoesClaudeProvider {
   /** Modelo default (env `IA_MODELO`). */
   modelo?: string;
+  /** Esforço de raciocínio (env `IA_ESFORCO`). Default: `high` (D-031). */
+  esforco?: EsforcoIA;
   /** Chave de API (env `ANTHROPIC_API_KEY`); só usada pelo transporte real. */
   apiKey?: string;
   /**
@@ -285,12 +303,14 @@ export function validarCredenciaisClaude(opts: { apiKey?: string; oauthToken?: s
 export class ClaudeAgentProvider implements AIProvider {
   readonly nome = 'claude-agent-sdk';
   readonly modelo: string;
+  readonly esforco: EsforcoIA;
   private readonly queryFn: QueryFn;
   private readonly queryMapFn: QueryMapFn;
   private readonly log: (msg: string, extra?: Record<string, unknown>) => void;
 
   constructor(opts: OpcoesClaudeProvider = {}) {
-    this.modelo = opts.modelo ?? 'claude-opus-4-8';
+    this.modelo = opts.modelo ?? MODELO_PADRAO;
+    this.esforco = opts.esforco ?? ESFORCO_PADRAO;
     this.log = opts.log ?? (() => {});
     // Falha CEDO (na construção) quando a triagem real é necessária sem credencial
     // (produção: nada injetado). Com `queryFn` injetada (teste), não valida — nem
@@ -313,6 +333,7 @@ export class ClaudeAgentProvider implements AIProvider {
         systemPrompt: montarSystemPrompt(input.contexto.instrucoesTenant),
         input,
         modelo: this.modelo,
+        esforco: this.esforco,
         abortController,
       });
 
@@ -343,6 +364,7 @@ export class ClaudeAgentProvider implements AIProvider {
         systemPrompt: montarSystemPromptMapeamento(input.maxChars),
         input,
         modelo: this.modelo,
+        esforco: this.esforco,
         abortController,
       });
 
@@ -1034,6 +1056,9 @@ function criarTransporteSdk(opts: OpcoesClaudeProvider): TransporteSdk {
 
     const options = {
       model: params.modelo,
+      // D-031: esforço de raciocínio explícito — não herdamos o default do SDK,
+      // que muda de versão para versão e mudaria o custo da triagem sem aviso.
+      effort: params.esforco,
       systemPrompt: params.systemPrompt,
       maxTurns: params.limites.maxTurnos,
       maxBudgetUsd: params.limites.budgetUsd,
@@ -1058,6 +1083,7 @@ function criarTransporteSdk(opts: OpcoesClaudeProvider): TransporteSdk {
 
     log('claude-agent-sdk: iniciando query', {
       modelo: params.modelo,
+      esforco: params.esforco,
       toolsMcp: allowedTools.length,
       toolsNativas: nativas.length,
       cwd: params.cwd ? '<checkout>' : null,
@@ -1103,6 +1129,7 @@ interface ParametrosTransporte {
   prompt: string;
   systemPrompt: string;
   modelo: string;
+  esforco: EsforcoIA;
   abortController: AbortController;
   limites: { budgetUsd: number; maxTurnos: number };
   specs: EspecTool[];
@@ -1122,6 +1149,7 @@ function queryTriagemReal(transporte: TransporteSdk): QueryFn {
       prompt: params.prompt,
       systemPrompt: params.systemPrompt,
       modelo: params.modelo,
+      esforco: params.esforco,
       abortController: params.abortController,
       limites: {
         budgetUsd: params.input.limites.budgetUsd,
@@ -1141,6 +1169,7 @@ function queryMapeamentoReal(transporte: TransporteSdk): QueryMapFn {
       prompt: params.prompt,
       systemPrompt: params.systemPrompt,
       modelo: params.modelo,
+      esforco: params.esforco,
       abortController: params.abortController,
       limites: {
         budgetUsd: params.input.limites.budgetUsd,

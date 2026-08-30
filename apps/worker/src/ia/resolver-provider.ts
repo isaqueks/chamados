@@ -1,6 +1,6 @@
 import type { AIProvider } from '@chamados/shared';
 import { FakeProvider } from './providers/fake-provider';
-import { ClaudeAgentProvider } from './providers/claude-agent-provider';
+import { ClaudeAgentProvider, type EsforcoIA } from './providers/claude-agent-provider';
 
 /**
  * Resolve o `AIProvider` concreto por configuração (specs/01 §4.2, RF-17). A
@@ -10,6 +10,8 @@ import { ClaudeAgentProvider } from './providers/claude-agent-provider';
 export interface ConfigProvider {
   provider: 'fake' | 'claude';
   modelo: string;
+  /** Esforço de raciocínio do modelo (D-031). Default do provider: `high`. */
+  esforco?: EsforcoIA;
   apiKey?: string;
   /** Token de assinatura (D-012): `CLAUDE_CODE_OAUTH_TOKEN`. Alternativa à API key. */
   oauthToken?: string;
@@ -21,6 +23,7 @@ export function resolverProvider(cfg: ConfigProvider): AIProvider {
     case 'claude':
       return new ClaudeAgentProvider({
         modelo: cfg.modelo,
+        esforco: cfg.esforco,
         apiKey: cfg.apiKey,
         oauthToken: cfg.oauthToken,
         log: cfg.log,

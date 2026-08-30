@@ -446,7 +446,7 @@ Registro de cada execução do pipeline do agente_ia. Detalhes de comportamento 
 | sistema_alvo_id | uuid               | FK NULL                    | preenchido só em execuções de mapeamento (`gatilho = 'mapeamento'`); mutuamente exclusivo com `chamado_id` (D-013) |
 | status          | status_execucao_ia | NOT NULL default 'na_fila' |                                                                                                                    |
 | provider        | text               | NOT NULL                   | ex.: 'claude-code' (abstração de provider)                                                                         |
-| modelo          | text               | NOT NULL                   | ex.: 'opus-4.8'                                                                                                    |
+| modelo          | text               | NOT NULL                   | ex.: 'claude-opus-5'                                                                                               |
 | gatilho         | text               | NOT NULL                   | ex.: 'chamado_criado', 'resposta_cliente', 'mapeamento'                                                            |
 | entrada         | jsonb              | NOT NULL default '{}'      | snapshot do input                                                                                                  |
 | acoes           | jsonb              | NOT NULL default '[]'      | trilha de ações (git pull, PR, etc.)                                                                               |

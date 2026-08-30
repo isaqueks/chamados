@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-08-30 — D-031: agente de IA passa a Opus 5, esforço `high`
+
+- **Pedido do usuário:** trocar o agente de IA de Opus 4.8 para **Opus 5**, com **effort high**.
+- **Modelo e esforço agora são default do PROVIDER** (`MODELO_PADRAO = 'claude-opus-5'`, `ESFORCO_PADRAO = 'high'`), sobrescrevíveis por `IA_MODELO`/`IA_ESFORCO`. Mexer só no `.env` da VPS resolveria o servidor e deixaria o repositório mentindo — instalação nova nasceria em Opus 4.8.
+- **`options.effort` vai explícito ao Agent SDK.** `high` é o default do SDK hoje, mas default de biblioteca muda de versão para versão, e aqui isso mudaria custo e latência de cada triagem sem ninguém pedir.
+- **`IA_ESFORCO` inválido cai no default** (normalizado com trim + minúsculas, validado contra `low|medium|high|xhigh|max`): um typo no `.env` de produção não pode parar a fila de triagem.
+- **Vale para triagem e para o mapeamento de sistema** (D-013), que atravessam a mesma fronteira injetável — daí dar para testar sem rede.
+- Boot do worker passa a logar o esforço junto do modelo. Sem migration: `ExecucaoIA.modelo` já grava o modelo concreto por execução, então o histórico fica legível com as duas gerações.
+- ADR D-031 (D-006 ganhou nota de atualização); specs 00/01/05/09/10, README, CLAUDE.md, `.env.example` e `docs/desenvolvimento.md` atualizados; 3 testes novos (fronteira com default e override; validação do `IA_ESFORCO`).
+
 ## 2026-08-30 — D-030: fila de chamados com três filtros rápidos + campos deixam de ser transparentes
 
 - **Pedido do usuário:** a aba "Chamados" tinha "muita informação, muitos filtros, muitos campos" — duas fileiras de chips (3 de atribuição + até 8 de status) somadas a 5 dropdowns e à busca, tudo antes da primeira linha de dado. Pedido: **três filtros rápidos** (Em aberto — padrão —, Encerrados, Todos), o resto só como dropdown e caixa de texto.
