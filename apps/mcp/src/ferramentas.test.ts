@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { montarQueryListar, caminhoChamado } from './ferramentas';
+import { montarQueryListar, caminhoChamado, montarCorpoCriar } from './ferramentas';
 
 /** Tradução de argumentos das ferramentas → contrato HTTP (specs/11 §4.1/§7.2). */
 describe('ferramentas do MCP', () => {
@@ -26,5 +26,33 @@ describe('ferramentas do MCP', () => {
     // `#` viraria fragmento de URL se não fosse escapado — o número sumiria.
     expect(caminhoChamado('#12')).toBe('/api/v1/chamados/%2312');
     expect(caminhoChamado(' 12 ', '/mensagens')).toBe('/api/v1/chamados/12/mensagens');
+  });
+});
+
+/** Corpo de `chamado_criar` → `POST /api/v1/chamados` (specs/11 §4.5). */
+describe('montarCorpoCriar', () => {
+  it('envia só os campos informados (opcional vazio não viaja)', () => {
+    const corpo = montarCorpoCriar({
+      titulo: '  Boleto não gera  ',
+      descricao: 'Tela em branco.',
+      natureza: '',
+      sistema_alvo_id: undefined,
+    });
+    expect(corpo).toEqual({ titulo: 'Boleto não gera', descricao: 'Tela em branco.' });
+  });
+
+  it('inclui natureza, prioridade, sistema-alvo e solicitante quando presentes', () => {
+    const corpo = montarCorpoCriar({
+      titulo: 'Relatório novo',
+      descricao: 'Precisamos de um relatório mensal.',
+      natureza: 'alteracao',
+      prioridade: 'alta',
+      sistema_alvo_id: '9b7e2f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b',
+      solicitante_email: ' ana@cliente.com ',
+    });
+    expect(corpo.natureza).toBe('alteracao');
+    expect(corpo.prioridade).toBe('alta');
+    expect(corpo.sistema_alvo_id).toBe('9b7e2f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b');
+    expect(corpo.solicitante_email).toBe('ana@cliente.com');
   });
 });

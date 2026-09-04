@@ -244,3 +244,18 @@
 
 **Alternativas descartadas:** deixar só `IA_MODELO` no `.env` da VPS e não mexer no código (o default do repositório continuaria em Opus 4.8, e qualquer instalação nova nasceria no modelo velho); fixar `xhigh`/`max` (o pedido foi `high`, e cada degrau acima cobra em latência e tokens numa fila que já tem budget por execução).
 **Consequências:** `apps/worker` (config, resolver, provider, boot) e `.env.example`/`docs/desenvolvimento.md` atualizados; specs 00/01/05/09/10 e README/CLAUDE.md passam a dizer Opus 5; D-006 ganhou nota de atualização. Sem migration — `ExecucaoIA.modelo` já grava o modelo concreto por execução, então o histórico continua legível com as duas gerações. O log de boot passa a registrar o esforço junto do modelo. Testes: fronteira (modelo + esforço default e override) e validação do `IA_ESFORCO`. A regra de **subagentes** do `CLAUDE.md` (metodologia de desenvolvimento, não o produto) segue como estava — é outra decisão, do usuário.
+
+## D-032 — Abrir chamado pela API `/api/v1` e pelo MCP (2026-09-04)
+
+**Status:** aceita. Estende **D-028** (que deixara a criação fora de escopo "até haver demanda" — specs/11 §8).
+**Contexto:** o usuário pediu que o MCP também **abra chamados**. A API v1 só publicava mensagem e mudava status; o formulário de abertura vivia apenas no portal/painel (Server Actions), que não são contrato consumível por um assistente.
+**Decisão:**
+
+- **`POST /api/v1/chamados`** com o **mesmo formulário mínimo** do portal (specs/04 §2): `titulo`, `descricao` em **markdown** (mesmo `markdownParaDoc` + pipeline de sanitização das mensagens), `natureza` opcional (default `problema`, D-017 — a IA reclassifica), `prioridade` opcional, `sistema_alvo_id`/`categoria_id` condicionais. Delega a `criarChamado` e roda em `comDespacho`: o chamado aberto pela API tem auditoria, notificação e triagem **iguais** aos da UI.
+- **Solicitante por e-mail.** Operador/admin abrem _em nome de_ um cliente e informam `solicitante_email` (ou `solicitante_id`); o assistente conhece e-mail, não UUID. A resolução é escopada ao tenant pela RLS e exige conta **ativa** com papel `cliente`. `cliente` abre só para si — se mandar solicitante, recebe `403` em vez de ser silenciosamente ignorado (parâmetro que "não valeu" é pior que erro).
+- **`GET /api/v1/sistemas-alvo`** (id, nome, descrição dos ativos + `sistema_alvo_obrigatorio`): sem ele, o assistente recebe `sistema_alvo_obrigatorio` num tenant com >1 sistema e não tem como corrigir. Expõe **exatamente** o que o formulário do portal já mostra a qualquer papel — nada de repositório/logs/BD/credenciais (isso continua sendo `sistema_alvo · ler`, da equipe).
+- **MCP:** `chamado_criar` (escrita) e `sistemas_alvo_listar` (leitura). A descrição de `chamado_criar` instrui o modelo a **perguntar** o solicitante quando não souber, e a ir a `sistemas_alvo_listar` ao receber `sistema_alvo_obrigatorio`.
+- **Sem anexos** pela API: só texto. Upload continua pelo portal; entra como item separado se houver demanda.
+
+**Alternativas descartadas:** aceitar o nome do sistema-alvo em texto no lugar do UUID (casamento fuzzy inventa alvo errado em silêncio); devolver a lista de sistemas dentro da mensagem de erro `sistema_alvo_obrigatorio` (gambiarra que vira contrato); deixar `cliente` informar solicitante e ignorar (fingir que valeu).
+**Consequências:** specs/11 (§1.3, §4 tabela, §4.5, §4.6, §5, §6, §7.2, §8) atualizada; `apps/web` ganha o handler `POST` em `/api/v1/chamados` e a rota `/api/v1/sistemas-alvo`; `apps/mcp` ganha as duas ferramentas (versão `0.2.0`); `smoke:api` cobre a seção 11 (solicitante obrigatório/inválido, enum inválido, criação por operador e por cliente com defaults, cliente proibido de indicar solicitante, sistemas-alvo). Sem migration.

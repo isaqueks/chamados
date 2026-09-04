@@ -1,6 +1,6 @@
 # 11 — API HTTP e servidor MCP
 
-Este documento especifica a **API HTTP** da plataforma **Chamados** (`/api/v1`) e o **servidor MCP** que a consome, permitindo que um assistente (Claude Code, Claude Desktop ou qualquer cliente MCP) leia chamados, leia a timeline — mensagens públicas **e** notas internas, conforme o papel —, publique mensagens e mude o status.
+Este documento especifica a **API HTTP** da plataforma **Chamados** (`/api/v1`) e o **servidor MCP** que a consome, permitindo que um assistente (Claude Code, Claude Desktop ou qualquer cliente MCP) leia chamados, leia a timeline — mensagens públicas **e** notas internas, conforme o papel —, publique mensagens, mude o status e **abra chamados** (D-032).
 
 Escopo relacionado, não duplicado aqui:
 
@@ -10,7 +10,7 @@ Escopo relacionado, não duplicado aqui:
 - Ameaças, hardening e LGPD: `09-seguranca-lgpd.md`.
 - O `agente_ia` e suas ferramentas MCP **internas** (worker): `05-agente-ia.md` — nada a ver com este documento (lá o MCP é consumido pelo worker; aqui é oferecido a um cliente externo).
 
-Decisão de origem: **D-028** (`specs/decisoes.md`).
+Decisões de origem: **D-028** (API + MCP) e **D-032** (criação de chamado pela API/MCP) em `specs/decisoes.md`.
 
 ---
 
@@ -18,7 +18,7 @@ Decisão de origem: **D-028** (`specs/decisoes.md`).
 
 1. **A API não é um bypass.** Todo endpoint passa pelo MESMO `autorizar()` (specs/03 §8), pelos MESMOS services de domínio e pela MESMA RLS da UI. Não existe caminho "de máquina" com mais poder que o humano equivalente: o token pertence a um `Usuario` real, com o papel dele.
 2. **Só login e senha.** Nenhuma credencial nova, nenhum token de API paralelo, nenhum segredo adicional para gerir. A API autentica com e-mail + senha do próprio usuário e devolve uma **sessão server-side** (`Sessao`, specs/02) — a mesma entidade revogável do cookie, apenas transportada em header.
-3. **Leitura primeiro.** A superfície de escrita é deliberadamente pequena: publicar mensagem e mudar status. Nada de criar chamado, gerenciar usuários, mexer em branding, sistemas-alvo ou guardrails da IA por esta API.
+3. **Leitura primeiro.** A superfície de escrita é deliberadamente pequena: publicar mensagem, mudar status e **abrir chamado** (D-032 — o mesmo formulário mínimo do portal, specs/04 §2). Nada de gerenciar usuários, mexer em branding, sistemas-alvo ou guardrails da IA por esta API.
 4. **Sem CSRF por construção.** A API aceita **apenas** `Authorization: Bearer`; o cookie de sessão do navegador **não** autentica `/api/v1`. Um site malicioso não consegue agir em nome do usuário logado no portal, porque o navegador não anexa o header sozinho.
 5. **Formato pensado para LLM.** Respostas em JSON compacto com o corpo das mensagens em **texto puro** (projeção do HTML sanitizado), não HTML — menos tokens, menos ruído, nenhuma tag para o modelo interpretar.
 
@@ -74,6 +74,8 @@ Host que não resolve tenant → `404` com código `tenant_desconhecido`, sem re
 | `GET`    | `/api/v1/chamados/{ref}`           | todos (escopo abaixo) | Chamado + timeline                           |
 | `POST`   | `/api/v1/chamados/{ref}/mensagens` | todos (escopo abaixo) | Publica mensagem `publica` ou nota `interna` |
 | `POST`   | `/api/v1/chamados/{ref}/status`    | todos (escopo abaixo) | Transiciona o status                         |
+| `POST`   | `/api/v1/chamados`                 | todos (escopo abaixo) | Abre um chamado (D-032)                      |
+| `GET`    | `/api/v1/sistemas-alvo`            | todos                 | Sistemas-alvo ativos (id, nome, descrição)   |
 
 `{ref}` aceita o **UUID** ou o **número** do chamado (`12` ou `#12`) — o número é como a equipe se refere ao chamado no dia a dia. A resolução por número é escopada ao tenant pela RLS (`UNIQUE (tenant_id, numero)`).
 
@@ -140,21 +142,60 @@ Delega a `transicionarStatus`: a **máquina de estados** (specs/04 §1.3) decide
 
 Sucesso `200`: `{ "status": "resolvido" }`.
 
+### 4.5 `POST /api/v1/chamados` (D-032)
+
+Abre um chamado com o **mesmo formulário mínimo** do portal (specs/04 §2). Corpo:
+
+```json
+{
+  "titulo": "Impressora parou",
+  "descricao": "Não imprime **desde ontem**.\n\n- fila travada",
+  "natureza": "problema",
+  "prioridade": "alta",
+  "sistema_alvo_id": "…",
+  "solicitante_email": "ana@cliente.com"
+}
+```
+
+| Campo                                  | Obrigatório | Regra                                                                                                                                                                                                       |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `titulo`                               | sim         | 3–160 caracteres (limite do domínio, specs/04 §4).                                                                                                                                                          |
+| `descricao`                            | sim         | **Markdown**, pelo mesmo `markdownParaDoc` + pipeline de validação/sanitização das mensagens (§4.3). Nunca HTML cru.                                                                                        |
+| `natureza`                             | não         | `problema` \| `alteracao` \| `duvida`. Omitida → `problema`, e a IA reclassifica na triagem (D-017, mesma regra do portal).                                                                                 |
+| `prioridade`                           | não         | Omitida → `media`.                                                                                                                                                                                          |
+| `sistema_alvo_id` / `categoria_id`     | condicional | Um **ou** outro. Regra de specs/04 §2 aplicada pelo serviço: 1 sistema ativo → preenchido sozinho; 0 → categoria geral; >1 sem escolha → `409 sistema_alvo_obrigatorio` (liste-os em `GET /sistemas-alvo`). |
+| `solicitante_email` / `solicitante_id` | condicional | **Quem abre EM NOME DE quem.** Obrigatório (um ou outro) para operador/admin; proibido para `cliente` (abre para si → `403` se informar). O solicitante precisa ser conta **ativa** com papel `cliente`.    |
+
+- Delega a `criarChamado`: `autorizar()` decide (cliente cria o próprio; operador/admin em nome de um cliente; `agente_ia` nunca — specs/03 §8.1), o serviço valida limites e resolve o alvo. A rota não reimplementa nada disso.
+- `solicitante_email` é resolvido **dentro do contexto do tenant** (RLS): e-mail de outro tenant nunca resolve. É o campo natural para um assistente — ele conhece o e-mail do cliente, não o UUID.
+- Dispara os MESMOS efeitos da UI (`comDespacho`): `EventoChamado` de criação, notificação de "chamado criado" e, se a triagem está ativa no tenant, a transição `novo → em_triagem` pelo `sistema` + enfileiramento da triagem (specs/05 §2). Um chamado aberto pela API não é de segunda classe.
+- **Sem anexos**: a API aceita só texto (markdown). Imagem/arquivo continua sendo pelo portal (§8).
+
+Sucesso `201`: `{ "id": "…", "numero": 42 }` — o número é como a equipe passa a se referir ao chamado.
+
+### 4.6 `GET /api/v1/sistemas-alvo`
+
+Resposta: `{ "sistemas": [{ "id", "nome", "descricao" }], "sistema_alvo_obrigatorio": true | false }` — só os sistemas **ativos** e só os campos que o formulário de abertura já mostra a qualquer papel (portal do cliente inclusive). Nada de repositório, logs, BD ou credenciais: isso é `sistema_alvo · ler` (equipe, specs/03 §8.2) e **não** passa por esta rota.
+
+`sistema_alvo_obrigatorio` vem calculado com a mesma regra de `criarChamado` (>1 sistema ativo), para o cliente da API não ter de deduzi-la.
+
 ---
 
 ## 5. Escopo por papel
 
 A API herda integralmente a matriz de specs/03 §8.1 — não redefine nada:
 
-| Ação                        | admin  | operador | cliente                   |
-| --------------------------- | ------ | -------- | ------------------------- |
-| Listar/ler chamados         | tenant | tenant   | só os próprios            |
-| Ler mensagem `publica`      | ✅     | ✅       | ✅ (nos próprios)         |
-| Ler nota `interna`          | ✅     | ✅       | ❌ (nem sabe que existe)  |
-| Ver `complexidade`          | ✅     | ✅       | ❌                        |
-| Escrever mensagem `publica` | ✅     | ✅       | ✅ (nos próprios)         |
-| Escrever nota `interna`     | ✅     | ✅       | ❌                        |
-| Mudar status                | ✅     | ✅       | ⚠️ só reabrir `resolvido` |
+| Ação                        | admin                    | operador                 | cliente                   |
+| --------------------------- | ------------------------ | ------------------------ | ------------------------- |
+| Listar/ler chamados         | tenant                   | tenant                   | só os próprios            |
+| Ler mensagem `publica`      | ✅                       | ✅                       | ✅ (nos próprios)         |
+| Ler nota `interna`          | ✅                       | ✅                       | ❌ (nem sabe que existe)  |
+| Ver `complexidade`          | ✅                       | ✅                       | ❌                        |
+| Escrever mensagem `publica` | ✅                       | ✅                       | ✅ (nos próprios)         |
+| Escrever nota `interna`     | ✅                       | ✅                       | ❌                        |
+| Mudar status                | ✅                       | ✅                       | ⚠️ só reabrir `resolvido` |
+| Abrir chamado (D-032)       | ✅ em nome de um cliente | ✅ em nome de um cliente | ✅ só para si             |
+| Listar sistemas-alvo (§4.6) | ✅                       | ✅                       | ✅ (id/nome/descrição)    |
 
 O `agente_ia` não usa esta API: é service account do worker, sem senha (specs/03 §6).
 
@@ -164,14 +205,14 @@ O `agente_ia` não usa esta API: é service account do worker, sem senha (specs/
 
 Sempre JSON: `{ "erro": "<mensagem legível>", "codigo": "<slug estável>" }`.
 
-| HTTP | Código                                       | Quando                                      |
-| ---- | -------------------------------------------- | ------------------------------------------- |
-| 400  | `corpo_invalido`, `parametro_invalido`       | JSON malformado, enum/valor fora do domínio |
-| 401  | `credenciais_invalidas`, `nao_autenticado`   | login falhou; token ausente/expirado        |
-| 403  | `sem_permissao`                              | papel não pode a ação                       |
-| 404  | `tenant_desconhecido`, `chamado_inexistente` | host sem tenant; chamado fora do escopo     |
-| 409  | `estado_terminal`, `transicao_invalida`, …   | regra de domínio recusou                    |
-| 429  | `muitas_tentativas`                          | rate limit do login                         |
+| HTTP | Código                                                                 | Quando                                      |
+| ---- | ---------------------------------------------------------------------- | ------------------------------------------- |
+| 400  | `corpo_invalido`, `parametro_invalido`                                 | JSON malformado, enum/valor fora do domínio |
+| 401  | `credenciais_invalidas`, `nao_autenticado`                             | login falhou; token ausente/expirado        |
+| 403  | `sem_permissao`                                                        | papel não pode a ação                       |
+| 404  | `tenant_desconhecido`, `chamado_inexistente`                           | host sem tenant; chamado fora do escopo     |
+| 409  | `estado_terminal`, `transicao_invalida`, `sistema_alvo_obrigatorio`, … | regra de domínio recusou                    |
+| 429  | `muitas_tentativas`                                                    | rate limit do login                         |
 
 O `codigo` é o contrato estável (o cliente decide por ele); a `mensagem` é para humanos.
 
@@ -201,8 +242,12 @@ Processo Node **stdio** (`apps/mcp`) que fala a API acima. É um cliente como ou
 | `chamado_obter`             | leitura | `GET /api/v1/chamados/{ref}`            |
 | `chamado_publicar_mensagem` | escrita | `POST /api/v1/chamados/{ref}/mensagens` |
 | `chamado_alterar_status`    | escrita | `POST /api/v1/chamados/{ref}/status`    |
+| `sistemas_alvo_listar`      | leitura | `GET /api/v1/sistemas-alvo`             |
+| `chamado_criar`             | escrita | `POST /api/v1/chamados` (D-032)         |
 
 As de escrita são anotadas como não-idempotentes e, no caso de `chamado_publicar_mensagem`, a descrição declara explicitamente que `visibilidade: "publica"` **é visível ao cliente final** — o modelo precisa saber que está falando com o cliente, não com a equipe.
+
+`chamado_criar` recebe `titulo`, `descricao` (markdown), `natureza`/`prioridade` opcionais, `sistema_alvo_id` e `solicitante_email`. A descrição da ferramenta diz ao modelo que, com usuário operador/admin, o `solicitante_email` é **obrigatório** e que, em dúvida, ele deve **perguntar** quem é o solicitante em vez de inventar — abrir chamado no nome do cliente errado suja a auditoria e notifica a pessoa errada. Ao receber `sistema_alvo_obrigatorio`, o caminho de correção é `sistemas_alvo_listar` → repetir com `sistema_alvo_id`.
 
 Erros da API voltam ao modelo como erro de ferramenta com o `codigo` — corrigível (ex.: `transicao_invalida` leva o modelo a escolher outro status), no mesmo espírito das ferramentas do worker (specs/05 §4.2).
 
@@ -217,8 +262,8 @@ Erros da API voltam ao modelo como erro de ferramenta com o `codigo` — corrig�
 
 ## 8. Fora de escopo (por ora)
 
-- **Criar chamado** pela API/MCP: a abertura é do cliente final, com formulário mínimo e anexos; entra se houver demanda.
-- **Anexos** (upload/download) e **eventos** (`EventoChamado`) na resposta do detalhe: a timeline de mensagens cobre o uso pretendido.
+- ~~**Criar chamado** pela API/MCP~~ — entrou em **D-032** (§4.5), sem anexos.
+- **Anexos** (upload/download — inclusive na abertura) e **eventos** (`EventoChamado`) na resposta do detalhe: a timeline de mensagens cobre o uso pretendido.
 - **Atribuição, prioridade, complexidade, silenciar IA, reexecutar triagem**: mutações de painel, deliberadamente fora da superfície inicial.
 - **Streaming/transport HTTP do MCP**: só stdio, que é o modo local do Claude Code/Desktop.
 

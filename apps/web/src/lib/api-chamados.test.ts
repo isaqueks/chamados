@@ -12,6 +12,7 @@ import {
   projetarDetalhe,
   projetarMensagens,
   idsDeChamados,
+  parsearEntradaCriar,
   type Nomes,
 } from './api-chamados';
 
@@ -192,5 +193,90 @@ describe('projetarMensagens', () => {
   it('corpo vira texto com quebras de parágrafo preservadas', () => {
     const r = projetarMensagens([publica], NOMES);
     expect(r[0]!.corpo).toBe('Bom dia\nSegue o print.');
+  });
+});
+
+/** Corpo de criação (specs/11 §4.5): defaults e rejeições explícitas. */
+describe('parsearEntradaCriar', () => {
+  const UUID = '9b7e2f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
+
+  it('exige titulo e descricao', () => {
+    expect(parsearEntradaCriar({ descricao: 'x' })).toMatchObject({
+      ok: false,
+      codigo: 'corpo_invalido',
+    });
+    expect(parsearEntradaCriar({ titulo: 'Algo', descricao: '   ' })).toMatchObject({
+      ok: false,
+      codigo: 'corpo_invalido',
+    });
+  });
+
+  it('natureza é opcional e cai em "problema" (D-017)', () => {
+    const r = parsearEntradaCriar({ titulo: 'Algo quebrou', descricao: 'Detalhes.' });
+    expect(r.ok && r.entrada.natureza).toBe(Natureza.problema);
+    expect(r.ok && r.entrada.prioridade).toBeUndefined();
+  });
+
+  it('enum fora do domínio é erro explícito, nunca ignorado', () => {
+    expect(parsearEntradaCriar({ titulo: 'Algo', descricao: 'x', natureza: 'bug' })).toMatchObject({
+      ok: false,
+      codigo: 'parametro_invalido',
+    });
+    expect(
+      parsearEntradaCriar({ titulo: 'Algo', descricao: 'x', prioridade: 'critica' }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+  });
+
+  it('sistema_alvo_id e solicitante_id precisam ser UUID; e-mail precisa de "@"', () => {
+    expect(
+      parsearEntradaCriar({ titulo: 'Algo', descricao: 'x', sistema_alvo_id: 'erp' }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+    expect(
+      parsearEntradaCriar({ titulo: 'Algo', descricao: 'x', solicitante_id: '123' }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+    expect(
+      parsearEntradaCriar({ titulo: 'Algo', descricao: 'x', solicitante_email: 'ana' }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+  });
+
+  it('recusa sistema_alvo_id + categoria_id e solicitante_id + solicitante_email juntos', () => {
+    expect(
+      parsearEntradaCriar({
+        titulo: 'Algo',
+        descricao: 'x',
+        sistema_alvo_id: UUID,
+        categoria_id: UUID,
+      }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+    expect(
+      parsearEntradaCriar({
+        titulo: 'Algo',
+        descricao: 'x',
+        solicitante_id: UUID,
+        solicitante_email: 'ana@cliente.com',
+      }),
+    ).toMatchObject({ ok: false, codigo: 'parametro_invalido' });
+  });
+
+  it('entrada completa passa com os campos normalizados', () => {
+    const r = parsearEntradaCriar({
+      titulo: '  Relatório mensal ',
+      descricao: 'Precisamos de **relatório**.',
+      natureza: 'alteracao',
+      prioridade: 'alta',
+      sistema_alvo_id: UUID,
+      solicitante_email: ' Ana@Cliente.com ',
+    });
+    expect(r).toEqual({
+      ok: true,
+      entrada: {
+        titulo: 'Relatório mensal',
+        descricao: 'Precisamos de **relatório**.',
+        natureza: Natureza.alteracao,
+        prioridade: Prioridade.alta,
+        sistema_alvo_id: UUID,
+        solicitante_email: 'Ana@Cliente.com',
+      },
+    });
   });
 });

@@ -86,6 +86,35 @@ export function montarQueryListar(args: ArgsListar): Record<string, string | und
   };
 }
 
+export interface ArgsCriar {
+  titulo: string;
+  descricao: string;
+  natureza?: string;
+  prioridade?: string;
+  sistema_alvo_id?: string;
+  solicitante_email?: string;
+}
+
+/**
+ * Monta o corpo de `POST /api/v1/chamados` (specs/11 §4.5): campos opcionais
+ * ausentes/vazios NÃO viajam — a API trata "chave presente com string vazia"
+ * como valor informado e recusaria o UUID vazio.
+ */
+export function montarCorpoCriar(args: ArgsCriar): Record<string, string> {
+  const corpo: Record<string, string> = { titulo: args.titulo.trim(), descricao: args.descricao };
+  const opcionais: Array<keyof ArgsCriar> = [
+    'natureza',
+    'prioridade',
+    'sistema_alvo_id',
+    'solicitante_email',
+  ];
+  for (const k of opcionais) {
+    const v = args[k]?.trim();
+    if (v) corpo[k] = v;
+  }
+  return corpo;
+}
+
 /** Caminho do chamado, com a referência (número ou UUID) escapada. */
 export function caminhoChamado(ref: string, sufixo = ''): string {
   return `/api/v1/chamados/${encodeURIComponent(ref.trim())}${sufixo}`;
@@ -164,7 +193,89 @@ export function registrarFerramentas(
     async ({ ref }) => comErro(async () => texto(await cliente.requisitar(caminhoChamado(ref)))),
   );
 
+  server.registerTool(
+    'sistemas_alvo_listar',
+    {
+      title: 'Listar sistemas-alvo',
+      description:
+        'Lista os sistemas-alvo ativos do tenant (id, nome, descrição) — os sistemas sobre ' +
+        'os quais se abrem chamados. Use antes de chamado_criar quando ' +
+        '`sistema_alvo_obrigatorio` vier true (tenant com mais de um sistema): aí o ' +
+        'sistema_alvo_id é obrigatório na criação. Com um único sistema ele é preenchido ' +
+        'automaticamente.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async () => comErro(async () => texto(await cliente.requisitar('/api/v1/sistemas-alvo'))),
+  );
+
   if (opts.somenteLeitura) return;
+
+  server.registerTool(
+    'chamado_criar',
+    {
+      title: 'Abrir chamado',
+      description:
+        'Abre um chamado novo no helpdesk. O chamado entra como "novo" e a IA faz a triagem ' +
+        'em seguida (classifica natureza/prioridade, pede informações ou resolve). ' +
+        'PAPEL IMPORTA: se o usuário configurado é cliente, o chamado é aberto para ele mesmo; ' +
+        'se é operador/admin, o chamado é aberto EM NOME DE um cliente e `solicitante_email` ' +
+        '(e-mail de uma conta ativa com papel cliente) é OBRIGATÓRIO — em caso de dúvida, ' +
+        'pergunte ao usuário quem é o solicitante em vez de chutar. Título curto (3–160 ' +
+        'caracteres) e descrição em markdown com o problema/pedido como o cliente o relatou. ' +
+        'Se a API responder "sistema_alvo_obrigatorio", chame sistemas_alvo_listar, escolha ' +
+        '(ou pergunte) e repita com `sistema_alvo_id`. Retorna o id e o NÚMERO do chamado.',
+      inputSchema: {
+        titulo: z.string().min(3).max(160).describe('Título curto do chamado.'),
+        descricao: z
+          .string()
+          .min(1)
+          .describe('Descrição em markdown: o que acontece, onde, desde quando, como reproduzir.'),
+        natureza: z
+          .enum(NATUREZAS)
+          .optional()
+          .describe(
+            'problema=algo quebrado; alteracao=pedido de mudança/nova funcionalidade; ' +
+              'duvida=só quer entender algo. Omita se não souber: entra como "problema" e a IA ' +
+              'reclassifica na triagem.',
+          ),
+        prioridade: z
+          .enum(PRIORIDADES)
+          .optional()
+          .describe('baixa | media (default) | alta | urgente.'),
+        sistema_alvo_id: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            'UUID do sistema-alvo (de sistemas_alvo_listar). Só obrigatório se houver mais de um.',
+          ),
+        solicitante_email: z
+          .string()
+          .email()
+          .optional()
+          .describe(
+            'E-mail do cliente solicitante. OBRIGATÓRIO quando o usuário configurado é ' +
+              'operador/admin; NÃO informe quando é cliente (abre para si).',
+          ),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) =>
+      comErro(async () =>
+        texto(
+          await cliente.requisitar('/api/v1/chamados', {
+            metodo: 'POST',
+            corpo: montarCorpoCriar(args),
+          }),
+        ),
+      ),
+  );
 
   // ---- Escrita ------------------------------------------------------------
 
