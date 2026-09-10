@@ -11,7 +11,10 @@
  *  7. publicar mensagem e transicionar status funcionam e valem no banco;
  *  8. transição inválida é recusada pela máquina de estados (409);
  *  9. o cliente MCP (`ClienteChamados`) opera o mesmo fluxo e renova a sessão;
- * 10. logout revoga o token (401 depois).
+ * 10. logout revoga o token (401 depois);
+ * 11. criação de chamado (D-032): operador precisa de solicitante, cliente abre
+ *     para si (e não pode indicar solicitante), enum inválido é 400, o registro
+ *     vale no banco e `GET /sistemas-alvo` informa se o alvo é obrigatório.
  *
  * PRÉ-REQUISITOS: Postgres de pé (`docker compose up -d`), migrations aplicadas e
  * a aplicação web servindo (`npm run dev:web`). A URL vem de `SMOKE_API_URL`
@@ -398,6 +401,120 @@ async function main(): Promise<void> {
       return linhas[0]?.status;
     });
     ok(persistido === 'resolvido', 'a mudança está no BANCO (não só na resposta)');
+
+    // --- 11) Criação de chamado (specs/11 §4.5/§4.6, D-032) ----------------
+    const semSolicitante = await chamar<{ codigo: string }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: { titulo: 'Impressora parou', descricao: 'Nao imprime desde ontem.' },
+    });
+    ok(
+      semSolicitante.status === 400 && semSolicitante.corpo.codigo === 'parametro_invalido',
+      'operador sem solicitante → 400 (abre EM NOME DE um cliente)',
+    );
+
+    const solicitanteRuim = await chamar<{ codigo: string }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: {
+        titulo: 'Impressora parou',
+        descricao: 'Nao imprime.',
+        solicitante_email: operadorEmail, // existe, mas NÃO é cliente
+      },
+    });
+    ok(
+      solicitanteRuim.status === 400 && solicitanteRuim.corpo.codigo === 'parametro_invalido',
+      'solicitante que não é cliente → 400',
+    );
+
+    const naturezaRuim = await chamar<{ codigo: string }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: {
+        titulo: 'Impressora parou',
+        descricao: 'Nao imprime.',
+        natureza: 'bug',
+        solicitante_email: clienteEmail,
+      },
+    });
+    ok(naturezaRuim.status === 400, 'natureza fora do enum → 400 (nunca ignorada)');
+
+    const criadoOp = await chamar<{ id: string; numero: number }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: {
+        titulo: 'Impressora parou',
+        descricao: 'Nao imprime **desde ontem**.\n\n- fila travada\n- luz laranja',
+        natureza: 'problema',
+        prioridade: 'alta',
+        solicitante_email: clienteEmail.toUpperCase(), // e-mail é normalizado
+      },
+    });
+    ok(
+      criadoOp.status === 201 && typeof criadoOp.corpo.numero === 'number',
+      'operador abre chamado em nome do cliente (201 + número)',
+    );
+
+    const linhaOp = await runInTenantContext(ds, tenantId, async (em) => {
+      const linhas: Array<{ email: string; natureza: string; prioridade: string; html: string }> =
+        await em.query(
+          `SELECT u.email, c.natureza, c.prioridade, c.descricao_html AS html
+             FROM chamado c JOIN usuario u ON u.id = c.cliente_id WHERE c.id = $1`,
+          [criadoOp.corpo.id],
+        );
+      return linhas[0];
+    });
+    ok(linhaOp?.email === clienteEmail, 'o SOLICITANTE gravado é o cliente do e-mail informado');
+    ok(
+      linhaOp?.natureza === 'problema' && linhaOp?.prioridade === 'alta',
+      'natureza e prioridade informadas valem no banco',
+    );
+    ok(
+      !!linhaOp && linhaOp.html.includes('<strong>') && linhaOp.html.includes('<li>'),
+      'markdown da descrição virou HTML sanitizado',
+    );
+
+    const criadoCli = await chamar<{ id: string; numero: number }>(slug, '/api/v1/chamados', {
+      token: tokenCli,
+      metodo: 'POST',
+      corpo: { titulo: 'Como exporto o relatorio?', descricao: 'Nao acho o botao.' },
+    });
+    ok(criadoCli.status === 201, 'cliente abre chamado para si sem natureza (201)');
+    const linhaCli = await runInTenantContext(ds, tenantId, async (em) => {
+      const linhas: Array<{ email: string; natureza: string; prioridade: string }> = await em.query(
+        `SELECT u.email, c.natureza, c.prioridade
+             FROM chamado c JOIN usuario u ON u.id = c.cliente_id WHERE c.id = $1`,
+        [criadoCli.corpo.id],
+      );
+      return linhas[0];
+    });
+    ok(linhaCli?.email === clienteEmail, 'chamado do cliente tem ELE como solicitante');
+    ok(
+      linhaCli?.natureza === 'problema' && linhaCli?.prioridade === 'media',
+      'defaults: natureza "problema" (D-017) e prioridade "media"',
+    );
+
+    const cliComSolicitante = await chamar<{ codigo: string }>(slug, '/api/v1/chamados', {
+      token: tokenCli,
+      metodo: 'POST',
+      corpo: { titulo: 'Tentativa', descricao: 'x', solicitante_email: `out.${sufixo}@smoke.dev` },
+    });
+    ok(
+      cliComSolicitante.status === 403 && cliComSolicitante.corpo.codigo === 'sem_permissao',
+      'cliente NÃO abre chamado em nome de outro (403)',
+    );
+
+    const sistemas = await chamar<{ sistemas: unknown[]; sistema_alvo_obrigatorio: boolean }>(
+      slug,
+      '/api/v1/sistemas-alvo',
+      { token: tokenCli },
+    );
+    ok(
+      sistemas.status === 200 &&
+        Array.isArray(sistemas.corpo.sistemas) &&
+        sistemas.corpo.sistema_alvo_obrigatorio === false,
+      'GET /sistemas-alvo responde e informa que o alvo NÃO é obrigatório (tenant sem sistemas)',
+    );
 
     // --- 9) Cliente MCP sobre a mesma API ----------------------------------
     const mcp = new ClienteChamados({

@@ -44,6 +44,7 @@ export type CodigoErro =
   | 'chamado_inexistente'
   | 'estado_terminal'
   | 'transicao_invalida'
+  | 'sistema_alvo_obrigatorio'
   | 'conflito'
   | 'muitas_tentativas';
 
@@ -233,6 +234,56 @@ export function respostaDeMotivo(motivo: MotivoDominio): Response {
       return jsonErro(400, 'corpo_invalido', 'O corpo da mensagem excede o limite permitido.');
     case 'corpo_invalido':
       return jsonErro(400, 'corpo_invalido', 'O corpo da mensagem é inválido.');
+    // --- Criação de chamado (specs/11 §4.5) --------------------------------
+    case 'solicitante_obrigatorio':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Operador/admin abre chamado EM NOME DE um cliente: informe "solicitante_email" (ou "solicitante_id").',
+      );
+    case 'solicitante_invalido':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Solicitante não encontrado: precisa ser um usuário ATIVO com papel "cliente" neste tenant.',
+      );
+    case 'titulo_invalido':
+      return jsonErro(400, 'corpo_invalido', 'O título deve ter entre 3 e 160 caracteres.');
+    case 'descricao_obrigatoria':
+      return jsonErro(400, 'corpo_invalido', 'A descrição não pode ser vazia.');
+    case 'descricao_muito_longa':
+      return jsonErro(400, 'corpo_invalido', 'A descrição excede o limite permitido.');
+    case 'descricao_invalida':
+      return jsonErro(400, 'corpo_invalido', 'A descrição é inválida.');
+    case 'imagem_invalida':
+    case 'imagens_demais':
+      return jsonErro(
+        400,
+        'corpo_invalido',
+        'Imagens embutidas na descrição são inválidas ou excedem o limite.',
+      );
+    case 'natureza_invalida':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Natureza deve ser "problema", "alteracao" ou "duvida".',
+      );
+    case 'prioridade_invalida':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Prioridade deve ser "baixa", "media", "alta" ou "urgente".',
+      );
+    case 'sistema_alvo_obrigatorio':
+      return jsonErro(
+        409,
+        'sistema_alvo_obrigatorio',
+        'Este tenant tem mais de um sistema-alvo: informe "sistema_alvo_id" (liste-os em GET /api/v1/sistemas-alvo).',
+      );
+    case 'sistema_alvo_invalido':
+      return jsonErro(400, 'parametro_invalido', 'Sistema-alvo não encontrado neste tenant.');
+    case 'categoria_invalida':
+      return jsonErro(400, 'parametro_invalido', 'Categoria não encontrada neste tenant.');
     default:
       return jsonErro(409, 'conflito', `Operação recusada pelo domínio (${motivo}).`);
   }

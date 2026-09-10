@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-09-04 — D-032: abrir chamado pela API `/api/v1` e pelo MCP
+
+- **Pedido do usuário:** o MCP precisava **criar chamados**, não só ler/comentar/mudar status. D-028 tinha deixado a criação fora de escopo "até haver demanda" (specs/11 §8).
+- **`POST /api/v1/chamados`**: mesmo formulário mínimo do portal (specs/04 §2) — `titulo`, `descricao` em **markdown** (mesmo pipeline de sanitização das mensagens), `natureza` opcional (default `problema`, D-017), `prioridade` opcional, `sistema_alvo_id`/`categoria_id`. Delega a `criarChamado` dentro de `comDespacho`: auditoria, notificação e triagem **iguais** às da UI. Resposta `201 { id, numero }`.
+- **Solicitante por e-mail**: operador/admin abrem _em nome de_ um cliente via `solicitante_email` (ou `solicitante_id`), resolvido dentro do tenant (RLS) e restrito a conta ativa com papel `cliente`. `cliente` abre só para si — solicitante informado por ele é `403`, não ignorado.
+- **`GET /api/v1/sistemas-alvo`**: id/nome/descrição dos sistemas ativos + `sistema_alvo_obrigatorio` (a mesma regra de `criarChamado`: >1 sistema). É o que o formulário do portal já mostra a qualquer papel; nada de repositório/credenciais.
+- **Erros novos no contrato**: `409 sistema_alvo_obrigatorio`; motivos de criação do domínio mapeados para `400 corpo_invalido`/`parametro_invalido` com mensagem acionável.
+- **MCP** (`0.2.0`): `chamado_criar` (escrita) e `sistemas_alvo_listar` (leitura). A descrição da ferramenta manda o modelo **perguntar** o solicitante em vez de chutar, e ir a `sistemas_alvo_listar` ao receber `sistema_alvo_obrigatorio`. `CHAMADOS_MCP_SOMENTE_LEITURA=true` continua escondendo as de escrita.
+- ADR D-032; specs/11 atualizada; `docs/desenvolvimento.md` §3.11 e README; 8 testes unitários novos (parser do corpo no web, montagem do corpo no MCP) + seção 11 do `smoke:api` (12 asserts). Sem migration.
+
 ## 2026-08-30 — D-031: agente de IA passa a Opus 5, esforço `high`
 
 - **Pedido do usuário:** trocar o agente de IA de Opus 4.8 para **Opus 5**, com **effort high**.

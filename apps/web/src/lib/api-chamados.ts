@@ -267,3 +267,128 @@ export function idsDeMensagens(mensagens: MensagemTimeline[]): Array<string | nu
 export function ehEquipe(papel: Papel): boolean {
   return papel === Papel.operador || papel === Papel.admin;
 }
+
+// ---------------------------------------------------------------------------
+// Criação de chamado (specs/11 §4.5)
+// ---------------------------------------------------------------------------
+
+/** Entrada já validada do `POST /api/v1/chamados` (ainda com a descrição em markdown). */
+export interface EntradaCriarApi {
+  titulo: string;
+  /** Markdown — a rota converte com `markdownParaDoc` antes de chamar o domínio. */
+  descricao: string;
+  natureza: Natureza;
+  prioridade?: Prioridade;
+  sistema_alvo_id?: string;
+  categoria_id?: string;
+  /** Solicitante quando a equipe abre "em nome de" (um OU outro, nunca ambos). */
+  solicitante_id?: string;
+  solicitante_email?: string;
+}
+
+export type ResultadoEntradaCriar =
+  | { ok: true; entrada: EntradaCriarApi }
+  | { ok: false; codigo: 'corpo_invalido' | 'parametro_invalido'; erro: string };
+
+function textoOpcional(valor: unknown): string | undefined {
+  if (valor === undefined || valor === null) return undefined;
+  if (typeof valor !== 'string') return undefined;
+  const t = valor.trim();
+  return t.length > 0 ? t : undefined;
+}
+
+/**
+ * Interpreta o corpo de criação. Regras do contrato (não do domínio — quem decide
+ * permissão, limites de título e o alvo é `criarChamado`):
+ *  - `natureza` é OPCIONAL e cai em `problema` (D-017: sem escolha, a IA
+ *    reclassifica na triagem — mesma regra do portal);
+ *  - enum fora do domínio é erro explícito, nunca ignorado (specs/11 §4.1);
+ *  - `sistema_alvo_id` XOR `categoria_id`; `solicitante_id` XOR `solicitante_email`.
+ */
+export function parsearEntradaCriar(corpo: Record<string, unknown>): ResultadoEntradaCriar {
+  const titulo = textoOpcional(corpo.titulo);
+  if (!titulo) return { ok: false, codigo: 'corpo_invalido', erro: 'Informe "titulo".' };
+
+  const descricao = typeof corpo.descricao === 'string' ? corpo.descricao : '';
+  if (descricao.trim().length === 0) {
+    return { ok: false, codigo: 'corpo_invalido', erro: 'Informe "descricao" (markdown).' };
+  }
+
+  let natureza: Natureza = Natureza.problema;
+  const naturezaBruta = textoOpcional(corpo.natureza);
+  if (naturezaBruta !== undefined) {
+    const v = valorEnum(Natureza, naturezaBruta);
+    if (!v) {
+      return {
+        ok: false,
+        codigo: 'parametro_invalido',
+        erro: `Natureza inválida: "${naturezaBruta}". Valores: ${Object.values(Natureza).join(', ')}.`,
+      };
+    }
+    natureza = v;
+  }
+
+  let prioridade: Prioridade | undefined;
+  const prioridadeBruta = textoOpcional(corpo.prioridade);
+  if (prioridadeBruta !== undefined) {
+    const v = valorEnum(Prioridade, prioridadeBruta);
+    if (!v) {
+      return {
+        ok: false,
+        codigo: 'parametro_invalido',
+        erro: `Prioridade inválida: "${prioridadeBruta}". Valores: ${Object.values(Prioridade).join(', ')}.`,
+      };
+    }
+    prioridade = v;
+  }
+
+  const sistemaAlvoId = textoOpcional(corpo.sistema_alvo_id);
+  if (sistemaAlvoId !== undefined && !RE_UUID.test(sistemaAlvoId)) {
+    return { ok: false, codigo: 'parametro_invalido', erro: '"sistema_alvo_id" deve ser um UUID.' };
+  }
+  const categoriaId = textoOpcional(corpo.categoria_id);
+  if (categoriaId !== undefined && !RE_UUID.test(categoriaId)) {
+    return { ok: false, codigo: 'parametro_invalido', erro: '"categoria_id" deve ser um UUID.' };
+  }
+  if (sistemaAlvoId && categoriaId) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: 'Informe "sistema_alvo_id" OU "categoria_id", nunca os dois.',
+    };
+  }
+
+  const solicitanteId = textoOpcional(corpo.solicitante_id);
+  if (solicitanteId !== undefined && !RE_UUID.test(solicitanteId)) {
+    return { ok: false, codigo: 'parametro_invalido', erro: '"solicitante_id" deve ser um UUID.' };
+  }
+  const solicitanteEmail = textoOpcional(corpo.solicitante_email);
+  if (solicitanteEmail !== undefined && !solicitanteEmail.includes('@')) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: '"solicitante_email" não parece um e-mail.',
+    };
+  }
+  if (solicitanteId && solicitanteEmail) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: 'Informe "solicitante_id" OU "solicitante_email", nunca os dois.',
+    };
+  }
+
+  return {
+    ok: true,
+    entrada: {
+      titulo,
+      descricao,
+      natureza,
+      ...(prioridade !== undefined ? { prioridade } : {}),
+      ...(sistemaAlvoId !== undefined ? { sistema_alvo_id: sistemaAlvoId } : {}),
+      ...(categoriaId !== undefined ? { categoria_id: categoriaId } : {}),
+      ...(solicitanteId !== undefined ? { solicitante_id: solicitanteId } : {}),
+      ...(solicitanteEmail !== undefined ? { solicitante_email: solicitanteEmail } : {}),
+    },
+  };
+}

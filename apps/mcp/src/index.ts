@@ -22,13 +22,14 @@ async function main(): Promise<void> {
   const cliente = new ClienteChamados(cfg);
 
   const server = new McpServer(
-    { name: 'chamados', version: '0.1.0' },
+    { name: 'chamados', version: '0.2.0' },
     {
       instructions:
         'Helpdesk Chamados: leitura e atendimento de chamados de suporte. Use chamados_listar ' +
         'para achar chamados e chamado_obter para ler a conversa completa antes de agir. ' +
         'Mensagens com visibilidade "publica" vão para o cliente final; detalhe técnico ' +
-        'pertence a notas "interna".',
+        'pertence a notas "interna". chamado_criar abre um chamado novo: com usuário ' +
+        'operador/admin exige o e-mail do cliente solicitante (pergunte se não souber).',
     },
   );
 

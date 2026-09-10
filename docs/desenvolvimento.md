@@ -330,6 +330,8 @@ opaco de sessão do cookie (server-side, revogável). Todas as demais rotas exig
 | `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline (`{ref}` = número ou UUID) |
 | `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`       |
 | `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                          |
+| `POST`   | `/api/v1/chamados`                 | abre um chamado (D-032; markdown, sem anexos) |
+| `GET`    | `/api/v1/sistemas-alvo`            | sistemas-alvo ativos (p/ escolher o alvo)     |
 
 O escopo é sempre o do **papel do usuário autenticado**: operador/admin leem
 notas internas e complexidade; cliente vê só os próprios chamados e só mensagens
@@ -360,16 +362,19 @@ mesma RLS.
 | `CHAMADOS_URL`                 | sim         | Base da instalação. HTTPS obrigatório fora de `localhost`                  |
 | `CHAMADOS_EMAIL` / `_SENHA`    | sim         | Credenciais do usuário (recomendado: um `operador` dedicado, p/ auditoria) |
 | `CHAMADOS_TENANT`              | não         | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`)  |
-| `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas `chamados_listar` e `chamado_obter`                 |
+| `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas as ferramentas de leitura                           |
 
-Ferramentas expostas: `chamados_listar`, `chamado_obter` (leitura),
-`chamado_publicar_mensagem`, `chamado_alterar_status` (escrita). O login é
+Ferramentas expostas: `chamados_listar`, `chamado_obter`, `sistemas_alvo_listar`
+(leitura), `chamado_publicar_mensagem`, `chamado_alterar_status`, `chamado_criar`
+(escrita). Com usuário operador/admin, `chamado_criar` exige o **e-mail do
+cliente solicitante** (o chamado é aberto em nome dele); com usuário cliente,
+abre para ele mesmo. O login é
 preguiçoso (só na primeira ferramenta usada) e a sessão se renova sozinha ao
 expirar. Erros da API voltam ao modelo com o código estável do contrato (ex.:
 `transicao_invalida`), que ele pode corrigir sozinho.
 
 Para validar a API + o cliente MCP de ponta a ponta (login, Bearer-only,
-filtros, fronteira cliente × nota interna, publicação e transição):
+filtros, fronteira cliente × nota interna, publicação, transição e criação):
 
 ```bash
 npm run dev:web        # em outro terminal (a aplicação precisa estar no ar)
