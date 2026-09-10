@@ -161,9 +161,24 @@ Variáveis de ambiente da triagem (ver `.env.example` para os defaults reais):
 | `IA_MAX_TURNOS`      | `50`            | limite de turnos/chamadas de ferramenta por execução (D-014: exploração nível Claude Code com Read/Grep/Glob nativas, restritas ao checkout)                               |
 | `TRIAGEM_DEBOUNCE_S` | `45`            | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
 
-Timeout ou budget excedido não são status próprios: a `ExecucaoIA` fica com
-`status='falhou'` e `erro='timeout'` / `erro='budget_excedido'`
-(`specs/05-agente-ia.md` §8).
+Timeout, budget ou turnos excedidos não são status próprios: a `ExecucaoIA` fica
+com `status='falhou'` e `erro='timeout'` / `erro='budget_excedido'` /
+`erro='max_turnos'`, guardando a telemetria parcial apurada até o corte
+(`specs/05-agente-ia.md` §8, D-033).
+
+#### Artefatos entregáveis (D-026, D-034)
+
+A IA anexa arquivos à resposta pública: `artefato_gerar` (o modelo emite o
+conteúdo — PDF a partir de markdown, csv/md/txt) e `artefato_consulta` (o modelo
+entrega só o SELECT; o worker executa e gera a planilha `xlsx`/`csv` direto do
+resultado — é o caminho para "me manda em Excel a lista de...").
+
+| Variável                 | Default  | Descrição                                                                         |
+| ------------------------ | -------- | --------------------------------------------------------------------------------- |
+| `IA_ARTEFATOS_MAX`       | `5`      | teto de artefatos por execução                                                    |
+| `IA_ARTEFATO_MAX_CHARS`  | `500000` | teto de caracteres do conteúdo de `artefato_gerar`                                |
+| `IA_ARTEFATO_MAX_LINHAS` | `10000`  | teto de linhas da extração por consulta (`artefato_consulta`); acima → `truncado` |
+| `IA_CSV_SEPARADOR`       | `;`      | separador do CSV gerado pelo worker (`;` abre em colunas no Excel pt-BR)          |
 
 #### Mapa de conhecimento do sistema (D-013)
 
@@ -171,15 +186,19 @@ Antes de analisar chamados, a IA precisa conhecer o sistema: uma execução
 dedicada (gatilho `mapeamento`, fila própria `mapeamento-ia`) explora o
 repositório e produz um resumo estruturado (stack, módulos, entidades, regras de
 negócio, fluxos) persistido no `sistema_alvo` com o commit mapeado. Dispara na
-**primeira triagem** sem mapa, quando o **commit do checkout muda**, ou pelo botão
-**"Mapear agora"** no cadastro do sistema (`/app/sistemas/[id]`, admin). O resumo
+**primeira triagem** sem mapa (inline), quando o **commit do checkout muda**
+(enfileirado; a triagem segue com o mapa anterior) ou pelo botão **"Mapear
+agora"** no cadastro do sistema (`/app/sistemas/[id]`, admin). Política por
+commit (D-033): no máximo **uma** tentativa automática por commit — falhou, só
+"Mapear agora" ou um commit novo disparam outra. Ao estourar turnos/timeout, o
+provider retoma a sessão sem ferramentas e **conclui com o que tem**. O resumo
 é injetado em toda triagem; a triagem segue o protocolo **investigação-primeiro**
 (busca/lê o código antes de decidir; só pergunta ao cliente fatos do lado dele).
 
 | Variável             | Default  | Descrição                                |
 | -------------------- | -------- | ---------------------------------------- |
 | `IA_MAPA_BUDGET_USD` | `10`     | teto de custo por execução de mapeamento |
-| `IA_MAPA_MAX_TURNOS` | `40`     | turnos/ferramentas do mapeamento         |
+| `IA_MAPA_MAX_TURNOS` | `100`    | turnos/ferramentas do mapeamento (D-033) |
 | `IA_MAPA_MAX_CHARS`  | `12000`  | tamanho máximo do resumo persistido      |
 | `IA_MAPA_TIMEOUT_MS` | `600000` | timeout do mapeamento                    |
 

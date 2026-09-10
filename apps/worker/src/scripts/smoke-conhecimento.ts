@@ -8,8 +8,11 @@
  *      o resumo é INJETADO na triagem (o fake ecoa o marcador [[mapa-fake]] no
  *      diagnóstico). A execução de mapeamento tem sistema_alvo_id e chamado_id NULL.
  *   2) Segunda triagem no MESMO commit NÃO re-mapeia (continua 1 mapeamento).
- *   3) Novo commit no fixture → RE-mapeia (2 mapeamentos); commit persistido muda.
- *   4) "Mapear agora" (job manual, processado inline) gera mais um mapeamento.
+ *   3) Novo commit no fixture → a triagem NÃO espera o re-mapa (D-033): segue com o
+ *      mapa anterior (continua 1 mapeamento) e ENFILEIRA um job em `mapeamento-ia`
+ *      (verificado e removido da fila aqui mesmo, para não vazar ao worker do usuário).
+ *   4) "Mapear agora" (job manual, processado inline) gera o 2º mapeamento; o commit
+ *      persistido muda para o novo.
  *   5) RLS: outro tenant não enxerga as execuções de mapeamento do primeiro.
  *
  * Requer Postgres + Redis de pé (compose). Sai 0 se passa; 1 caso contrário.
@@ -43,6 +46,9 @@ const {
   criarChamado,
   listarExecucoesDoSistema,
   DespachanteNotificacoes,
+  filaMapeamento,
+  jobIdMapeamento,
+  fecharFilaMapeamento,
 } = await import('@chamados/db');
 const { Papel, StatusTenant, Natureza } = await import('@chamados/shared');
 const { processarTriagem } = await import('../triagem/processador');
@@ -70,7 +76,9 @@ async function criarRepoFixture(): Promise<string> {
   );
   await fs.writeFile(join(dir, 'README.md'), '# Sistema de Pedidos\n');
   const g = simpleGit(dir);
-  await g.init();
+  // Branch explícita: o sistema-alvo do smoke usa `main` (default do cadastro) e o
+  // `init.defaultBranch` da máquina pode ser `master`.
+  await g.init(['--initial-branch=main']);
   await g.addConfig('user.email', 'fixture@smoke.dev');
   await g.addConfig('user.name', 'Fixture Smoke');
   await g.add('.');
@@ -114,6 +122,20 @@ async function main(): Promise<void> {
         [sistemaAlvoId],
       );
       return Number(r[0]?.n ?? '0');
+    });
+  }
+
+  /** Commit persistido no mapa do sistema (`sistema_alvo.conhecimento_commit`). */
+  async function lerCommitPersistido(
+    tenantId: string,
+    sistemaAlvoId: string,
+  ): Promise<string | null> {
+    return runInTenantContext(ds, tenantId, async (em) => {
+      const r: Array<{ c: string | null }> = await em.query(
+        `SELECT conhecimento_commit AS c FROM sistema_alvo WHERE id = $1`,
+        [sistemaAlvoId],
+      );
+      return r[0]?.c ?? null;
     });
   }
 
@@ -224,25 +246,35 @@ async function main(): Promise<void> {
       'continua com 1 mapeamento (commit inalterado → sem re-mapa)',
     );
 
-    // ---- 3) Novo commit no fixture → re-mapeia -----------------------------
-    console.log('\n[3] novo commit no fixture → re-mapeia');
+    // ---- 3) Novo commit no fixture → re-mapa ENFILEIRADO, triagem segue ----
+    console.log('\n[3] novo commit no fixture → re-mapa enfileirado (D-033), triagem segue');
     await novoCommit(repoDir);
+    const commitAntes = await lerCommitPersistido(tenantA, sistemaAlvoId);
     await abrirEtriar('Chamado após novo commit');
     ok(
-      (await contarMapeamentos(tenantA, sistemaAlvoId)) === 2,
-      'novo commit → 2 mapeamentos (re-mapeou)',
+      (await contarMapeamentos(tenantA, sistemaAlvoId)) === 1,
+      'triagem NÃO re-mapeou inline (continua 1 mapeamento; seguiu com o mapa anterior)',
     );
+    ok(
+      (await lerCommitPersistido(tenantA, sistemaAlvoId)) === commitAntes,
+      'commit persistido ainda é o anterior (o mapa novo vem pela fila)',
+    );
+    const jobEnfileirado = await filaMapeamento().getJob(jobIdMapeamento(sistemaAlvoId));
+    ok(jobEnfileirado != null, 'job de re-mapeamento ENFILEIRADO em mapeamento-ia');
+    // Remove o job para o worker do usuário (se estiver rodando) não o consumir.
+    await jobEnfileirado!.remove().catch(() => {});
 
     // ---- 4) "Mapear agora" (job manual, inline) ----------------------------
-    console.log('\n[4] job manual "Mapear agora"');
+    console.log('\n[4] job manual "Mapear agora" → 2º mapeamento, commit novo');
     const rMap = await processarMapeamentoJob(
       { tenantId: tenantA, sistemaAlvoId },
       { ds, redis, provider, limites: MAPA, lock: LOCK, log },
     );
     ok(rMap.status === 'concluido', 'job manual de mapeamento concluído');
+    ok((await contarMapeamentos(tenantA, sistemaAlvoId)) === 2, 'job manual gerou o 2º mapeamento');
     ok(
-      (await contarMapeamentos(tenantA, sistemaAlvoId)) === 3,
-      'job manual gerou mais um mapeamento (total 3)',
+      (await lerCommitPersistido(tenantA, sistemaAlvoId)) !== commitAntes,
+      'commit persistido mudou para o novo',
     );
 
     // ---- 5) RLS: outro tenant não vê as execuções do primeiro --------------
@@ -256,14 +288,15 @@ async function main(): Promise<void> {
     );
     ok(vistas.length === 0, 'tenant B NÃO enxerga as execuções de mapeamento do tenant A (RLS)');
 
-    // Sanidade: o admin do tenant A enxerga as 3.
+    // Sanidade: o admin do tenant A enxerga as 2.
     const vistasA = await runInTenantContext(ds, tenantA, (em) =>
       listarExecucoesDoSistema(em, atorAdmin, sistemaAlvoId, { limite: 10 }),
     );
-    ok(vistasA.length === 3, 'admin do tenant A enxerga as 3 execuções de mapeamento');
+    ok(vistasA.length === 2, 'admin do tenant A enxerga as 2 execuções de mapeamento');
 
     console.log('\n[smoke-conhecimento] RESULTADO: PASSOU — conhecimento do sistema confirmado.');
   } finally {
+    await fecharFilaMapeamento().catch(() => {});
     await DespachanteNotificacoes.fechar().catch(() => {});
     redis.disconnect();
     await fs.rm(repoDir, { recursive: true, force: true }).catch(() => {});

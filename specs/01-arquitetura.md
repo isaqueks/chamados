@@ -215,6 +215,24 @@ interface AIProviderInput {
       titulo?: string;
     }): Promise<{ nome_arquivo: string; formato: string; tamanho_bytes: number }>;
 
+    // Extração por consulta (D-034): o provider entrega SÓ o SELECT; o worker o
+    // executa (read-only, teto próprio de linhas) e materializa csv/xlsx direto do
+    // resultado. Devolve resumo (contagem/colunas/amostra), nunca as linhas.
+    artefato_consulta?(pedido: {
+      nome_arquivo: string;
+      formato: 'csv' | 'xlsx';
+      consulta: string;
+      titulo?: string;
+    }): Promise<{
+      nome_arquivo: string;
+      formato: string;
+      tamanho_bytes: number;
+      linhas: number;
+      colunas: string[];
+      amostra: Linha[];
+      truncado: boolean;
+    }>;
+
     // Opcionais: só injetadas quando o gate de resolução automática está aberto
     // (05-agente-ia.md §6). Escrevem numa working copy DESCARTÁVEL, nunca no
     // cache persistente nem em produção; ausentes (undefined) fora do gate.

@@ -220,6 +220,7 @@ export {
   concluirExecucaoMapeamento,
   falharExecucao,
   existeConcluidaParaMensagem,
+  existeMapeamentoParaCommit,
   listarExecucoesDoChamado,
   listarExecucoesDoSistema,
   type EntradaCriarExecucao,

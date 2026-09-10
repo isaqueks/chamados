@@ -71,6 +71,10 @@ export const ferramentasConfig = {
     maxPorExecucao: num('IA_ARTEFATOS_MAX', 5),
     /** Teto de caracteres do `conteudo` de cada artefato. */
     maxConteudoChars: num('IA_ARTEFATO_MAX_CHARS', 500_000),
+    /** Teto de linhas da EXTRAÇÃO POR CONSULTA (D-034): o worker corta aqui. */
+    maxLinhasExtracao: num('IA_ARTEFATO_MAX_LINHAS', 10_000),
+    /** Separador do CSV gerado pelo worker (Excel pt-BR abre `;` sem importar). */
+    csvSeparador: process.env.IA_CSV_SEPARADOR ?? ';',
   },
   /**
    * RESOLUÇÃO automática (specs/05 §6): limites das ferramentas de ESCRITA na

@@ -28,7 +28,7 @@ import { aplicarResultado, escalarParaHumano, type ResultadoResolucao } from './
 import { deveTentarResolver, executarResolucao } from './resolucao';
 import { ferramentasConfig } from './ferramentas/config';
 import type { FetchImpl } from './github-pr';
-import { motivoErro } from '../ia/erros';
+import { motivoErro, telemetriaDoErro, type TelemetriaParcial } from '../ia/erros';
 import {
   adquirirLockComEspera,
   liberarLockTenant,
@@ -199,6 +199,9 @@ export async function processarTriagem(
     // ---- Sincronização + provider (FORA da transação) ----------------------
     let resultado: AIProviderResult | null = null;
     let erro: string | null = null;
+    // D-033: o que a execução gastou até um corte por limite (timeout/turnos/
+    // budget) — gravado na ExecucaoIA falha; antes o custo dessas falhas sumia.
+    let telemetriaFalha: TelemetriaParcial | undefined;
     try {
       await ctxAtivo.sincronizar(); // git clone/pull (specs/05 §3.2)
     } catch (err) {
@@ -249,6 +252,7 @@ export async function processarTriagem(
         resultado = await provider.executarTriagem(ctxAtivo.input);
       } catch (err) {
         erro = motivoErro(err);
+        telemetriaFalha = telemetriaDoErro(err);
       }
     }
 
@@ -316,7 +320,10 @@ export async function processarTriagem(
     if (!concluido) {
       const erroFinal = erro ?? 'erro_desconhecido';
       await runInTenantContext(ds, job.tenantId, async (em) => {
-        await falharExecucao(em, prep.execucaoId, erroFinal, { acoes: prep.acoes });
+        await falharExecucao(em, prep.execucaoId, erroFinal, {
+          acoes: prep.acoes,
+          telemetriaParcial: telemetriaFalha,
+        });
         await escalarParaHumano(
           em,
           {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { criarFerramentaArtefatos, sanitizarNomeArtefato } from './artefatos';
+import { criarFerramentaArtefatos, gerarCsv, sanitizarNomeArtefato } from './artefatos';
 import { gerarPdfDeMarkdown } from './pdf';
 import { ferramentasConfig } from './config';
 
@@ -134,5 +134,139 @@ describe('gerarPdfDeMarkdown (D-026)', () => {
   it('normaliza caracteres fora do WinAnsi sem lançar (—, “aspas”, emoji)', async () => {
     const buffer = await gerarPdfDeMarkdown('Título', 'Texto — com “aspas” e emoji 🚀 e ção.');
     expect(buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+});
+
+describe('gerarCsv (D-034)', () => {
+  it('segue a RFC 4180: aspas quando há separador/aspas/quebra, aspas dobradas, CRLF', () => {
+    const csv = gerarCsv(
+      ['nome', 'obs', 'valor'],
+      [
+        ['Comércio; Cia', 'diz "olá"', 10],
+        ['quebra', 'linha 1\nlinha 2', null],
+      ],
+      ';',
+    );
+    const linhas = csv.split('\r\n');
+    expect(linhas[0]).toBe('nome;obs;valor');
+    expect(linhas[1]).toBe('"Comércio; Cia";"diz ""olá""";10');
+    expect(csv).toContain('"linha 1\nlinha 2"');
+    // null/undefined viram campo vazio.
+    expect(csv.endsWith(';')).toBe(true);
+  });
+
+  it('formata Date como AAAA-MM-DD HH:MM:SS e objetos como JSON', () => {
+    const csv = gerarCsv(
+      ['quando', 'meta'],
+      [[new Date(Date.UTC(2024, 5, 1, 13, 45, 30)), { a: 1 }]],
+      ',',
+    );
+    expect(csv).toContain('2024-06-01 13:45:30');
+    expect(csv).toContain('"{""a"":1}"');
+  });
+});
+
+describe('artefato_consulta (D-034)', () => {
+  const linhasFake = (n: number): Record<string, unknown>[] =>
+    Array.from({ length: n }, (_, i) => ({ id: i + 1, nome: `Cliente ${i + 1}` }));
+
+  it('gera CSV com o separador configurado, BOM e extensão forçada', async () => {
+    const f = criarFerramentaArtefatos(registrarNoop, {
+      extrair: async () => [
+        { id: 1, nome: 'Comércio; & Cia' },
+        { id: 2, nome: 'diz "olá"' },
+      ],
+    });
+    const r = await f.consultar({ nome_arquivo: 'carteira', formato: 'csv', consulta: 'select 1' });
+    expect(r).toMatchObject({ nome_arquivo: 'carteira.csv', formato: 'csv', linhas: 2 });
+    expect(r.colunas).toEqual(['id', 'nome']);
+    expect(r.truncado).toBe(false);
+    const buffer = f.coletar()[0]!.buffer;
+    expect(buffer.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    const texto = buffer.toString('utf8');
+    expect(texto).toContain('id;nome');
+    expect(texto).toContain('"Comércio; & Cia"');
+    expect(texto).toContain('"diz ""olá"""');
+  });
+
+  it('gera XLSX (assinatura PK) a partir do resultado da consulta', async () => {
+    const f = criarFerramentaArtefatos(registrarNoop, { extrair: async () => linhasFake(3) });
+    const r = await f.consultar({
+      nome_arquivo: 'clientes',
+      formato: 'xlsx',
+      consulta: 'select * from clientes',
+      titulo: 'Carteira X',
+    });
+    expect(r.nome_arquivo).toBe('clientes.xlsx');
+    const buffer = f.coletar()[0]!.buffer;
+    expect(buffer.subarray(0, 2).toString('latin1')).toBe('PK');
+    expect(buffer.length).toBeGreaterThan(500);
+  });
+
+  it('devolve amostra de no máximo 5 linhas e marca `truncado` no teto', async () => {
+    const teto = ferramentasConfig.artefatos.maxLinhasExtracao;
+    const f = criarFerramentaArtefatos(registrarNoop, {
+      extrair: async (_sql, max) => linhasFake(max),
+    });
+    const r = await f.consultar({ nome_arquivo: 'tudo', formato: 'csv', consulta: 'select 1' });
+    expect(r.linhas).toBe(teto);
+    expect(r.truncado).toBe(true);
+    expect(r.amostra).toHaveLength(5);
+    expect(r.amostra[0]).toEqual({ id: 1, nome: 'Cliente 1' });
+  });
+
+  it('recusa formato inválido, falta de conexão de BD e consulta sem linhas', async () => {
+    const f = criarFerramentaArtefatos(registrarNoop, { extrair: async () => linhasFake(1) });
+    await expect(
+      f.consultar({ nome_arquivo: 'x', formato: 'pdf' as never, consulta: 'select 1' }),
+    ).rejects.toThrow(/formato inválido/);
+
+    const semBd = criarFerramentaArtefatos(registrarNoop);
+    await expect(
+      semBd.consultar({ nome_arquivo: 'x', formato: 'csv', consulta: 'select 1' }),
+    ).rejects.toThrow(/conexão de BD do sistema-alvo não configurada/);
+
+    const vazio = criarFerramentaArtefatos(registrarNoop, { extrair: async () => [] });
+    await expect(
+      vazio.consultar({ nome_arquivo: 'x', formato: 'csv', consulta: 'select 1' }),
+    ).rejects.toThrow(/não retornou linhas/);
+  });
+
+  it('propaga o erro do executor (validação SELECT-only) ao modelo', async () => {
+    const f = criarFerramentaArtefatos(registrarNoop, {
+      extrair: async () => {
+        throw new Error('apenas consultas SELECT/WITH são permitidas (acesso read-only)');
+      },
+    });
+    await expect(
+      f.consultar({ nome_arquivo: 'x', formato: 'csv', consulta: 'delete from clientes' }),
+    ).rejects.toThrow(/SELECT\/WITH/);
+  });
+
+  it('nome repetido SUBSTITUI (conta 1) e o teto por execução vale para a extração', async () => {
+    const f = criarFerramentaArtefatos(registrarNoop, { extrair: async () => linhasFake(2) });
+    await f.consultar({ nome_arquivo: 'lista', formato: 'csv', consulta: 'select 1' });
+    await f.consultar({ nome_arquivo: 'lista', formato: 'csv', consulta: 'select 2' });
+    expect(f.coletar()).toHaveLength(1);
+
+    const max = ferramentasConfig.artefatos.maxPorExecucao;
+    for (let i = 1; i < max; i++) {
+      await f.consultar({ nome_arquivo: `lista${i}`, formato: 'csv', consulta: 'select 1' });
+    }
+    expect(f.coletar()).toHaveLength(max);
+    await expect(
+      f.consultar({ nome_arquivo: 'excedente', formato: 'csv', consulta: 'select 1' }),
+    ).rejects.toThrow(/limite de/);
+  });
+
+  it('registra a ação `artefato_consulta` com o SQL (trilha única, sem duplicar)', async () => {
+    const acoes: { ferramenta: string; args: unknown }[] = [];
+    const f = criarFerramentaArtefatos((ferramenta, args) => acoes.push({ ferramenta, args }), {
+      extrair: async () => linhasFake(1),
+    });
+    await f.consultar({ nome_arquivo: 'x', formato: 'csv', consulta: 'select 1 as id' });
+    expect(acoes).toHaveLength(1);
+    expect(acoes[0]!.ferramenta).toBe('artefato_consulta');
+    expect(acoes[0]!.args).toMatchObject({ formato: 'csv', sql: 'select 1 as id' });
   });
 });

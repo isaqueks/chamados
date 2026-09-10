@@ -160,6 +160,34 @@ export interface ArtefatoConfirmado {
   tamanho_bytes: number;
 }
 
+/** Formatos da extração por consulta (D-034): tabular, gerado pelo worker a partir do resultado do SELECT. */
+export type FormatoArtefatoConsulta = 'csv' | 'xlsx';
+
+/** Pedido do handle `artefato_consulta`: o modelo entrega o SELECT; o worker executa e materializa. */
+export interface PedidoArtefatoConsulta {
+  nome_arquivo: string;
+  formato: FormatoArtefatoConsulta;
+  /** SELECT/WITH read-only (mesma validação de `bd_consultar`), SEM LIMIT de paginação — o worker aplica o teto. */
+  consulta: string;
+  /** Título (nome da aba no XLSX). Opcional. */
+  titulo?: string;
+}
+
+/**
+ * Confirmação devolvida ao modelo: resumo do que foi gerado, NUNCA as linhas inteiras.
+ * Herda de `ArtefatoConfirmado` SEM o `formato` (`Omit`): `xlsx` não pertence a
+ * `FormatoArtefato` — o `artefato_gerar` continua com os formatos textuais.
+ */
+export interface ArtefatoConsultaConfirmado extends Omit<ArtefatoConfirmado, 'formato'> {
+  formato: FormatoArtefatoConsulta;
+  linhas: number;
+  colunas: string[];
+  /** Até 5 primeiras linhas, para o modelo descrever o material na resposta. */
+  amostra: Linha[];
+  /** `true` quando o resultado bateu no teto de linhas (IA_ARTEFATO_MAX_LINHAS) e foi cortado. */
+  truncado: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Ferramentas de ESCRITA (specs/05 §6) — presentes SÓ na tentativa de resolução
 // automática, quando o GATE do pipeline autorizou. Operam numa working copy
@@ -275,6 +303,12 @@ export interface AIProviderInput {
      * formato/nome/limite inválido (o modelo pode corrigir e tentar de novo).
      */
     artefato_gerar?(pedido: PedidoArtefato): Promise<ArtefatoConfirmado>;
+    /**
+     * EXTRAÇÃO POR CONSULTA (D-034): o modelo entrega só o SELECT e o worker
+     * executa a consulta e materializa o arquivo tabular (CSV/XLSX) direto do
+     * resultado — sem paginar nem redigitar linha por linha no contexto.
+     */
+    artefato_consulta?(pedido: PedidoArtefatoConsulta): Promise<ArtefatoConsultaConfirmado>;
   } & Partial<FerramentasEscrita>;
 
   limites: {

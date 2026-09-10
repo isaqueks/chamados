@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-09-10 — D-033 + D-034: incidente do mapeamento (turnos) e extração por consulta (Excel)
+
+- **Incidente (produção):** desde a troca para Opus 5 (D-031), 100% dos mapeamentos (20 seguidos) falhavam com "Reached maximum number of turns (40)" — e, como o commit do cliente mudara desde o último mapa bom, **cada triagem** re-disparava o mapeamento inline (≈3 min + uma execução de Opus 5 por chamado), com custo invisível (falhas gravavam custo `NULL`). Em paralelo, o chamado "CARTEIRA DE CLIENTES" (pedido de Excel) dava timeout de 10 min quatro vezes: o modelo paginava `bd_consultar` 14× e redigitava milhares de linhas no artefato.
+- **Mitigação imediata no servidor:** `IA_MAPA_MAX_TURNOS` 40 → 100 no `.env` de produção e reinício do worker com a fila ociosa (backup em `/root/env-prod-backup-2026-09-10.txt`).
+- **D-033 — mapeamento por commit:** uma tentativa automática por commit (consulta `ExecucaoIA` pelo `commit` do snapshot; sem migration); re-geração por commit divergente **enfileirada** (a triagem segue com o mapa anterior; só a primeira geração é inline); `enfileirarMapeamento` remove job encerrado com o mesmo `jobId` (destrava "Mapear agora" após falha); provider **conclui com o que tem** ao estourar turnos/timeout (retoma a sessão sem ferramentas, `maxTurns = 2`, 3 min); prompt do mapeamento anuncia o orçamento de turnos; `ErroProviderLimite` carrega **telemetria parcial** gravada nas falhas (triagem e mapeamento); novo `erro = 'max_turnos'`; default `IA_MAPA_MAX_TURNOS = 100`.
+- **D-034 — `artefato_consulta`:** o modelo entrega só o SELECT; o worker executa (read-only, `IA_ARTEFATO_MAX_LINHAS` = 10.000) e gera **`xlsx`** (gerador OOXML próprio, sem dependência) ou **`csv`** (BOM, `;` — `IA_CSV_SEPARADOR`) direto do resultado; devolve ao modelo só contagem/colunas/amostra/`truncado`. `bd_consultar` passa a se descrever como amostra de 100 linhas; o prompt proíbe paginar/redigitar. Responde "a IA gera relatórios em Excel?": sim, para extrações tabulares.
+- **Sincronização D-032:** o código de D-032 (04/09) rodava em produção sem estar no `origin/main`; trazido byte a byte do servidor (commit #34) antes deste pacote.
+- Specs 01/02/05, `docs/desenvolvimento.md`, `.env.example`, ADRs D-033/D-034. Testes novos no provider (conclusão/telemetria), no gerador XLSX, no CSV e na extração; `smoke:conhecimento` passa a provar a política por commit (commit novo → job enfileirado, triagem segue com o mapa anterior; "Mapear agora" gera o mapa do commit novo) e cria o fixture com `--initial-branch=main` (não dependia mais do `init.defaultBranch` da máquina).
+- **Fica para depois:** rebuild do web em produção (o `enfileirarMapeamento` do botão "Mapear agora" vive no bundle do Next; o worker já roda a versão nova via `tsx`).
+
 ## 2026-09-04 — D-032: abrir chamado pela API `/api/v1` e pelo MCP
 
 - **Pedido do usuário:** o MCP precisava **criar chamados**, não só ler/comentar/mudar status. D-028 tinha deixado a criação fora de escopo "até haver demanda" (specs/11 §8).

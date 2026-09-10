@@ -59,7 +59,9 @@ export const iaConfig = {
   mapa: {
     timeoutMs: num('IA_MAPA_TIMEOUT_MS', 600_000),
     budgetUsd: num('IA_MAPA_BUDGET_USD', 10),
-    maxTurnos: num('IA_MAPA_MAX_TURNOS', 40),
+    // D-033: 40 cabia para Opus 4.8; Opus 5 em esforço `high` explora mais e
+    // estourava o teto em 100% dos mapeamentos (20 falhas seguidas em produção).
+    maxTurnos: num('IA_MAPA_MAX_TURNOS', 100),
     maxChars: num('IA_MAPA_MAX_CHARS', 12_000),
   },
   /** Resolução automática (specs/05 §6): PR e link do chamado. */
