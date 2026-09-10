@@ -38,6 +38,32 @@ export interface Identidade {
   tenant: string;
 }
 
+/** Anexo baixado pela API (bytes + metadados dos headers). */
+export interface ArquivoBaixado {
+  corpo: Buffer;
+  contentType: string;
+  /** `null` quando a API não informou `Content-Disposition`. */
+  nomeArquivo: string | null;
+}
+
+/**
+ * Extrai o nome de arquivo de um `Content-Disposition`: prefere `filename*`
+ * (RFC 5987, UTF-8) e cai no `filename` ASCII. `null` se não houver.
+ */
+export function nomeDoContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1].trim());
+    } catch {
+      /* cai no ASCII */
+    }
+  }
+  const ascii = /filename="?([^";]+)"?/i.exec(header);
+  return ascii?.[1]?.trim() || null;
+}
+
 interface OpcoesRequisicao {
   metodo?: 'GET' | 'POST' | 'DELETE';
   query?: Record<string, string | undefined>;
@@ -106,6 +132,29 @@ export class ClienteChamados {
    * verdade — aí o erro sobe ao modelo.
    */
   async requisitar<T>(caminho: string, opts: OpcoesRequisicao = {}): Promise<T> {
+    const resp = await this.enviarComRenovacao(caminho, opts);
+    if (resp.status === 204) return undefined as T;
+    return (await resp.json()) as T;
+  }
+
+  /**
+   * Como `requisitar`, mas devolve os BYTES (anexos — specs/11 §4.7). O nome do
+   * arquivo vem do `Content-Disposition` que a API monta; o tipo é o pinado no
+   * upload. Erros continuam chegando como `ErroApi` (a API responde JSON neles).
+   */
+  async requisitarBytes(caminho: string): Promise<ArquivoBaixado> {
+    const resp = await this.enviarComRenovacao(caminho, {});
+    const corpo = Buffer.from(await resp.arrayBuffer());
+    return {
+      corpo,
+      contentType: (resp.headers.get('content-type') ?? 'application/octet-stream')
+        .split(';')[0]!
+        .trim(),
+      nomeArquivo: nomeDoContentDisposition(resp.headers.get('content-disposition')),
+    };
+  }
+
+  private async enviarComRenovacao(caminho: string, opts: OpcoesRequisicao): Promise<Response> {
     if (!this.token) await this.autenticar();
 
     let resp = await this.enviar(caminho, opts);
@@ -114,13 +163,11 @@ export class ClienteChamados {
       await this.autenticar();
       resp = await this.enviar(caminho, opts);
     }
-
-    if (resp.status === 204) return undefined as T;
     if (!resp.ok) {
       const { codigo, erro } = await lerErro(resp);
       throw new ErroApi(resp.status, codigo, erro);
     }
-    return (await resp.json()) as T;
+    return resp;
   }
 
   private enviar(caminho: string, opts: OpcoesRequisicao): Promise<Response> {

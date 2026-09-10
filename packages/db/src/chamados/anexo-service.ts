@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { IsNull } from 'typeorm';
-import type { EntityManager } from 'typeorm';
+import { In, IsNull } from 'typeorm';
+import type { EntityManager, FindOptionsWhere } from 'typeorm';
 import { autorizar, VisibilidadeMensagem, type Papel } from '@chamados/shared';
 import { enviarObjeto, chaveAnexo } from '@chamados/storage';
 import { AnexoSchema, type Anexo } from '../entities/anexo';
@@ -150,6 +150,45 @@ export async function listarAnexosDaMensagem(
     where: { mensagem_id: mensagemId, inline: false, deleted_at: IsNull() },
     order: { created_at: 'ASC' },
   });
+}
+
+/** Metadados de um anexo para apresentação (sem `storage_key`). */
+export interface AnexoResumo {
+  id: string;
+  mensagem_id: string | null;
+  nome_arquivo: string;
+  content_type: string;
+  tamanho_bytes: number;
+  inline: boolean;
+  created_at: Date;
+}
+
+/**
+ * Anexos VISÍVEIS de um chamado (specs/11 §4.2): os da descrição (`chamado_id`
+ * sem mensagem) e os das mensagens cujos ids o chamador informa — que já saíram
+ * de `listarMensagens` filtradas pelo papel. A fronteira de visibilidade é
+ * herdada por construção: anexo de nota interna só entra se a nota entrou. Inclui
+ * as imagens inline (`inline = true`), que a projeção de texto puro omite.
+ */
+export async function listarAnexosVisiveis(
+  em: EntityManager,
+  chamadoId: string,
+  mensagemIds: string[],
+): Promise<AnexoResumo[]> {
+  const where: FindOptionsWhere<Anexo>[] = [
+    { chamado_id: chamadoId, mensagem_id: IsNull(), deleted_at: IsNull() },
+  ];
+  if (mensagemIds.length > 0) where.push({ mensagem_id: In(mensagemIds), deleted_at: IsNull() });
+  const linhas = await em.find(AnexoSchema, { where, order: { created_at: 'ASC' } });
+  return linhas.map((a) => ({
+    id: a.id,
+    mensagem_id: a.mensagem_id,
+    nome_arquivo: a.nome_arquivo,
+    content_type: a.content_type,
+    tamanho_bytes: Number(a.tamanho_bytes),
+    inline: a.inline,
+    created_at: a.created_at,
+  }));
 }
 
 export type { MotivoArquivo };

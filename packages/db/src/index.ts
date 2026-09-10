@@ -138,6 +138,7 @@ export {
   type MotivoRichText,
 } from './chamados/rich-text';
 export { markdownParaDoc } from './chamados/markdown';
+export { docParaMarkdown, type OpcoesMarkdown } from './chamados/markdown-saida';
 export {
   detectarTipo,
   detectarImagemInline,
@@ -161,6 +162,8 @@ export {
   gravarAnexo,
   autorizarDownloadAnexo,
   listarAnexosDaMensagem,
+  listarAnexosVisiveis,
+  type AnexoResumo,
   type AtorAnexo,
   type ArquivoUpload,
   type AlvoAnexo,

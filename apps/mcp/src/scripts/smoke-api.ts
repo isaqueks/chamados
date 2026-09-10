@@ -14,7 +14,13 @@
  * 10. logout revoga o token (401 depois);
  * 11. criação de chamado (D-032): operador precisa de solicitante, cliente abre
  *     para si (e não pode indicar solicitante), enum inválido é 400, o registro
- *     vale no banco e `GET /sistemas-alvo` informa se o alvo é obrigatório.
+ *     vale no banco e `GET /sistemas-alvo` informa se o alvo é obrigatório;
+ * 12. anexos e formato (D-035): o detalhe lista imagens inline e arquivos por
+ *     mensagem, `formato=markdown|html` preserva as imagens apontando para a
+ *     rota Bearer, `GET /anexos/{id}` entrega os bytes com o tipo pinado e a
+ *     fronteira vale (cliente não baixa anexo de nota interna nem de outro).
+ *
+ * Requer também o MinIO de pé (os anexos vão para o storage).
  *
  * PRÉ-REQUISITOS: Postgres de pé (`docker compose up -d`), migrations aplicadas e
  * a aplicação web servindo (`npm run dev:web`). A URL vem de `SMOKE_API_URL`
@@ -516,6 +522,172 @@ async function main(): Promise<void> {
       'GET /sistemas-alvo responde e informa que o alvo NÃO é obrigatório (tenant sem sistemas)',
     );
 
+    // --- 12) Anexos e formato (specs/11 §4.2/§4.7, D-035) ------------------
+    const PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const { chamadoImgId, notaAnexoId } = await runInTenantContext(ds, tenantId, async (em) => {
+      const cli = (await em.query('SELECT id FROM usuario WHERE email = $1', [clienteEmail]))[0]
+        .id as string;
+      const op = (await em.query('SELECT id FROM usuario WHERE email = $1', [operadorEmail]))[0]
+        .id as string;
+      const atorCli = { id: cli, tenant_id: tenantId, papel: Papel.cliente };
+      const atorOp = { id: op, tenant_id: tenantId, papel: Papel.operador };
+      const criado = await criarChamado(em, atorCli, {
+        titulo: 'Tela de erro com print',
+        natureza: Natureza.problema,
+        descricao: {
+          type: 'doc',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'Aparece ' },
+                { type: 'text', text: 'isto', marks: [{ type: 'bold' }] },
+                { type: 'text', text: ': ' },
+                {
+                  type: 'image',
+                  attrs: { src: `data:image/png;base64,${PNG.toString('base64')}`, alt: 'print' },
+                },
+              ],
+            },
+          ],
+        },
+      });
+      if (!criado.ok) throw new Error(`criarChamado (imagem) falhou: ${criado.motivo}`);
+      const publica = await criarMensagem(em, atorCli, {
+        chamado_id: criado.id,
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: 'Segue o print em anexo.',
+        anexos: [{ nome_arquivo: 'print.png', buffer: PNG }],
+      });
+      if (!publica.ok) throw new Error(`mensagem com anexo falhou: ${publica.motivo}`);
+      const nota = await criarMensagem(em, atorOp, {
+        chamado_id: criado.id,
+        visibilidade: VisibilidadeMensagem.interna,
+        corpo: 'Evidencia interna.',
+        anexos: [{ nome_arquivo: 'interno.png', buffer: PNG }],
+      });
+      if (!nota.ok) throw new Error(`nota com anexo falhou: ${nota.motivo}`);
+      const linhas: Array<{ id: string }> = await em.query(
+        'SELECT id FROM anexo WHERE mensagem_id = $1',
+        [nota.id],
+      );
+      return { chamadoImgId: criado.id, notaAnexoId: linhas[0]!.id };
+    });
+
+    type Anx = {
+      id: string;
+      inline: boolean;
+      nome_arquivo: string;
+      content_type: string;
+      url: string;
+    };
+    type Det = {
+      chamado: { descricao: string; formato: string; anexos: Anx[] };
+      mensagens: Array<{ visibilidade?: string; corpo: string; anexos: Anx[] }>;
+    };
+    const detImg = await chamar<Det>(slug, `/api/v1/chamados/${chamadoImgId}`, { token: tokenOp });
+    ok(
+      detImg.status === 200 && detImg.corpo.chamado.formato === 'texto',
+      'detalhe default é formato texto',
+    );
+    ok(
+      detImg.corpo.chamado.anexos.length === 1 && detImg.corpo.chamado.anexos[0]!.inline === true,
+      'imagem colada na descrição aparece em chamado.anexos com inline=true',
+    );
+    ok(!detImg.corpo.chamado.descricao.includes('<'), 'texto continua sem HTML');
+    const msgPub = detImg.corpo.mensagens.find((m) => m.visibilidade === 'publica');
+    ok(
+      msgPub?.anexos.length === 1 &&
+        msgPub.anexos[0]!.nome_arquivo === 'print.png' &&
+        !msgPub.anexos[0]!.inline,
+      'anexo da mensagem pública aparece em mensagens[].anexos',
+    );
+    ok(
+      detImg.corpo.mensagens.some(
+        (m) => m.visibilidade === 'interna' && m.anexos.some((a) => a.id === notaAnexoId),
+      ),
+      'operador vê o anexo da nota interna',
+    );
+    const inlineId = detImg.corpo.chamado.anexos[0]!.id;
+    ok(
+      detImg.corpo.chamado.anexos[0]!.url === `/api/v1/anexos/${inlineId}`,
+      'anexo traz a url Bearer',
+    );
+
+    const detMd = await chamar<Det>(slug, `/api/v1/chamados/${chamadoImgId}?formato=markdown`, {
+      token: tokenOp,
+    });
+    ok(
+      detMd.corpo.chamado.formato === 'markdown' &&
+        detMd.corpo.chamado.descricao.includes('**isto**') &&
+        detMd.corpo.chamado.descricao.includes(`![print](/api/v1/anexos/${inlineId})`),
+      'formato=markdown preserva ênfase e a imagem no lugar, apontando para a rota Bearer',
+    );
+    const detHtml = await chamar<Det>(slug, `/api/v1/chamados/${chamadoImgId}?formato=html`, {
+      token: tokenOp,
+    });
+    ok(
+      detHtml.corpo.chamado.descricao.includes(`<img src="/api/v1/anexos/${inlineId}"`),
+      'formato=html reescreve a src da imagem para a rota Bearer',
+    );
+    const fmtRuim = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${chamadoImgId}?formato=xml`,
+      { token: tokenOp },
+    );
+    ok(
+      fmtRuim.status === 400 && fmtRuim.corpo.codigo === 'parametro_invalido',
+      'formato inválido → 400',
+    );
+
+    const detCliImg = await chamar<Det>(slug, `/api/v1/chamados/${chamadoImgId}`, {
+      token: tokenCli,
+    });
+    ok(
+      detCliImg.corpo.mensagens.every((m) => m.anexos.every((a) => a.id !== notaAnexoId)),
+      'cliente NÃO vê o anexo da nota interna',
+    );
+
+    const bytes = await fetch(`${BASE}/api/v1/anexos/${inlineId}`, {
+      headers: { 'x-tenant-slug': slug, authorization: `Bearer ${tokenOp}` },
+    });
+    const corpoBytes = Buffer.from(await bytes.arrayBuffer());
+    ok(
+      bytes.status === 200 &&
+        bytes.headers.get('content-type') === 'image/png' &&
+        corpoBytes.equals(PNG),
+      'GET /anexos/{id} entrega os bytes com o content-type pinado',
+    );
+    ok(
+      (bytes.headers.get('content-disposition') ?? '').startsWith('inline;') &&
+        bytes.headers.get('x-content-type-options') === 'nosniff',
+      'cabeçalhos seguros (disposition + nosniff)',
+    );
+    const bytesCli = await fetch(`${BASE}/api/v1/anexos/${inlineId}`, {
+      headers: { 'x-tenant-slug': slug, authorization: `Bearer ${tokenCli}` },
+    });
+    ok(bytesCli.status === 200, 'cliente baixa anexo do próprio chamado');
+    const internoCli = await chamar<{ codigo: string }>(slug, `/api/v1/anexos/${notaAnexoId}`, {
+      token: tokenCli,
+    });
+    ok(
+      internoCli.status === 404 && internoCli.corpo.codigo === 'anexo_inexistente',
+      'cliente NÃO baixa anexo de nota interna (404, sem vazar existência)',
+    );
+    const rLoginOutro = await chamar<{ token: string }>(slug, '/api/v1/sessao', {
+      metodo: 'POST',
+      corpo: { email: `out.${sufixo}@smoke.dev`, senha: SENHA },
+    });
+    const outroBaixa = await chamar(slug, `/api/v1/anexos/${inlineId}`, {
+      token: rLoginOutro.corpo.token,
+    });
+    ok(outroBaixa.status === 404, 'outro cliente NÃO baixa anexo de chamado alheio (404)');
+    const semAuth = await chamar(slug, `/api/v1/anexos/${inlineId}`);
+    ok(semAuth.status === 401, 'anexo sem Bearer → 401');
+
     // --- 9) Cliente MCP sobre a mesma API ----------------------------------
     const mcp = new ClienteChamados({
       baseUrl: BASE,
@@ -529,6 +701,11 @@ async function main(): Promise<void> {
     });
     ok(viaMcp.itens.length === 1, 'ClienteChamados (MCP) lista pela API real');
     ok(mcp.quemSou()?.papel === 'operador', 'ClienteChamados expõe a identidade autenticada');
+    const viaMcpBytes = await mcp.requisitarBytes(`/api/v1/anexos/${inlineId}`);
+    ok(
+      viaMcpBytes.corpo.equals(PNG) && viaMcpBytes.contentType === 'image/png',
+      'ClienteChamados.requisitarBytes baixa o anexo pela API real',
+    );
 
     // --- 10) Logout revoga -------------------------------------------------
     const saida = await chamar(slug, '/api/v1/sessao', { metodo: 'DELETE', token: tokenOp });
@@ -542,6 +719,7 @@ async function main(): Promise<void> {
     await admin.initialize();
     try {
       if (tenantId) {
+        await admin.query(`DELETE FROM "anexo" WHERE tenant_id = $1`, [tenantId]);
         await admin.query(`DELETE FROM "chamado" WHERE tenant_id = $1`, [tenantId]);
         await admin.query(`DELETE FROM "tenant_contador" WHERE tenant_id = $1`, [tenantId]);
         await admin.query(`DELETE FROM "categoria" WHERE tenant_id = $1`, [tenantId]);

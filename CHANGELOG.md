@@ -2,6 +2,15 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-09-10 — D-035: anexos (imagens incluídas) e formato rico na API `/api/v1` e no MCP
+
+- **Pedido do usuário:** o MCP deve retornar os anexos do chamado, imagens incluídas, podendo vir "em formato rich". Antes a API era só texto puro e as imagens coladas eram omitidas.
+- **Detalhe lista anexos**: `chamado.anexos` (descrição) e `mensagens[].anexos`, com id/nome/tipo/tamanho/`inline`/`url`. Imagens inline entram. A lista nasce dos ids das mensagens que o papel já recebeu — anexo de nota interna nunca chega ao cliente, por construção.
+- **`?formato=texto|markdown|html`** no `GET /chamados/{ref}`: `texto` segue default; `markdown` vem do doc fonte (`docParaMarkdown`, novo em `@chamados/db`), com imagens no lugar como `![alt](/api/v1/anexos/id)`; `html` é o sanitizado com `src` reescrita.
+- **`GET /api/v1/anexos/{id}`** por Bearer: mesma autorização da UI, bytes pela aplicação (não redirect), `Content-Type` pinado, `Content-Disposition` seguro (helper compartilhado em `lib/anexos.ts`), `nosniff`, `no-store`. Negação = `404 anexo_inexistente`.
+- **MCP 0.3.0**: `anexo_obter` (imagem ≤ 5 MB volta inline como `image`; texto inline truncado em 100k; PDF/planilha/zip ou imagem maior gravados em `salvar_em` ou diretório temporário, nome = basename sanitizado + prefixo do id) e `formato` em `chamado_obter`.
+- ADR D-035; specs/11 e /09 atualizadas; `docs/desenvolvimento.md` §3.11; 15 testes unitários novos + seção 12 do `smoke:api` (16 asserts: listagem, formatos, bytes, cabeçalhos, fronteira cliente × nota interna × outro cliente). Sem migration.
+
 ## 2026-09-10 — D-033 + D-034: incidente do mapeamento (turnos) e extração por consulta (Excel)
 
 - **Incidente (produção):** desde a troca para Opus 5 (D-031), 100% dos mapeamentos (20 seguidos) falhavam com "Reached maximum number of turns (40)" — e, como o commit do cliente mudara desde o último mapa bom, **cada triagem** re-disparava o mapeamento inline (≈3 min + uma execução de Opus 5 por chamado), com custo invisível (falhas gravavam custo `NULL`). Em paralelo, o chamado "CARTEIRA DE CLIENTES" (pedido de Excel) dava timeout de 10 min quatro vezes: o modelo paginava `bd_consultar` 14× e redigitava milhares de linhas no artefato.

@@ -42,6 +42,7 @@ export type CodigoErro =
   | 'sem_permissao'
   | 'tenant_desconhecido'
   | 'chamado_inexistente'
+  | 'anexo_inexistente'
   | 'estado_terminal'
   | 'transicao_invalida'
   | 'sistema_alvo_obrigatorio'

@@ -341,16 +341,17 @@ opaco de sessão do cookie (server-side, revogável). Todas as demais rotas exig
 `Authorization: Bearer <token>`; o **cookie do navegador não autentica a API**
 (Bearer-only, anti-CSRF — specs/11 §1.4).
 
-| Método   | Rota                               | O que faz                                     |
-| -------- | ---------------------------------- | --------------------------------------------- |
-| `POST`   | `/api/v1/sessao`                   | login → token (rate-limited como a tela)      |
-| `DELETE` | `/api/v1/sessao`                   | revoga a sessão                               |
-| `GET`    | `/api/v1/chamados`                 | lista/filtra (status, natureza, prioridade…)  |
-| `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline (`{ref}` = número ou UUID) |
-| `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`       |
-| `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                          |
-| `POST`   | `/api/v1/chamados`                 | abre um chamado (D-032; markdown, sem anexos) |
-| `GET`    | `/api/v1/sistemas-alvo`            | sistemas-alvo ativos (p/ escolher o alvo)     |
+| Método   | Rota                               | O que faz                                                     |
+| -------- | ---------------------------------- | ------------------------------------------------------------- |
+| `POST`   | `/api/v1/sessao`                   | login → token (rate-limited como a tela)                      |
+| `DELETE` | `/api/v1/sessao`                   | revoga a sessão                                               |
+| `GET`    | `/api/v1/chamados`                 | lista/filtra (status, natureza, prioridade…)                  |
+| `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline + anexos; `?formato=texto\|markdown\|html` |
+| `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`                       |
+| `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                                          |
+| `POST`   | `/api/v1/chamados`                 | abre um chamado (D-032; markdown, sem anexos)                 |
+| `GET`    | `/api/v1/sistemas-alvo`            | sistemas-alvo ativos (p/ escolher o alvo)                     |
+| `GET`    | `/api/v1/anexos/{id}`              | bytes de um anexo (imagem/arquivo) — D-035                    |
 
 O escopo é sempre o do **papel do usuário autenticado**: operador/admin leem
 notas internas e complexidade; cliente vê só os próprios chamados e só mensagens
@@ -383,9 +384,12 @@ mesma RLS.
 | `CHAMADOS_TENANT`              | não         | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`)  |
 | `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas as ferramentas de leitura                           |
 
-Ferramentas expostas: `chamados_listar`, `chamado_obter`, `sistemas_alvo_listar`
-(leitura), `chamado_publicar_mensagem`, `chamado_alterar_status`, `chamado_criar`
-(escrita). Com usuário operador/admin, `chamado_criar` exige o **e-mail do
+Ferramentas expostas: `chamados_listar`, `chamado_obter`, `sistemas_alvo_listar`,
+`anexo_obter` (leitura), `chamado_publicar_mensagem`, `chamado_alterar_status`,
+`chamado_criar` (escrita). `chamado_obter` lista os anexos (imagens coladas
+incluídas) e aceita `formato` (`texto` default, `markdown`, `html`); `anexo_obter`
+devolve imagem inline (o modelo vê o print), texto inline, e grava PDF/planilha/zip
+em disco (`salvar_em` ou temporário) devolvendo o caminho. Com usuário operador/admin, `chamado_criar` exige o **e-mail do
 cliente solicitante** (o chamado é aberto em nome dele); com usuário cliente,
 abre para ele mesmo. O login é
 preguiçoso (só na primeira ferramenta usada) e a sessão se renova sozinha ao
@@ -393,15 +397,15 @@ expirar. Erros da API voltam ao modelo com o código estável do contrato (ex.:
 `transicao_invalida`), que ele pode corrigir sozinho.
 
 Para validar a API + o cliente MCP de ponta a ponta (login, Bearer-only,
-filtros, fronteira cliente × nota interna, publicação, transição e criação):
+filtros, fronteira cliente × nota interna, publicação, transição, criação e anexos):
 
 ```bash
 npm run dev:web        # em outro terminal (a aplicação precisa estar no ar)
 npm run smoke:api
 ```
 
-Requer Postgres de pé e migrations aplicadas; cria um tenant descartável e o
-remove ao final. Deve terminar com `RESULTADO: PASSOU`.
+Requer Postgres e MinIO de pé e migrations aplicadas; cria um tenant descartável
+e o remove ao final. Deve terminar com `RESULTADO: PASSOU`.
 
 ---
 

@@ -6,8 +6,8 @@ import {
   type Complexidade,
   type VisibilidadeMensagem,
 } from '@chamados/shared';
-import type { ChamadoView, FiltrosChamado, MensagemTimeline } from '@chamados/db';
-import { htmlParaTexto } from '@chamados/db';
+import type { AnexoResumo, ChamadoView, FiltrosChamado, MensagemTimeline } from '@chamados/db';
+import { htmlParaTexto, docParaMarkdown, PREFIXO_REF_ANEXO } from '@chamados/db';
 
 /**
  * Parsing de filtros e PROJEÇÕES da API `/api/v1/chamados` (specs/11 §4).
@@ -218,13 +218,95 @@ export function projetarItemLista(c: ChamadoView, nomes: Nomes): Record<string, 
   };
 }
 
-/** Detalhe do chamado: como o item, mais a descrição em TEXTO puro (specs/11 §4.2). */
-export function projetarDetalhe(c: ChamadoView, nomes: Nomes): Record<string, unknown> {
+// ---------------------------------------------------------------------------
+// Formato do corpo e anexos (specs/11 §1.5, §4.2 — D-035)
+// ---------------------------------------------------------------------------
+
+/** Formatos de saída do corpo (descrição e mensagens). `texto` é o default. */
+export const FORMATOS_CORPO = ['texto', 'markdown', 'html'] as const;
+export type FormatoCorpo = (typeof FORMATOS_CORPO)[number];
+
+/** Prefixo da rota de anexos DESTA API (Bearer), no lugar do `/api/anexos/` do cookie. */
+export const PREFIXO_ANEXO_API = '/api/v1/anexos/';
+
+export function parsearFormato(valor: string | null): FormatoCorpo | null {
+  if (valor === null || valor.trim() === '') return 'texto';
+  const v = valor.trim();
+  return (FORMATOS_CORPO as readonly string[]).includes(v) ? (v as FormatoCorpo) : null;
+}
+
+/** `/api/anexos/<id>` → `/api/v1/anexos/<id>` (a rota que o cliente da API consegue seguir). */
+export function urlAnexoApi(src: string): string {
+  return src.startsWith(PREFIXO_REF_ANEXO)
+    ? `${PREFIXO_ANEXO_API}${src.slice(PREFIXO_REF_ANEXO.length)}`
+    : src;
+}
+
+/**
+ * Projeta um corpo rich text no formato pedido. `texto` é a projeção plana de
+ * sempre (imagens omitidas — elas aparecem em `anexos`); `markdown` vem do doc
+ * fonte; `html` é o HTML já sanitizado na escrita, só com as `src` reescritas
+ * para a rota Bearer.
+ */
+export function projetarCorpo(formato: FormatoCorpo, html: string, doc: unknown): string {
+  switch (formato) {
+    case 'texto':
+      return htmlParaTexto(html);
+    case 'markdown':
+      return docParaMarkdown(doc, { urlImagem: urlAnexoApi });
+    case 'html':
+      return html.replaceAll(`src="${PREFIXO_REF_ANEXO}`, `src="${PREFIXO_ANEXO_API}`);
+  }
+}
+
+/** Metadados públicos de um anexo + a URL Bearer para baixá-lo. */
+export function projetarAnexo(a: AnexoResumo): Record<string, unknown> {
+  return {
+    id: a.id,
+    nome_arquivo: a.nome_arquivo,
+    content_type: a.content_type,
+    tamanho_bytes: a.tamanho_bytes,
+    inline: a.inline,
+    url: `${PREFIXO_ANEXO_API}${a.id}`,
+  };
+}
+
+/** Separa os anexos da DESCRIÇÃO dos anexos por mensagem (mapa por `mensagem_id`). */
+export function agruparAnexos(anexos: AnexoResumo[]): {
+  descricao: AnexoResumo[];
+  porMensagem: Map<string, AnexoResumo[]>;
+} {
+  const descricao: AnexoResumo[] = [];
+  const porMensagem = new Map<string, AnexoResumo[]>();
+  for (const a of anexos) {
+    if (!a.mensagem_id) {
+      descricao.push(a);
+      continue;
+    }
+    const lista = porMensagem.get(a.mensagem_id) ?? [];
+    lista.push(a);
+    porMensagem.set(a.mensagem_id, lista);
+  }
+  return { descricao, porMensagem };
+}
+
+/**
+ * Detalhe do chamado: como o item, mais a descrição no formato pedido (specs/11
+ * §4.2) e os anexos da descrição (imagens inline incluídas).
+ */
+export function projetarDetalhe(
+  c: ChamadoView,
+  nomes: Nomes,
+  opts: { formato?: FormatoCorpo; anexos?: AnexoResumo[] } = {},
+): Record<string, unknown> {
   const complexidade = complexidadeDe(c);
   const iaSilenciada = 'ia_silenciada' in c ? c.ia_silenciada : undefined;
+  const formato = opts.formato ?? 'texto';
   return {
     ...projetarItemLista(c, nomes),
-    descricao: htmlParaTexto(c.descricao_html),
+    descricao: projetarCorpo(formato, c.descricao_html, c.descricao_json),
+    formato,
+    anexos: (opts.anexos ?? []).map(projetarAnexo),
     ...(iaSilenciada !== undefined ? { ia_silenciada: iaSilenciada } : {}),
     resolvido_em: iso(c.resolvido_em),
     fechar_automaticamente_em: iso(c.fechar_automaticamente_em),
@@ -242,7 +324,9 @@ export function projetarDetalhe(c: ChamadoView, nomes: Nomes): Record<string, un
 export function projetarMensagens(
   mensagens: MensagemTimeline[],
   nomes: Nomes,
+  opts: { formato?: FormatoCorpo; anexosPorMensagem?: Map<string, AnexoResumo[]> } = {},
 ): Array<Record<string, unknown>> {
+  const formato = opts.formato ?? 'texto';
   return mensagens.map((m) => {
     const autor = nomes.usuarios.get(m.autor_id);
     const visibilidade: VisibilidadeMensagem | undefined =
@@ -252,7 +336,8 @@ export function projetarMensagens(
       autor_nome: autor?.nome ?? null,
       autor_papel: autor?.papel ?? null,
       ...(visibilidade !== undefined ? { visibilidade } : {}),
-      corpo: htmlParaTexto(m.corpo_html),
+      corpo: projetarCorpo(formato, m.corpo_html, m.corpo_json),
+      anexos: (opts.anexosPorMensagem?.get(m.id) ?? []).map(projetarAnexo),
       created_at: iso(m.created_at),
     };
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ClienteChamados, ErroApi, type FetchImpl } from './cliente';
+import { ClienteChamados, ErroApi, nomeDoContentDisposition, type FetchImpl } from './cliente';
 import type { ConfigMcp } from './config';
 
 /**
@@ -187,5 +187,44 @@ describe('ClienteChamados', () => {
     await expect(
       cliente.requisitar('/api/v1/sessao', { metodo: 'DELETE' }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('requisitarBytes / nomeDoContentDisposition', () => {
+  it('devolve os bytes, o tipo pinado e o nome UTF-8 do Content-Disposition', async () => {
+    const { impl } = fakeFetch((c) =>
+      c.url.endsWith('/api/v1/sessao')
+        ? json(SESSAO_OK)
+        : new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: {
+              'content-type': 'image/png',
+              'content-disposition': `inline; filename="tela.png"; filename*=UTF-8''tela%20%C3%A9.png`,
+            },
+          }),
+    );
+    const cliente = new ClienteChamados(CFG, impl);
+    const r = await cliente.requisitarBytes('/api/v1/anexos/abc');
+    expect([...r.corpo]).toEqual([1, 2, 3]);
+    expect(r.contentType).toBe('image/png');
+    expect(r.nomeArquivo).toBe('tela é.png');
+  });
+
+  it('erro da API em bytes vira ErroApi com o código', async () => {
+    const { impl } = fakeFetch((c) =>
+      c.url.endsWith('/api/v1/sessao')
+        ? json(SESSAO_OK)
+        : json({ erro: 'Anexo não encontrado.', codigo: 'anexo_inexistente' }, 404),
+    );
+    const cliente = new ClienteChamados(CFG, impl);
+    await expect(cliente.requisitarBytes('/api/v1/anexos/x')).rejects.toMatchObject({
+      codigo: 'anexo_inexistente',
+      status: 404,
+    });
+  });
+
+  it('nomeDoContentDisposition cai no filename ASCII e tolera ausência', () => {
+    expect(nomeDoContentDisposition('attachment; filename="a.pdf"')).toBe('a.pdf');
+    expect(nomeDoContentDisposition(null)).toBeNull();
   });
 });

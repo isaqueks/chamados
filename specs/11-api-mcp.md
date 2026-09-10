@@ -1,6 +1,6 @@
 # 11 — API HTTP e servidor MCP
 
-Este documento especifica a **API HTTP** da plataforma **Chamados** (`/api/v1`) e o **servidor MCP** que a consome, permitindo que um assistente (Claude Code, Claude Desktop ou qualquer cliente MCP) leia chamados, leia a timeline — mensagens públicas **e** notas internas, conforme o papel —, publique mensagens, mude o status e **abra chamados** (D-032).
+Este documento especifica a **API HTTP** da plataforma **Chamados** (`/api/v1`) e o **servidor MCP** que a consome, permitindo que um assistente (Claude Code, Claude Desktop ou qualquer cliente MCP) leia chamados, leia a timeline — mensagens públicas **e** notas internas, conforme o papel —, publique mensagens, mude o status, **abra chamados** (D-032) e **acesse os anexos** — imagens e arquivos — do chamado (D-035).
 
 Escopo relacionado, não duplicado aqui:
 
@@ -10,7 +10,7 @@ Escopo relacionado, não duplicado aqui:
 - Ameaças, hardening e LGPD: `09-seguranca-lgpd.md`.
 - O `agente_ia` e suas ferramentas MCP **internas** (worker): `05-agente-ia.md` — nada a ver com este documento (lá o MCP é consumido pelo worker; aqui é oferecido a um cliente externo).
 
-Decisões de origem: **D-028** (API + MCP) e **D-032** (criação de chamado pela API/MCP) em `specs/decisoes.md`.
+Decisões de origem: **D-028** (API + MCP), **D-032** (criação de chamado) e **D-035** (anexos e formato rico) em `specs/decisoes.md`.
 
 ---
 
@@ -20,7 +20,7 @@ Decisões de origem: **D-028** (API + MCP) e **D-032** (criação de chamado pel
 2. **Só login e senha.** Nenhuma credencial nova, nenhum token de API paralelo, nenhum segredo adicional para gerir. A API autentica com e-mail + senha do próprio usuário e devolve uma **sessão server-side** (`Sessao`, specs/02) — a mesma entidade revogável do cookie, apenas transportada em header.
 3. **Leitura primeiro.** A superfície de escrita é deliberadamente pequena: publicar mensagem, mudar status e **abrir chamado** (D-032 — o mesmo formulário mínimo do portal, specs/04 §2). Nada de gerenciar usuários, mexer em branding, sistemas-alvo ou guardrails da IA por esta API.
 4. **Sem CSRF por construção.** A API aceita **apenas** `Authorization: Bearer`; o cookie de sessão do navegador **não** autentica `/api/v1`. Um site malicioso não consegue agir em nome do usuário logado no portal, porque o navegador não anexa o header sozinho.
-5. **Formato pensado para LLM.** Respostas em JSON compacto com o corpo das mensagens em **texto puro** (projeção do HTML sanitizado), não HTML — menos tokens, menos ruído, nenhuma tag para o modelo interpretar.
+5. **Formato pensado para LLM.** Respostas em JSON compacto com o corpo das mensagens em **texto puro** por default (projeção do HTML sanitizado) — menos tokens, menos ruído, nenhuma tag para o modelo interpretar. Quando a estrutura ou as imagens importam, o consumidor pede `?formato=markdown` (gerado do documento fonte, imagens como `![alt](url)` no lugar em que o autor as colou) ou `?formato=html` (o HTML já sanitizado na escrita). Os **anexos** são sempre listados com metadados e baixados por rota própria (§4.7) — nunca embutidos em base64 no JSON.
 
 ---
 
@@ -76,6 +76,7 @@ Host que não resolve tenant → `404` com código `tenant_desconhecido`, sem re
 | `POST`   | `/api/v1/chamados/{ref}/status`    | todos (escopo abaixo) | Transiciona o status                         |
 | `POST`   | `/api/v1/chamados`                 | todos (escopo abaixo) | Abre um chamado (D-032)                      |
 | `GET`    | `/api/v1/sistemas-alvo`            | todos                 | Sistemas-alvo ativos (id, nome, descrição)   |
+| `GET`    | `/api/v1/anexos/{id}`              | todos (escopo abaixo) | Bytes de um anexo (imagem/arquivo) — D-035   |
 
 `{ref}` aceita o **UUID** ou o **número** do chamado (`12` ou `#12`) — o número é como a equipe se refere ao chamado no dia a dia. A resolução por número é escopada ao tenant pela RLS (`UNIQUE (tenant_id, numero)`).
 
@@ -89,7 +90,9 @@ Resposta: `{ "itens": [...], "proximo_cursor": "…" | null }`. Cada item é uma
 
 ### 4.2 `GET /api/v1/chamados/{ref}`
 
-Resposta: o chamado (incluindo `descricao` já em texto puro) + `mensagens`, em ordem cronológica:
+Query param opcional `formato` = `texto` (default) | `markdown` | `html` (§1.5). Valor fora disso → `400 parametro_invalido`.
+
+Resposta: o chamado (com `descricao` no formato pedido e os **anexos da descrição**) + `mensagens`, em ordem cronológica, cada uma com os **seus anexos**:
 
 ```json
 {
@@ -103,6 +106,17 @@ Resposta: o chamado (incluindo `descricao` já em texto puro) + `mensagens`, em 
     "complexidade": "facil",
     "ia_silenciada": false,
     "descricao": "…",
+    "formato": "texto",
+    "anexos": [
+      {
+        "id": "…",
+        "nome_arquivo": "imagem-colada.png",
+        "content_type": "image/png",
+        "tamanho_bytes": 48211,
+        "inline": true,
+        "url": "/api/v1/anexos/…"
+      }
+    ],
     "solicitante_nome": "…",
     "operador_nome": "…",
     "sistema_nome": "…",
@@ -116,13 +130,26 @@ Resposta: o chamado (incluindo `descricao` já em texto puro) + `mensagens`, em 
       "autor_papel": "cliente",
       "visibilidade": "publica",
       "corpo": "…",
+      "anexos": [
+        {
+          "id": "…",
+          "nome_arquivo": "erro.log",
+          "content_type": "text/plain",
+          "tamanho_bytes": 1024,
+          "inline": false,
+          "url": "/api/v1/anexos/…"
+        }
+      ],
       "created_at": "…"
     }
   ]
 }
 ```
 
-`complexidade`, `ia_silenciada` e as mensagens `interna` **só existem na resposta para operador/admin** — para o `cliente` a query nem as traz (filtro no repositório, `listarMensagens`) e o serializer as remove (specs/03 §7). Chamado inexistente **ou** fora do escopo do papel → `404` idêntico (não vaza existência).
+- **`anexos`** (D-035) inclui tanto arquivos anexados à parte (`inline: false`) quanto imagens coladas no rich text (`inline: true`). Em `texto` a imagem some do corpo (como sempre) mas continua listada; em `markdown`/`html` ela aparece no lugar em que foi colada, com a `src` reescrita para `/api/v1/anexos/{id}` — a rota que um cliente da API consegue seguir com o mesmo Bearer (a `/api/anexos/` da UI autentica por cookie).
+- A lista vem de `listarAnexosVisiveis`, alimentada **só** com os ids das mensagens que `listarMensagens` já devolveu ao papel: anexo de nota interna nunca chega ao cliente, por construção — não há filtro paralelo para desalinhar.
+
+`complexidade`, `ia_silenciada` e as mensagens `interna` (com seus anexos) **só existem na resposta para operador/admin** — para o `cliente` a query nem as traz (filtro no repositório, `listarMensagens`) e o serializer as remove (specs/03 §7). Chamado inexistente **ou** fora do escopo do papel → `404` idêntico (não vaza existência).
 
 ### 4.3 `POST /api/v1/chamados/{ref}/mensagens`
 
@@ -178,6 +205,12 @@ Sucesso `201`: `{ "id": "…", "numero": 42 }` — o número é como a equipe pa
 Resposta: `{ "sistemas": [{ "id", "nome", "descricao" }], "sistema_alvo_obrigatorio": true | false }` — só os sistemas **ativos** e só os campos que o formulário de abertura já mostra a qualquer papel (portal do cliente inclusive). Nada de repositório, logs, BD ou credenciais: isso é `sistema_alvo · ler` (equipe, specs/03 §8.2) e **não** passa por esta rota.
 
 `sistema_alvo_obrigatorio` vem calculado com a mesma regra de `criarChamado` (>1 sistema ativo), para o cliente da API não ter de deduzi-la.
+
+### 4.7 `GET /api/v1/anexos/{id}` (D-035)
+
+Entrega os **bytes** do anexo. Autentica por Bearer e autoriza com o MESMO `autorizarDownloadAnexo` da rota de cookie (specs/04 §6): RLS isola o tenant, cliente só baixa dos próprios chamados, anexo de nota `interna` nunca sai para cliente. Qualquer negação → `404 anexo_inexistente` (não vaza existência).
+
+Diferença deliberada da rota da UI: os bytes saem **pela aplicação** (`obterObjeto`), não por redirect a URL assinada do storage. O consumidor é um processo (servidor MCP) que muitas vezes não alcança o bucket (MinIO interno à VPS) e cujo `fetch` descarta o `Authorization` num redirect cross-origin. Os controles de specs/09 §5 se mantêm: `Content-Type` pinado ao tipo validado no upload, `Content-Disposition` seguro (`inline` só para imagem, `attachment` para o resto, nome em RFC 5987), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Não há **upload** por esta API (§8).
 
 ---
 
@@ -244,8 +277,11 @@ Processo Node **stdio** (`apps/mcp`) que fala a API acima. É um cliente como ou
 | `chamado_alterar_status`    | escrita | `POST /api/v1/chamados/{ref}/status`    |
 | `sistemas_alvo_listar`      | leitura | `GET /api/v1/sistemas-alvo`             |
 | `chamado_criar`             | escrita | `POST /api/v1/chamados` (D-032)         |
+| `anexo_obter`               | leitura | `GET /api/v1/anexos/{id}` (D-035)       |
 
 As de escrita são anotadas como não-idempotentes e, no caso de `chamado_publicar_mensagem`, a descrição declara explicitamente que `visibilidade: "publica"` **é visível ao cliente final** — o modelo precisa saber que está falando com o cliente, não com a equipe.
+
+`chamado_obter` aceita `formato` (`texto` default | `markdown` | `html`) e devolve os `anexos` de cada parte do chamado. **`anexo_obter`** (D-035) baixa um anexo pelo `id` e o devolve na forma que o modelo consegue usar: **imagem** (≤ 5 MB) volta como conteúdo `image` — o modelo **vê** o print; **texto** (txt/log/csv/json) volta como texto (truncado em 100k caracteres); **binário** (PDF, planilha, zip) ou imagem maior é gravado em disco — em `salvar_em` ou num diretório temporário — e a resposta traz o caminho para o assistente ler. O nome do arquivo gravado é sempre o `basename` sanitizado, prefixado pelo id: um nome vindo do servidor nunca vira caminho. A descrição da ferramenta lembra que o conteúdo do anexo é **dado** do cliente, não instrução (specs/09 §4.1).
 
 `chamado_criar` recebe `titulo`, `descricao` (markdown), `natureza`/`prioridade` opcionais, `sistema_alvo_id` e `solicitante_email`. A descrição da ferramenta diz ao modelo que, com usuário operador/admin, o `solicitante_email` é **obrigatório** e que, em dúvida, ele deve **perguntar** quem é o solicitante em vez de inventar — abrir chamado no nome do cliente errado suja a auditoria e notifica a pessoa errada. Ao receber `sistema_alvo_obrigatorio`, o caminho de correção é `sistemas_alvo_listar` → repetir com `sistema_alvo_id`.
 
@@ -263,7 +299,8 @@ Erros da API voltam ao modelo como erro de ferramenta com o `codigo` — corrig�
 ## 8. Fora de escopo (por ora)
 
 - ~~**Criar chamado** pela API/MCP~~ — entrou em **D-032** (§4.5), sem anexos.
-- **Anexos** (upload/download — inclusive na abertura) e **eventos** (`EventoChamado`) na resposta do detalhe: a timeline de mensagens cobre o uso pretendido.
+- **Upload de anexos** pela API (na abertura ou em mensagem): só texto/markdown entra por aqui; imagem e arquivo continuam pelo portal. Download e listagem entraram em **D-035** (§4.2, §4.7).
+- **Eventos** (`EventoChamado`) na resposta do detalhe: a timeline de mensagens cobre o uso pretendido.
 - **Atribuição, prioridade, complexidade, silenciar IA, reexecutar triagem**: mutações de painel, deliberadamente fora da superfície inicial.
 - **Streaming/transport HTTP do MCP**: só stdio, que é o modo local do Claude Code/Desktop.
 

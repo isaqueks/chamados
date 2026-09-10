@@ -13,6 +13,10 @@ import {
   projetarMensagens,
   idsDeChamados,
   parsearEntradaCriar,
+  parsearFormato,
+  projetarCorpo,
+  projetarAnexo,
+  agruparAnexos,
   type Nomes,
 } from './api-chamados';
 
@@ -277,6 +281,62 @@ describe('parsearEntradaCriar', () => {
         sistema_alvo_id: UUID,
         solicitante_email: 'Ana@Cliente.com',
       },
+    });
+  });
+});
+
+/** Formato do corpo e anexos (specs/11 §1.5/§4.2, D-035). */
+describe('formato e anexos', () => {
+  const HTML = '<p>Veja <strong>isto</strong>: <img src="/api/anexos/a1" alt="tela"></p>';
+  const DOC = {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Veja ' },
+          { type: 'text', text: 'isto', marks: [{ type: 'bold' }] },
+          { type: 'text', text: ': ' },
+          { type: 'image', attrs: { src: '/api/anexos/a1', alt: 'tela' } },
+        ],
+      },
+    ],
+  };
+
+  it('parsearFormato: default texto, valores válidos, inválido é null', () => {
+    expect(parsearFormato(null)).toBe('texto');
+    expect(parsearFormato('')).toBe('texto');
+    expect(parsearFormato('markdown')).toBe('markdown');
+    expect(parsearFormato('html')).toBe('html');
+    expect(parsearFormato('xml')).toBeNull();
+  });
+
+  it('texto omite a imagem; markdown e html apontam para a rota Bearer', () => {
+    expect(projetarCorpo('texto', HTML, DOC)).toBe('Veja isto:');
+    expect(projetarCorpo('markdown', HTML, DOC)).toBe('Veja **isto**: ![tela](/api/v1/anexos/a1)');
+    expect(projetarCorpo('html', HTML, DOC)).toContain('<img src="/api/v1/anexos/a1"');
+    expect(projetarCorpo('html', HTML, DOC)).not.toContain('"/api/anexos/');
+  });
+
+  it('agruparAnexos separa descrição de mensagens e projetarAnexo expõe a url', () => {
+    const base = {
+      nome_arquivo: 'x.png',
+      content_type: 'image/png',
+      tamanho_bytes: 10,
+      inline: true,
+      created_at: new Date(),
+    };
+    const { descricao, porMensagem } = agruparAnexos([
+      { ...base, id: 'a1', mensagem_id: null },
+      { ...base, id: 'a2', mensagem_id: 'm1', inline: false },
+      { ...base, id: 'a3', mensagem_id: 'm1' },
+    ]);
+    expect(descricao.map((a) => a.id)).toEqual(['a1']);
+    expect(porMensagem.get('m1')?.map((a) => a.id)).toEqual(['a2', 'a3']);
+    expect(projetarAnexo({ ...base, id: 'a2', mensagem_id: 'm1' })).toMatchObject({
+      id: 'a2',
+      url: '/api/v1/anexos/a2',
+      tamanho_bytes: 10,
     });
   });
 });
