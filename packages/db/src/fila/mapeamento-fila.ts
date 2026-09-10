@@ -64,10 +64,23 @@ export function filaMapeamento(): Queue<JobMapeamento> {
   return globalRef.__chamadosFilaMapeamento;
 }
 
-/** Enfileira um mapeamento (best-effort — o chamador trata erros). Dedupe por sistema. */
+/**
+ * Enfileira um mapeamento (best-effort — o chamador trata erros). Dedupe por
+ * sistema: enquanto um job do mesmo sistema está pendente/rodando, o `add` é
+ * ignorado pelo BullMQ. Um job ANTERIOR já encerrado (falhou — `removeOnFail:
+ * false` o mantém para auditoria — ou concluído) ocuparia o mesmo `jobId` e
+ * faria o BullMQ ignorar o pedido novo em silêncio (D-033); por isso ele é
+ * removido antes de enfileirar de novo.
+ */
 export async function enfileirarMapeamento(job: JobMapeamento): Promise<void> {
   const q = filaMapeamento();
-  await q.add(NOME_JOB_MAPEAMENTO, job, opcoesJobMapeamento(jobIdMapeamento(job.sistemaAlvoId)));
+  const jobId = jobIdMapeamento(job.sistemaAlvoId);
+  const anterior = await q.getJob(jobId);
+  if (anterior) {
+    const estado = await anterior.getState();
+    if (estado === 'failed' || estado === 'completed') await anterior.remove();
+  }
+  await q.add(NOME_JOB_MAPEAMENTO, job, opcoesJobMapeamento(jobId));
 }
 
 /** Fecha a conexão da Queue (uso em scripts/smokes). */

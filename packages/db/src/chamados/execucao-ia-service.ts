@@ -167,6 +167,30 @@ export async function existeConcluidaParaMensagem(
   return linhas[0]?.existe === true;
 }
 
+/**
+ * Uma tentativa AUTOMÁTICA de mapeamento por commit (D-033): já existe execução
+ * de `gatilho = 'mapeamento'` deste sistema-alvo para o commit (qualquer status —
+ * `executando`/`na_fila` contam, para não disparar duas em paralelo; `falhou`
+ * conta para NÃO repetir a cada triagem o que já falhou)? O commit vive no
+ * snapshot `entrada` da execução.
+ */
+export async function existeMapeamentoParaCommit(
+  em: EntityManager,
+  sistemaAlvoId: string,
+  commit: string,
+): Promise<boolean> {
+  const linhas: Array<{ existe: boolean }> = await em.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM execucao_ia
+        WHERE sistema_alvo_id = $1
+          AND gatilho = 'mapeamento'
+          AND entrada->>'commit' = $2
+     ) AS existe`,
+    [sistemaAlvoId, commit],
+  );
+  return linhas[0]?.existe === true;
+}
+
 // ---------------------------------------------------------------------------
 // Leitura (painel operador/admin — specs/08 §4.3)
 // ---------------------------------------------------------------------------

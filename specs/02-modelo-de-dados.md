@@ -149,18 +149,20 @@ Ciclo de vida de um convite (ver `03-autenticacao-perfis-permissoes.md` §4.2).
 
 Nomes canônicos únicos; `05-agente-ia.md` deve usar EXATAMENTE estes (não
 `running`/`falha`). Enum canônico de **5 valores** — normativo em
-`05-agente-ia.md` §8. `timeout` e `budget_excedido` NÃO são valores de status:
-são MOTIVOS de encerramento, registrados no campo `erro` de `ExecucaoIA`
-(`erro='timeout'` / `erro='budget_excedido'`) com `status='falhou'`. Mantém o
-enum enxuto e evita duplicar semântica entre `status` e `erro`.
+`05-agente-ia.md` §8. `timeout`, `budget_excedido` e `max_turnos` NÃO são valores
+de status: são MOTIVOS de encerramento, registrados no campo `erro` de
+`ExecucaoIA` (`erro='timeout'` / `erro='budget_excedido'` / `erro='max_turnos'`,
+D-033) com `status='falhou'`. Mantém o enum enxuto e evita duplicar semântica
+entre `status` e `erro`. Execuções falhas por limite guardam a telemetria
+parcial (`custo_usd`/`tokens_*`/`duracao_ms`) apurada até o corte (D-033).
 
-| valor        | descrição                                                                        |
-| ------------ | -------------------------------------------------------------------------------- |
-| `na_fila`    | enfileirado                                                                      |
-| `executando` | worker em execução (equivale ao `running` de `05`)                               |
-| `concluido`  | terminou com resultado                                                           |
-| `falhou`     | erro de execução (motivo detalhado em `erro`, ex.: `timeout`, `budget_excedido`) |
-| `cancelado`  | abortado                                                                         |
+| valor        | descrição                                                                            |
+| ------------ | ------------------------------------------------------------------------------------ |
+| `na_fila`    | enfileirado                                                                          |
+| `executando` | worker em execução (equivale ao `running` de `05`)                                   |
+| `concluido`  | terminou com resultado                                                               |
+| `falhou`     | erro de execução (motivo em `erro`, ex.: `timeout`, `budget_excedido`, `max_turnos`) |
+| `cancelado`  | abortado                                                                             |
 
 ## Diagrama ER
 

@@ -122,7 +122,7 @@ export function montarFerramentasReais(
   const logs = criarHandleLogs(cfg.logs, registrar);
   const bd = criarFerramentaBd(cfg.bd, registrar);
   const escrita = criarHandlesEscrita(() => copia?.dir ?? null, registrar);
-  const artefatos = criarFerramentaArtefatos(registrar);
+  const artefatos = criarFerramentaArtefatos(registrar, { extrair: bd.bd_extrair });
 
   const habilitada = opcoes.resolucaoHabilitada === true && cfg.repo !== null;
 
@@ -135,6 +135,8 @@ export function montarFerramentasReais(
       bd_consultar: bd.bd_consultar,
       // Artefatos entregáveis (D-026): sempre disponível na triagem.
       artefato_gerar: artefatos.gerar,
+      // Extração por consulta (D-034): o worker executa o SELECT e materializa CSV/XLSX.
+      artefato_consulta: artefatos.consultar,
       // Escrita SÓ quando o gate PRÉ-call passou (specs/05 §6).
       ...(habilitada
         ? {

@@ -11,10 +11,17 @@ import {
   type AIMapeamentoInput,
   type AIMapeamentoResult,
   type FormatoArtefato,
+  type FormatoArtefatoConsulta,
   type ImagemContexto,
   type TelemetriaIA,
 } from '@chamados/shared';
-import { ErroProviderBudget, ErroProviderTimeout } from '../erros';
+import {
+  ErroProviderBudget,
+  ErroProviderLimite,
+  ErroProviderMaxTurnos,
+  ErroProviderTimeout,
+  type TelemetriaParcial,
+} from '../erros';
 
 /**
  * `ClaudeAgentProvider` — implementação fase 1 da abstração `AIProvider` usando o
@@ -191,6 +198,8 @@ interface ModelUsageBruto {
 export interface MensagemSdk {
   type: string;
   subtype?: string;
+  /** Sessão do SDK (vem em toda mensagem) — permite RETOMAR a conversa (D-033). */
+  session_id?: string;
   result?: string;
   structured_output?: unknown;
   total_cost_usd?: number;
@@ -243,6 +252,12 @@ export interface ParametrosQueryMapeamento {
   modelo: string;
   esforco: EsforcoIA;
   abortController: AbortController;
+  /**
+   * Turno de CONCLUSÃO (D-033): retoma a sessão da exploração cortada por limite
+   * (turnos/timeout) SEM ferramenta alguma e com poucos turnos, só para o modelo
+   * escrever o resumo com o que já levantou ("corta e conclui com o que tem").
+   */
+  conclusao?: { sessionId: string };
 }
 
 /** Fronteira injetável: um stream de mensagens do SDK (a versão real ou um mock). */
@@ -326,6 +341,8 @@ export class ClaudeAgentProvider implements AIProvider {
     const inicio = Date.now();
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), input.limites.timeoutMs);
+    const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
+    let resultado: MensagemSdk | undefined;
 
     try {
       const stream = this.queryFn({
@@ -336,9 +353,6 @@ export class ClaudeAgentProvider implements AIProvider {
         esforco: this.esforco,
         abortController,
       });
-
-      let resultado: MensagemSdk | undefined;
-      const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
       for await (const msg of stream) {
         acumularTurno(acumulado, msg);
         if (msg.type === 'result') resultado = msg;
@@ -346,8 +360,12 @@ export class ClaudeAgentProvider implements AIProvider {
       if (!resultado) throw new Error('provider não emitiu mensagem de resultado');
       return mapearResultado(resultado, inicio, acumulado, this.log);
     } catch (err) {
-      if (abortController.signal.aborted) throw new ErroProviderTimeout();
-      throw err;
+      // D-033: todo corte por limite — timeout (abort), budget/turnos (result de
+      // erro ou a exceção que o SDK lança ao fechar o subprocesso) — carrega a
+      // telemetria já apurada; sem isto o gasto dessas execuções sumia do registro.
+      const parcial = telemetriaParcialDe(inicio, acumulado, resultado);
+      if (abortController.signal.aborted) throw new ErroProviderTimeout(parcial);
+      throw comTelemetria(err, parcial);
     } finally {
       clearTimeout(timer);
     }
@@ -357,32 +375,170 @@ export class ClaudeAgentProvider implements AIProvider {
     const inicio = Date.now();
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), input.limites.timeoutMs);
+    const systemPrompt = montarSystemPromptMapeamento(input.maxChars, input.limites.maxTurnos);
+    const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
+    const base = { systemPrompt, input, modelo: this.modelo, esforco: this.esforco };
 
+    // ---- Fase 1: exploração (Read/Grep/Glob no checkout) ---------------------
+    let sessionId: string | undefined;
+    let resultado: MensagemSdk | undefined;
+    let cortadoPor: 'max_turnos' | 'timeout' | null = null;
     try {
       const stream = this.queryMapFn({
+        ...base,
         prompt: montarPromptMapeamento(input),
-        systemPrompt: montarSystemPromptMapeamento(input.maxChars),
-        input,
-        modelo: this.modelo,
-        esforco: this.esforco,
         abortController,
       });
-
-      let resultado: MensagemSdk | undefined;
-      const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
       for await (const msg of stream) {
         acumularTurno(acumulado, msg);
+        if (msg.session_id) sessionId = msg.session_id;
         if (msg.type === 'result') resultado = msg;
       }
-      if (!resultado) throw new Error('provider não emitiu mensagem de resultado');
-      return mapearResultadoMapeamento(resultado, inicio, acumulado, input.maxChars);
+      if (resultado?.subtype === 'error_max_turns') cortadoPor = 'max_turnos';
     } catch (err) {
-      if (abortController.signal.aborted) throw new ErroProviderTimeout();
-      throw err;
+      if (abortController.signal.aborted) cortadoPor = 'timeout';
+      else if (ehErroMaxTurnos(err) || resultado?.subtype === 'error_max_turns') {
+        cortadoPor = 'max_turnos';
+      } else {
+        clearTimeout(timer);
+        throw comTelemetria(err, telemetriaParcialDe(inicio, acumulado, resultado));
+      }
     } finally {
       clearTimeout(timer);
     }
+
+    if (cortadoPor === null) {
+      if (!resultado) throw new Error('provider não emitiu mensagem de resultado');
+      try {
+        return mapearResultadoMapeamento(resultado, inicio, acumulado, input.maxChars);
+      } catch (err) {
+        throw comTelemetria(err, telemetriaParcialDe(inicio, acumulado, resultado));
+      }
+    }
+
+    // ---- Fase 2: CONCLUSÃO com o que tem (D-033, specs/05 §3.3) --------------
+    // A exploração foi cortada (turnos ou timeout). Em vez de descartar tudo o
+    // que o modelo já leu, retoma a MESMA sessão sem ferramentas e pede o resumo.
+    const parcial = telemetriaParcialDe(inicio, acumulado, resultado);
+    const erroLimite = (): ErroProviderLimite =>
+      cortadoPor === 'timeout'
+        ? new ErroProviderTimeout(parcial)
+        : new ErroProviderMaxTurnos(parcial);
+    if (!sessionId) throw erroLimite();
+    this.log('mapeamento: exploração cortada — pedindo conclusão com o que tem', {
+      motivo: cortadoPor,
+      turnos: resultado?.num_turns ?? null,
+    });
+
+    const abortConclusao = new AbortController();
+    const timerConclusao = setTimeout(() => abortConclusao.abort(), TIMEOUT_CONCLUSAO_MS);
+    let resultadoConclusao: MensagemSdk | undefined;
+    try {
+      const stream = this.queryMapFn({
+        ...base,
+        prompt: PROMPT_CONCLUSAO_MAPEAMENTO,
+        abortController: abortConclusao,
+        conclusao: { sessionId },
+      });
+      for await (const msg of stream) {
+        acumularTurno(acumulado, msg);
+        if (msg.type === 'result') resultadoConclusao = msg;
+      }
+      if (!resultadoConclusao) throw erroLimite();
+      const r = mapearResultadoMapeamento(resultadoConclusao, inicio, acumulado, input.maxChars);
+      this.log('mapeamento: concluído após corte', { motivo: cortadoPor, chars: r.resumo.length });
+      // Telemetria das DUAS fases: tokens somados do stream inteiro (cada `result`
+      // só cobre a própria query) + custo somado dos dois resultados.
+      return {
+        resumo: r.resumo,
+        telemetria: telemetriaDuasFases(inicio, acumulado, resultado, resultadoConclusao),
+      };
+    } catch (err) {
+      // A conclusão também falhou: o erro original (limite) prevalece, com a
+      // telemetria SOMADA das duas fases — nada do que foi gasto some do registro.
+      const total = telemetriaDuasFases(inicio, acumulado, resultado, resultadoConclusao);
+      this.log('mapeamento: conclusão após corte falhou', {
+        motivo: cortadoPor,
+        erro: err instanceof Error ? err.message : String(err),
+      });
+      throw cortadoPor === 'timeout'
+        ? new ErroProviderTimeout(total)
+        : new ErroProviderMaxTurnos(total);
+    } finally {
+      clearTimeout(timerConclusao);
+    }
   }
+}
+
+/** Janela extra para o turno de conclusão do mapeamento (D-033). */
+const TIMEOUT_CONCLUSAO_MS = 180_000;
+
+/** Pedido do turno de conclusão (sem ferramentas): escreva o resumo com o que tem. */
+export const PROMPT_CONCLUSAO_MAPEAMENTO = [
+  'Sua exploração atingiu o limite de turnos/tempo e as ferramentas foram desligadas.',
+  'Escreva AGORA o resumo estruturado do sistema com TUDO o que você já levantou até aqui,',
+  'seguindo a estrutura pedida (visão geral, stack, estrutura de pastas, módulos, entidades,',
+  'regras de negócio, fluxos críticos, glossário). Onde faltou investigar, diga em uma linha o',
+  'que ficou de fora — não invente. Responda APENAS com o resumo em markdown, sem preâmbulo.',
+].join('\n');
+
+/** O SDK encerra o subprocesso com erro após `error_max_turns` — reconhece a mensagem. */
+function ehErroMaxTurnos(err: unknown): boolean {
+  return err instanceof Error && /maximum number of turns|max_turns|max_turnos/i.test(err.message);
+}
+
+/** Soma o custo reportado pelas duas fases do mapeamento (cada `result` é de uma query). */
+function somaCusto(...msgs: Array<MensagemSdk | undefined>): number {
+  return msgs.reduce(
+    (s, m) => s + (typeof m?.total_cost_usd === 'number' ? m.total_cost_usd : 0),
+    0,
+  );
+}
+
+/** Telemetria consolidada de exploração + conclusão (D-033). */
+function telemetriaDuasFases(
+  inicioMs: number,
+  acumulado: TokensAcumulados,
+  ...resultados: Array<MensagemSdk | undefined>
+): TelemetriaIA {
+  return {
+    custoUsd: somaCusto(...resultados),
+    duracaoMs: Date.now() - inicioMs,
+    tokensEntrada: acumulado.entrada,
+    tokensSaida: acumulado.saida,
+  };
+}
+
+/**
+ * Telemetria apurada até um corte: tokens SOMADOS do stream (todos os turnos) e,
+ * quando o SDK chegou a emitir `result`, custo/duração reportados nele.
+ */
+function telemetriaParcialDe(
+  inicioMs: number,
+  acumulado: TokensAcumulados,
+  resultado?: MensagemSdk,
+): TelemetriaParcial {
+  const t = resultado ? extrairTelemetria(resultado, inicioMs, acumulado) : undefined;
+  return {
+    tokensEntrada: t?.tokensEntrada ?? acumulado.entrada,
+    tokensSaida: t?.tokensSaida ?? acumulado.saida,
+    duracaoMs: t?.duracaoMs ?? Date.now() - inicioMs,
+    ...(t && typeof resultado?.total_cost_usd === 'number' ? { custoUsd: t.custoUsd } : {}),
+  };
+}
+
+/** Anexa telemetria parcial a um erro de limite sem telemetria; outros erros passam intactos. */
+function comTelemetria(err: unknown, parcial: TelemetriaParcial): unknown {
+  if (err instanceof ErroProviderLimite && !err.telemetriaParcial) {
+    if (err instanceof ErroProviderTimeout) return new ErroProviderTimeout(parcial, err.message);
+    if (err instanceof ErroProviderBudget) return new ErroProviderBudget(parcial, err.message);
+    if (err instanceof ErroProviderMaxTurnos)
+      return new ErroProviderMaxTurnos(parcial, err.message);
+  }
+  if (ehErroMaxTurnos(err) && !(err instanceof ErroProviderLimite)) {
+    return new ErroProviderMaxTurnos(parcial);
+  }
+  return err;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +608,7 @@ function extrairTelemetria(
 /** Encerramentos por limite (specs/05 §8) → erros tipados; erros genéricos propagam. */
 function verificarErroResultado(msg: MensagemSdk): void {
   if (msg.subtype === 'error_max_budget_usd') throw new ErroProviderBudget();
-  if (msg.subtype === 'error_max_turns') throw new Error('max_turnos');
+  if (msg.subtype === 'error_max_turns') throw new ErroProviderMaxTurnos();
   if (msg.is_error || (msg.subtype && msg.subtype.startsWith('error'))) {
     throw new Error(msg.errors?.join('; ') || msg.subtype || 'erro do provider');
   }
@@ -734,6 +890,18 @@ export function montarSystemPrompt(instrucoesTenant?: string | null): string {
     '  anexo (ex.: "Segue em anexo o relatório solicitado, com ...").',
     '- NÃO gere artefatos que o cliente não pediu, nem no fluxo compreendido=false.',
     '',
+    'EXTRAÇÕES DE DADOS (ferramenta artefato_consulta — D-034): quando o pedido é uma LISTAGEM ou',
+    'planilha de registros do banco ("todos os clientes da carteira X", "relação de contratos",',
+    '"me manda em Excel"), NÃO pagine bd_consultar nem copie linhas para artefato_gerar — isso',
+    'estoura o tempo da execução. Faça assim: investigue com bd_consultar (amostras, contagens,',
+    'descobrir tabelas/colunas), monte UM SELECT completo com aliases legíveis para o cliente',
+    '(ex.: "Nome do cliente", "CPF/CNPJ", "Contratos ativos") e chame artefato_consulta com ele.',
+    'O worker executa a consulta e gera o arquivo inteiro. formato "xlsx" quando o cliente pedir',
+    'Excel/planilha; "csv" quando pedir CSV. A resposta da ferramenta traz contagem, colunas e',
+    'amostra: use-as para descrever o material em "respostaAoCliente" (ex.: "Segue a planilha',
+    'com 312 clientes da carteira da Luciana..."). Se vier "truncado": true, avise o cliente',
+    'que a lista foi cortada no teto e sugira um filtro.',
+    '',
     'Ao final, responda com um objeto JSON no formato AIProviderResult:',
     '{ compreendido, confianca ("baixa"|"media"|"alta"), perguntasAoCliente (string[]|null),',
     'respostaAoCliente (string|null), complexidade (facil|medio|dificil|null), naturezaAjustada',
@@ -882,8 +1050,23 @@ export function montarPrompt(input: AIProviderInput): string {
 // ---------------------------------------------------------------------------
 
 /** Instruções do sistema do MAPEAMENTO: explorar o repo e produzir o resumo. */
-export function montarSystemPromptMapeamento(maxChars: number): string {
+export function montarSystemPromptMapeamento(maxChars: number, maxTurnos?: number): string {
+  // D-033: o modelo precisa CONHECER o orçamento — sem isso, Opus 5 em esforço
+  // alto explorava até estourar os turnos sem nunca escrever o resumo.
+  const orcamento =
+    maxTurnos && maxTurnos > 0
+      ? [
+          `ORÇAMENTO: você tem no máximo ${maxTurnos} turnos nesta execução (cada chamada de`,
+          `ferramenta consome um). Planeje a exploração: use até ~${Math.floor(maxTurnos * 0.7)} turnos`,
+          'para investigar (priorize estrutura, entradas principais, entidades e regras) e ESCREVA o',
+          'resumo antes de esgotar o orçamento — um resumo bom com o que você viu vale mais que',
+          'uma exploração completa sem resumo. Se o orçamento acabar, você receberá um pedido de',
+          'conclusão sem ferramentas: responda com o resumo do que já levantou.',
+          '',
+        ]
+      : [];
   return [
+    ...orcamento,
     'Você é um engenheiro de software que está MAPEANDO o conhecimento de um sistema para um',
     'assistente de triagem de helpdesk. Você EXPLORA o código-fonte com as MESMAS ferramentas do',
     'Claude Code, READ-ONLY: Glob (achar arquivos por padrão), Grep (regex no conteúdo) e Read (ler',
@@ -953,11 +1136,42 @@ function especToolsTriagem(ferramentas: AIProviderInput['ferramentas']): EspecTo
     },
     {
       nome: 'bd_consultar',
-      descricao: 'Executa um SELECT read-only no banco do sistema-alvo.',
+      descricao:
+        'Executa um SELECT read-only no banco do sistema-alvo para INVESTIGAR (devolve no ' +
+        'máximo 100 linhas — é uma amostra, não uma listagem). Para entregar uma listagem/' +
+        'extração completa ao cliente, use artefato_consulta em vez de paginar aqui.',
       schema: (z) => ({ sql: z.string() }),
       handler: (a) => ferramentas.bd_consultar(String(a.sql)),
     },
   ];
+  // Extração por consulta (D-034): o modelo entrega só o SELECT; o worker executa
+  // com teto alto e materializa CSV/XLSX direto do resultado — o modelo nunca
+  // redigita linhas (era o que estourava o timeout em pedidos de "lista completa").
+  const artefatoConsulta = ferramentas.artefato_consulta;
+  if (artefatoConsulta) {
+    specs.push({
+      nome: 'artefato_consulta',
+      descricao:
+        'Gera uma PLANILHA entregável ao cliente a partir de um SELECT: o worker executa a ' +
+        'consulta (read-only, até milhares de linhas) e anexa o arquivo à sua resposta pública. ' +
+        'formato: "xlsx" (Excel) ou "csv". Passe o SELECT completo, sem LIMIT/OFFSET de ' +
+        'paginação, com aliases legíveis nas colunas (viram o cabeçalho). Devolve contagem de ' +
+        'linhas, colunas e uma amostra — nunca chame bd_consultar para copiar linhas à mão.',
+      schema: (z) => ({
+        nome_arquivo: z.string(),
+        formato: z.string(),
+        consulta: z.string(),
+        titulo: z.string().optional(),
+      }),
+      handler: (a) =>
+        artefatoConsulta({
+          nome_arquivo: String(a.nome_arquivo ?? ''),
+          formato: String(a.formato ?? '') as FormatoArtefatoConsulta,
+          consulta: String(a.consulta ?? ''),
+          titulo: typeof a.titulo === 'string' ? a.titulo : undefined,
+        }),
+    });
+  }
   // Artefatos entregáveis (D-026): a IA gera um ARQUIVO (relatório PDF, CSV,
   // texto) que o worker anexa à resposta pública ao cliente.
   const artefatoGerar = ferramentas.artefato_gerar;
@@ -1044,15 +1258,18 @@ function criarTransporteSdk(opts: OpcoesClaudeProvider): TransporteSdk {
     const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as unknown as SdkModulo;
     const { z } = (await import('zod')) as unknown as { z: ZodLike };
 
-    const tools = params.specs.map((s) =>
+    // Turno de CONCLUSÃO (D-033): nenhuma tool (MCP ou nativa) e turnos mínimos.
+    const conclusao = params.conclusao;
+    const specs = conclusao ? [] : params.specs;
+    const tools = specs.map((s) =>
       sdk.tool(s.nome, s.descricao, s.schema(z), async (a) => textoTool(await s.handler(a))),
     );
-    const allowedTools = params.specs.map((s) => `mcp__${NOME_SERVIDOR_MCP}__${s.nome}`);
+    const allowedTools = specs.map((s) => `mcp__${NOME_SERVIDOR_MCP}__${s.nome}`);
     const servidor = sdk.createSdkMcpServer({ name: NOME_SERVIDOR_MCP, tools });
 
     // Ferramentas NATIVAS de exploração (D-014): só existem quando há checkout
     // sincronizado (`cwd`). Sem repo, nenhuma built-in fica disponível.
-    const nativas = params.cwd ? [...FERRAMENTAS_NATIVAS] : [];
+    const nativas = params.cwd && !conclusao ? [...FERRAMENTAS_NATIVAS] : [];
 
     const options = {
       model: params.modelo,
@@ -1060,9 +1277,11 @@ function criarTransporteSdk(opts: OpcoesClaudeProvider): TransporteSdk {
       // que muda de versão para versão e mudaria o custo da triagem sem aviso.
       effort: params.esforco,
       systemPrompt: params.systemPrompt,
-      maxTurns: params.limites.maxTurnos,
+      maxTurns: conclusao ? MAX_TURNOS_CONCLUSAO : params.limites.maxTurnos,
       maxBudgetUsd: params.limites.budgetUsd,
       abortController: params.abortController,
+      // Retoma a sessão da exploração cortada (mesmo `cwd` — ver ParametrosTransporte).
+      ...(conclusao ? { resume: conclusao.sessionId } : {}),
       mcpServers: { [NOME_SERVIDOR_MCP]: servidor },
       // FIAÇÃO DAS TOOLS MCP (D-013): permitidas por nome prefixado (auto-allow).
       allowedTools,
@@ -1139,8 +1358,18 @@ interface ParametrosTransporte {
   auditar?: (ferramenta: string, args: unknown) => void;
   /** Imagens inline do chamado para envio multimodal (#16). Só na triagem. */
   imagens?: ImagemContexto[];
+  /**
+   * Turno de CONCLUSÃO (D-033): retoma a sessão indicada (`options.resume`) SEM
+   * ferramenta alguma (nativas e MCP desligadas) e com `maxTurns` mínimo — só
+   * para o modelo escrever a saída com o que já tem. `cwd` precisa ser o MESMO
+   * da sessão original (o SDK localiza o transcript pelo diretório).
+   */
+  conclusao?: { sessionId: string };
 }
 type TransporteSdk = (params: ParametrosTransporte) => AsyncIterable<MensagemSdk>;
+
+/** Turnos permitidos no turno de conclusão (uma resposta; margem para um retry do SDK). */
+const MAX_TURNOS_CONCLUSAO = 2;
 
 /** Adapta o transporte à fronteira de TRIAGEM (`QueryFn`). */
 function queryTriagemReal(transporte: TransporteSdk): QueryFn {
@@ -1178,6 +1407,7 @@ function queryMapeamentoReal(transporte: TransporteSdk): QueryMapFn {
       specs: especToolsMapeamento(),
       cwd: params.input.exploracao?.checkoutDir ?? null,
       auditar: params.input.exploracao?.auditar,
+      conclusao: params.conclusao,
     });
 }
 

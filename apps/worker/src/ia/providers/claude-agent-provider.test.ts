@@ -18,11 +18,13 @@ import {
   avaliarPermissaoNativa,
   criarCanUseTool,
   FERRAMENTAS_NATIVAS,
+  montarSystemPromptMapeamento,
+  PROMPT_CONCLUSAO_MAPEAMENTO,
   type MensagemSdk,
   type QueryFn,
   type QueryMapFn,
 } from './claude-agent-provider';
-import { ErroProviderBudget, ErroProviderTimeout } from '../erros';
+import { ErroProviderBudget, ErroProviderMaxTurnos, ErroProviderTimeout } from '../erros';
 
 /**
  * Testa o MAPEAMENTO do ClaudeAgentProvider mockando a FRONTEIRA do SDK
@@ -512,6 +514,200 @@ describe('ClaudeAgentProvider — mapeamento (D-013)', () => {
     });
     const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
     await expect(p.mapearSistema(inputMapeamento())).rejects.toThrow(/mapeamento_vazio/);
+  });
+});
+
+describe('ClaudeAgentProvider — mapeamento: corte por limite e conclusão (D-033)', () => {
+  const TURNO = (tokens: number): MensagemSdk => ({
+    type: 'assistant',
+    session_id: 'sess-1',
+    message: { usage: { input_tokens: tokens, output_tokens: 10 } },
+  });
+  const RESULT_MAX_TURNS: MensagemSdk = {
+    type: 'result',
+    subtype: 'error_max_turns',
+    is_error: true,
+    session_id: 'sess-1',
+    total_cost_usd: 1.5,
+    duration_ms: 160_000,
+    num_turns: 40,
+  };
+
+  /** Fronteira falsa que distingue a exploração (1ª chamada) da conclusão (`params.conclusao`). */
+  function fronteira(
+    exploracao: MensagemSdk[],
+    conclusao: MensagemSdk[],
+    opts: { lancarNaExploracao?: Error } = {},
+  ): {
+    queryMapFn: QueryMapFn;
+    chamadas: Array<{ prompt: string; conclusao?: { sessionId: string } }>;
+  } {
+    const chamadas: Array<{ prompt: string; conclusao?: { sessionId: string } }> = [];
+    const queryMapFn: QueryMapFn = async function* (params) {
+      chamadas.push({ prompt: params.prompt, conclusao: params.conclusao });
+      if (params.conclusao) {
+        for (const m of conclusao) yield m;
+        return;
+      }
+      for (const m of exploracao) yield m;
+      if (opts.lancarNaExploracao) throw opts.lancarNaExploracao;
+    };
+    return { queryMapFn, chamadas };
+  }
+
+  it('ao estourar os turnos, retoma a sessão SEM ferramentas e devolve o resumo da conclusão', async () => {
+    const { queryMapFn, chamadas } = fronteira(
+      [TURNO(1000), TURNO(2000), RESULT_MAX_TURNS],
+      [
+        TURNO(500),
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          total_cost_usd: 0.25,
+          duration_ms: 20_000,
+          result: '# Mapa parcial\n\nStack: Express + TypeORM.',
+        },
+      ],
+      // Como o SDK real: fecha o subprocesso com erro DEPOIS do result de limite.
+      {
+        lancarNaExploracao: new Error(
+          'Claude Code returned an error result: Reached maximum number of turns (40)',
+        ),
+      },
+    );
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const r = await p.mapearSistema(inputMapeamento());
+
+    expect(r.resumo).toContain('Mapa parcial');
+    expect(chamadas).toHaveLength(2);
+    expect(chamadas[1]!.conclusao).toEqual({ sessionId: 'sess-1' });
+    expect(chamadas[1]!.prompt).toBe(PROMPT_CONCLUSAO_MAPEAMENTO);
+    // Telemetria das DUAS fases: tokens somados do stream, custo somado dos results.
+    expect(r.telemetria.tokensEntrada).toBe(3500);
+    expect(r.telemetria.tokensSaida).toBe(30);
+    expect(r.telemetria.custoUsd).toBeCloseTo(1.75, 6);
+  });
+
+  it('result error_max_turns SEM exceção do SDK também dispara a conclusão', async () => {
+    const { queryMapFn, chamadas } = fronteira(
+      [TURNO(100), RESULT_MAX_TURNS],
+      [{ type: 'result', subtype: 'success', total_cost_usd: 0.1, duration_ms: 5, result: '# ok' }],
+    );
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const r = await p.mapearSistema(inputMapeamento());
+    expect(r.resumo).toBe('# ok');
+    expect(chamadas).toHaveLength(2);
+  });
+
+  it('se a conclusão também falha, lança ErroProviderMaxTurnos COM telemetria parcial das duas fases', async () => {
+    const { queryMapFn } = fronteira(
+      [TURNO(1000), RESULT_MAX_TURNS],
+      [
+        TURNO(300),
+        { type: 'result', subtype: 'error_max_turns', is_error: true, total_cost_usd: 0.2 },
+      ],
+    );
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const erro = await p.mapearSistema(inputMapeamento()).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ErroProviderMaxTurnos);
+    const t = (erro as ErroProviderMaxTurnos).telemetriaParcial;
+    expect(t?.tokensEntrada).toBe(1300);
+    expect(t?.custoUsd).toBeCloseTo(1.7, 6);
+  });
+
+  it('sem session_id no stream não há como retomar: lança ErroProviderMaxTurnos com a telemetria', async () => {
+    const semSessao: MensagemSdk = { ...RESULT_MAX_TURNS, session_id: undefined };
+    const { queryMapFn, chamadas } = fronteira(
+      [
+        { type: 'assistant', message: { usage: { input_tokens: 700, output_tokens: 7 } } },
+        semSessao,
+      ],
+      [],
+    );
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const erro = await p.mapearSistema(inputMapeamento()).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ErroProviderMaxTurnos);
+    expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.tokensEntrada).toBe(700);
+    expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.custoUsd).toBe(1.5);
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it('erro genérico do SDK (não limite) propaga sem tentar conclusão', async () => {
+    const { queryMapFn, chamadas } = fronteira([TURNO(10)], [], {
+      lancarNaExploracao: new Error('ECONNRESET'),
+    });
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    await expect(p.mapearSistema(inputMapeamento())).rejects.toThrow(/ECONNRESET/);
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it('timeout na exploração tenta a conclusão na mesma sessão; falhando, ErroProviderTimeout com telemetria', async () => {
+    const queryMapFn: QueryMapFn = async function* (params) {
+      if (params.conclusao) throw new Error('resume indisponível');
+      yield TURNO(900);
+      await new Promise<void>((resolve) => {
+        params.abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      throw new Error('aborted');
+    };
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const input = { ...inputMapeamento(), limites: { timeoutMs: 20, budgetUsd: 5, maxTurnos: 10 } };
+    const erro = await p.mapearSistema(input).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ErroProviderTimeout);
+    expect((erro as ErroProviderTimeout).telemetriaParcial?.tokensEntrada).toBe(900);
+  });
+
+  it('prompt do mapeamento anuncia o orçamento de turnos e a conclusão sem ferramentas', () => {
+    const sp = montarSystemPromptMapeamento(12_000, 100);
+    expect(sp).toContain('no máximo 100 turnos');
+    expect(sp).toContain('~70 turnos');
+    expect(sp).toContain('pedido de');
+    expect(sp).toContain('conclusão sem ferramentas');
+    expect(montarSystemPromptMapeamento(12_000)).not.toContain('ORÇAMENTO');
+  });
+});
+
+describe('ClaudeAgentProvider — triagem: telemetria parcial nas falhas por limite (D-033)', () => {
+  it('timeout carrega os tokens já consumidos', async () => {
+    const queryFn: QueryFn = async function* (params) {
+      yield { type: 'assistant', message: { usage: { input_tokens: 4000, output_tokens: 40 } } };
+      await new Promise<void>((resolve) => {
+        params.abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      throw new Error('aborted');
+    };
+    const p = new ClaudeAgentProvider({ queryFn });
+    const input = { ...inputBase(), limites: { timeoutMs: 20, budgetUsd: 1, maxTurnos: 5 } };
+    const erro = await p.executarTriagem(input).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ErroProviderTimeout);
+    expect((erro as ErroProviderTimeout).telemetriaParcial?.tokensEntrada).toBe(4000);
+  });
+
+  it('error_max_turns na triagem vira ErroProviderMaxTurnos com custo/tokens do result', async () => {
+    const queryFn = queryFnDe(
+      { type: 'assistant', message: { usage: { input_tokens: 100, output_tokens: 5 } } },
+      {
+        type: 'result',
+        subtype: 'error_max_turns',
+        is_error: true,
+        total_cost_usd: 0.9,
+        duration_ms: 1000,
+        modelUsage: {
+          'claude-opus-5': {
+            inputTokens: 100,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            outputTokens: 5,
+          },
+        },
+      },
+    );
+    const p = new ClaudeAgentProvider({ queryFn });
+    const erro = await p.executarTriagem(inputBase()).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ErroProviderMaxTurnos);
+    expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.custoUsd).toBe(0.9);
+    expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.tokensEntrada).toBe(100);
   });
 });
 

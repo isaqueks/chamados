@@ -12,12 +12,14 @@ import {
   marcarExecutando,
   concluirExecucaoMapeamento,
   falharExecucao,
+  existeMapeamentoParaCommit,
+  enfileirarMapeamento,
   salvarConhecimentoSistema,
   SistemaAlvoSchema,
   type SistemaAlvo,
 } from '@chamados/db';
 import { criarHandlesRepo, commitAtual } from '../triagem/ferramentas/repo';
-import { motivoErro } from '../ia/erros';
+import { motivoErro, telemetriaDoErro } from '../ia/erros';
 
 /**
  * MAPA DE CONHECIMENTO por sistema-alvo (D-013). Uma execução de IA DEDICADA
@@ -26,6 +28,13 @@ import { motivoErro } from '../ia/erros';
  * commit mapeado. É gerado na primeira triagem quando ausente, re-gerado quando o
  * commit do checkout muda, e sob demanda pelo admin ("Mapear agora"). O resumo é
  * injetado em toda triagem. Mesmo pipeline de guardrails/telemetria da triagem.
+ *
+ * Política POR COMMIT (D-033): o mapa é função do commit, não do chamado. Uma
+ * tentativa automática por commit — falhou, não repete a cada triagem (em
+ * produção, 20 mapeamentos falhos seguidos custaram ~3 min e uma execução de
+ * Opus 5 por triagem, em silêncio). Só a primeira geração (sem mapa nenhum) roda
+ * INLINE na triagem; a re-geração por commit divergente é ENFILEIRADA (fila
+ * `mapeamento-ia`) e a triagem segue na hora com o mapa anterior.
  */
 
 export interface MapaLimites {
@@ -136,8 +145,13 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
     return { resumo: resultado.resumo, commit, geradoEm: geradoEm.toISOString() };
   } catch (err) {
     const erro = motivoErro(err);
+    // D-033: telemetria PARCIAL (tokens/custo até o corte) — antes o custo das
+    // falhas por limite sumia do registro.
     await runInTenantContext(ds, tenantId, (em) =>
-      falharExecucao(em, prep.execucaoId, erro, { acoes }),
+      falharExecucao(em, prep.execucaoId, erro, {
+        acoes,
+        telemetriaParcial: telemetriaDoErro(err),
+      }),
     ).catch(() => {});
     log('mapeamento falhou', { sistemaAlvoId, execucaoId: prep.execucaoId, erro });
     throw err;
@@ -145,11 +159,20 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
 }
 
 /**
- * Garante o conhecimento ATUALIZADO antes da triagem (D-013). Compara o commit
- * armazenado com o HEAD do checkout: se o resumo está ausente OU o commit mudou,
- * roda o mapeamento (ExecucaoIA separada) e devolve o resumo fresco. Best-effort:
- * se o mapeamento falhar, devolve o resumo ARMAZENADO (possivelmente defasado) ou
- * `null` — a triagem prossegue mesmo assim (nunca fica presa por falha de mapa).
+ * Garante o conhecimento para a triagem (D-013, política por commit de D-033).
+ * Compara o commit armazenado com o HEAD do checkout:
+ *
+ * - **atualizado** (há resumo e o commit bate) → devolve o armazenado;
+ * - **commit já tentado** (existe ExecucaoIA de mapeamento para este commit, em
+ *   qualquer status) → NÃO dispara outra automaticamente; devolve o armazenado
+ *   (ou `null`). Quem quiser insistir usa "Mapear agora";
+ * - **sem mapa nenhum** → primeira geração INLINE (a triagem espera e já usa o
+ *   mapa novo — specs/05 §3.3 gatilho 1);
+ * - **mapa defasado** (commit divergente) → ENFILEIRA a re-geração e devolve o
+ *   armazenado na hora (specs/05 §3.3 gatilho 2) — a triagem não paga os minutos
+ *   do mapeamento.
+ *
+ * Best-effort em todos os ramos: falha de mapa nunca derruba a triagem.
  */
 export async function garantirConhecimento(
   deps: DepsMapeamento,
@@ -180,12 +203,53 @@ export async function garantirConhecimento(
     return conhecimentoArmazenado;
   }
 
-  try {
-    return await executarMapeamento(deps);
-  } catch {
-    log('conhecimento: mapeamento falhou; segue triagem com o resumo armazenado (ou nenhum)', {
+  // Uma tentativa automática por commit (D-033). Sem commit (checkout sem git)
+  // não há como deduplicar: só mapeia se não existe mapa nenhum.
+  if (commit !== null) {
+    const jaTentado = await runInTenantContext(ds, tenantId, (em) =>
+      existeMapeamentoParaCommit(em, sistemaAlvoId, commit),
+    ).catch(() => false);
+    if (jaTentado) {
+      log('conhecimento: mapeamento deste commit já foi tentado — sem nova tentativa automática', {
+        sistemaAlvoId,
+        commit,
+        temMapaAnterior: conhecimentoArmazenado !== null,
+      });
+      return conhecimentoArmazenado;
+    }
+  } else if (conhecimentoArmazenado !== null) {
+    log('conhecimento: checkout sem commit identificável — segue com o mapa armazenado', {
       sistemaAlvoId,
     });
     return conhecimentoArmazenado;
   }
+
+  if (conhecimentoArmazenado === null) {
+    // Primeira geração: inline — esta triagem já se beneficia do mapa.
+    try {
+      return await executarMapeamento(deps);
+    } catch {
+      log('conhecimento: primeiro mapeamento falhou; segue triagem sem mapa', { sistemaAlvoId });
+      return null;
+    }
+  }
+
+  // Mapa defasado: re-geração ASSÍNCRONA; a triagem segue com o anterior.
+  try {
+    await enfileirarMapeamento({ tenantId, sistemaAlvoId });
+    log(
+      'conhecimento: commit divergente — re-mapeamento enfileirado; triagem segue com o mapa anterior',
+      {
+        sistemaAlvoId,
+        commit,
+        commitMapeado: conhecimentoArmazenado.commit,
+      },
+    );
+  } catch (err) {
+    log('conhecimento: falha ao enfileirar re-mapeamento; triagem segue com o mapa anterior', {
+      sistemaAlvoId,
+      erro: motivoErro(err),
+    });
+  }
+  return conhecimentoArmazenado;
 }

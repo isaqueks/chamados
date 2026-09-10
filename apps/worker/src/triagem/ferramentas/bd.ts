@@ -196,10 +196,18 @@ function criarExecutorMysql(cfg: ConfigBd): ExecutorBd {
 
 export interface FerramentaBd {
   bd_consultar(sql: string): Promise<Linha[]>;
+  /**
+   * EXTRAÇÃO (D-034): mesma validação e mesmo executor read-only do
+   * `bd_consultar`, mas com o teto de linhas vindo do CHAMADOR (a extração usa
+   * `artefatos.maxLinhasExtracao`, muito acima das 100 da consulta interativa).
+   * NÃO registra a ação: quem registra é a ferramenta de artefatos, dona do
+   * `artefato_consulta` (evita trilha duplicada para a mesma chamada do modelo).
+   */
+  bd_extrair(sql: string, maxLinhas: number): Promise<Linha[]>;
   encerrar(): Promise<void>;
 }
 
-/** Cria o handle `bd_consultar` + o `encerrar()` que fecha o pool ao fim do job. */
+/** Cria os handles `bd_consultar`/`bd_extrair` + o `encerrar()` que fecha o pool ao fim do job. */
 export function criarFerramentaBd(cfg: ConfigBd, registrar: Registrar): FerramentaBd {
   const { maxLinhas } = ferramentasConfig.bd;
   const executor = ehMysql(cfg.tipo) ? criarExecutorMysql(cfg) : criarExecutorPg(cfg);
@@ -210,6 +218,10 @@ export function criarFerramentaBd(cfg: ConfigBd, registrar: Registrar): Ferramen
       registrar('bd_consultar', { sql });
       const consulta = validarConsulta(sql); // lança ANTES de conectar
       return executor.consultar(consulta, maxLinhas);
+    },
+    async bd_extrair(sql, maxLinhasExtracao) {
+      const consulta = validarConsulta(sql); // mesma validação SELECT-only
+      return executor.consultar(consulta, maxLinhasExtracao);
     },
     encerrar: () => executor.encerrar(),
   };
