@@ -1,0 +1,8 @@
+{
+  "eco": {
+    "description": "Subagente de teste: devolve a palavra pedida.",
+    "prompt": "Voce responde apenas com a palavra que pedirem, sem mais nada.",
+    "model": "haiku",
+    "tools": []
+  }
+}

@@ -17,6 +17,7 @@ import {
   respostaDeMotivo,
 } from '@/lib/api-v1';
 import {
+  ehEquipe,
   idsDeChamados,
   parsearEntradaCriar,
   parsearFiltros,
@@ -42,6 +43,13 @@ export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const parse = parsearFiltros(url.searchParams);
   if (!parse.ok) return jsonErro(400, 'parametro_invalido', parse.erro);
+
+  // `complexidade` é interna (specs/04 §3.3): filtrar por ela revelaria o campo
+  // ao cliente pelo conjunto do resultado. Recusa explícita (D-036 L3) em vez de
+  // ignorar — o mesmo princípio do filtro que não mente.
+  if (parse.filtros.complexidade && !ehEquipe(ctx.usuario.papel)) {
+    return jsonErro(403, 'sem_permissao', 'O filtro "complexidade" é exclusivo da equipe.');
+  }
 
   const ds = await obterAppDataSource();
   const { itens, proximoCursor, nomes } = await runInTenantContext(

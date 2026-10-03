@@ -285,6 +285,15 @@ export function respostaDeMotivo(motivo: MotivoDominio): Response {
       return jsonErro(400, 'parametro_invalido', 'Sistema-alvo não encontrado neste tenant.');
     case 'categoria_invalida':
       return jsonErro(400, 'parametro_invalido', 'Categoria não encontrada neste tenant.');
+    // --- Atribuição (specs/11 §4.9, D-036 L4) ------------------------------
+    // Entrada inválida, não conflito de estado: o alvo não existe neste tenant
+    // (a busca roda sob RLS), está inativo ou não é da equipe.
+    case 'operador_invalido':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Operador inválido: precisa ser um usuário ATIVO com papel "operador" ou "admin" neste tenant.',
+      );
     default:
       return jsonErro(409, 'conflito', `Operação recusada pelo domínio (${motivo}).`);
   }

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { carregarConfig, ErroConfig } from './config';
-import { ClienteChamados } from './cliente';
+import { ClienteChamados } from '@chamados/cliente-api';
+import { carregarConfig, configCliente, ErroConfig } from './config';
 import { registrarFerramentas } from './ferramentas';
 
 /**
@@ -19,7 +19,8 @@ function log(msg: string): void {
 
 async function main(): Promise<void> {
   const cfg = carregarConfig();
-  const cliente = new ClienteChamados(cfg);
+  for (const aviso of cfg.avisos) log(`aviso: ${aviso}`);
+  const cliente = new ClienteChamados(configCliente(cfg));
 
   const server = new McpServer(
     { name: 'chamados', version: '0.3.0' },
@@ -41,6 +42,8 @@ async function main(): Promise<void> {
   log(
     `pronto — ${cfg.baseUrl} como ${cfg.email}` +
       (cfg.tenantSlug ? ` (tenant ${cfg.tenantSlug})` : '') +
+      // Só o MODO de credencial — o token em si nunca vai para log (specs/11 §7.1).
+      (cfg.token ? (cfg.senha ? ' [token de sessão + senha]' : ' [token de sessão]') : '') +
       (cfg.somenteLeitura ? ' [somente leitura]' : ''),
   );
 }

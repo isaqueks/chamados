@@ -15,8 +15,8 @@ O Chamados envia um `POST` JSON **assinado** ao endpoint do tenant a cada atuali
 
 Em **`/app/config` → Webhook de notificações**:
 
-| Campo       | Descrição                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------- |
+| Campo       | Descrição                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------- |
 | **URL**     | Endpoint `http(s)` público que recebe o `POST`. Validada contra SSRF (ver §7).                 |
 | **Segredo** | Chave do HMAC SHA-256. Armazenado no **cofre** (envelope encryption) — nunca exibido de volta. |
 | **Ativo**   | Liga/desliga o canal. Salvar/reativar com "ativo" **zera o circuito de falhas** (§6).          |
@@ -37,15 +37,15 @@ Headers do teste: `x-chamados-event: teste` (assinatura normal, ver §4).
 
 Os eventos notificáveis do catálogo (specs/06 §6) mapeiam para **7 categorias** de webhook (D-003). O tipo vai em `evento.tipo` no corpo e no header `x-chamados-event`:
 
-| `evento.tipo`         | Disparado quando…                                          |
-| --------------------- | ---------------------------------------------------------- |
-| `criado`              | Chamado aberto.                                            |
-| `mensagem_publica`    | Nova mensagem **pública** na timeline.                     |
+| `evento.tipo`         | Disparado quando…                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `criado`              | Chamado aberto.                                                                                  |
+| `mensagem_publica`    | Nova mensagem **pública** na timeline.                                                           |
 | `status_alterado`     | Transição de status — inclui **reabertura** e **cancelamento** (ambas são transições de status). |
-| `prioridade_alterada` | Prioridade do chamado alterada.                            |
-| `atribuicao`          | Operador atribuído/desatribuído.                           |
-| `resolvido`           | Chamado marcado como resolvido.                            |
-| `fechado`             | Chamado fechado (manual ou automático).                    |
+| `prioridade_alterada` | Prioridade do chamado alterada.                                                                  |
+| `atribuicao`          | Operador atribuído/desatribuído.                                                                 |
+| `resolvido`           | Chamado marcado como resolvido.                                                                  |
+| `fechado`             | Chamado fechado (manual ou automático).                                                          |
 
 Nota interna, mudança de complexidade, anexos e eventos internos da IA (`ia_*`) **nunca** disparam webhook.
 
@@ -53,11 +53,11 @@ Nota interna, mudança de complexidade, anexos e eventos internos da IA (`ia_*`)
 
 `POST` com `Content-Type: application/json` e os headers:
 
-| Header                 | Conteúdo                                                          |
-| ---------------------- | ----------------------------------------------------------------- |
-| `x-chamados-signature` | `sha256=<hex>` — HMAC SHA-256 do **corpo bruto**, com o segredo.  |
-| `x-chamados-event`     | Categoria do evento (§3).                                         |
-| `x-chamados-event-id`  | Id único do evento — use para **deduplicar** no receptor (§5).    |
+| Header                 | Conteúdo                                                         |
+| ---------------------- | ---------------------------------------------------------------- |
+| `x-chamados-signature` | `sha256=<hex>` — HMAC SHA-256 do **corpo bruto**, com o segredo. |
+| `x-chamados-event`     | Categoria do evento (§3).                                        |
+| `x-chamados-event-id`  | Id único do evento — use para **deduplicar** no receptor (§5).   |
 
 ### Verificando a assinatura (obrigatório no receptor)
 
@@ -81,9 +81,9 @@ Rejeite (4xx) requisições com assinatura ausente ou inválida.
 ```jsonc
 {
   "evento": {
-    "tipo": "status_alterado",        // categoria (§3)
-    "id": "8f2c…",                    // mesmo valor de x-chamados-event-id
-    "timestamp": "2026-07-20T14:03:11.000Z"
+    "tipo": "status_alterado", // categoria (§3)
+    "id": "8f2c…", // mesmo valor de x-chamados-event-id
+    "timestamp": "2026-07-20T14:03:11.000Z",
   },
   "chamado": {
     "id": "uuid",
@@ -92,15 +92,15 @@ Rejeite (4xx) requisições com assinatura ausente ou inválida.
     "status": "em_atendimento",
     "prioridade": "alta",
     "natureza": "problema",
-    "sistema_alvo": "ERP Web",        // nome, ou null
-    "categoria": "Financeiro"         // nome, ou null
+    "sistema_alvo": "ERP Web", // nome, ou null
+    "categoria": "Financeiro", // nome, ou null
   },
   // Só em mensagem_publica (autor e trecho PÚBLICO, HTML removido, máx. ~240 chars):
   "autor": { "nome": "Maria Silva" },
   "mensagem": { "trecho": "Boa tarde! O erro acontece quando…" },
   // Só em status_alterado / prioridade_alterada:
   "mudanca": { "de": "em_triagem", "para": "em_atendimento" },
-  "linkChamado": "https://<dominio-do-tenant>/portal/chamados/<id>"
+  "linkChamado": "https://<dominio-do-tenant>/portal/chamados/<id>",
 }
 ```
 
@@ -127,11 +127,11 @@ A reativação é **manual**: o admin corrige o destino e salva/reativa no paine
 
 ## 8. Variáveis de ambiente (worker)
 
-| Variável                                  | Default | Efeito                                            |
-| ----------------------------------------- | ------- | ------------------------------------------------- |
-| `NOTIFICACOES_WEBHOOK_TIMEOUT_MS`         | `5000`  | Timeout por requisição de webhook.                |
-| `NOTIFICACOES_WEBHOOK_MAX_FALHAS`         | `10`    | Falhas consecutivas até a desativação automática. |
-| `NOTIFICACOES_WEBHOOK_PERMITIR_PRIVADO`   | `false` | (Dev) permite hosts privados na URL.              |
+| Variável                                | Default | Efeito                                            |
+| --------------------------------------- | ------- | ------------------------------------------------- |
+| `NOTIFICACOES_WEBHOOK_TIMEOUT_MS`       | `5000`  | Timeout por requisição de webhook.                |
+| `NOTIFICACOES_WEBHOOK_MAX_FALHAS`       | `10`    | Falhas consecutivas até a desativação automática. |
+| `NOTIFICACOES_WEBHOOK_PERMITIR_PRIVADO` | `false` | (Dev) permite hosts privados na URL.              |
 
 ## 9. Referências no código
 

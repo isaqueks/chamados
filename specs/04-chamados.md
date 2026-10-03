@@ -215,7 +215,7 @@ Limites:
 ## 7. Atribuição de operador
 
 - Um chamado pode ter **um operador responsável** (assignee) por vez. O `agente_ia` participa como operador automatizado, mas não ocupa o slot de assignee humano — sua atuação é registrada via mensagens e `ExecucaoIA`.
-- Atribuir/reatribuir: `operador` (auto-atribuição ou entre pares) e `admin`. O `cliente` nunca atribui.
+- Atribuir/reatribuir: `operador` (auto-atribuição ou entre pares) e `admin`. O `cliente` nunca atribui. O alvo precisa ser usuário **ativo** com papel `operador` ou `admin` do mesmo tenant (o universo do seletor do painel); fora disso a atribuição é recusada (`operador_invalido`). Também disponível pela API (`POST /api/v1/chamados/{ref}/atribuicao`, specs/11 §4.9 — D-036).
 - Desatribuir é permitido; chamado volta a "não atribuído".
 - Atribuição não altera o status por si só, mas frequentemente acompanha a transição para `em_atendimento`.
 - Toda (re)atribuição gera `EventoChamado` e pode notificar o novo responsável (ver `06-notificacoes.md`).

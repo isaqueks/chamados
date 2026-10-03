@@ -16,25 +16,25 @@ A cada atualização relevante de um chamado, a plataforma envia um `POST` com c
 
 O tipo do evento vai no campo `evento.tipo` do corpo e no header `x-chamados-event`:
 
-| `evento.tipo`         | Disparado quando…                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| `criado`              | Um chamado é aberto.                                                                             |
-| `mensagem_publica`    | Uma nova mensagem pública é publicada na conversa do chamado.                                    |
+| `evento.tipo`         | Disparado quando…                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `criado`              | Um chamado é aberto.                                                                                |
+| `mensagem_publica`    | Uma nova mensagem pública é publicada na conversa do chamado.                                       |
 | `status_alterado`     | O status do chamado muda — inclui **reabertura** e **cancelamento** (ambos são mudanças de status). |
-| `prioridade_alterada` | A prioridade do chamado é alterada.                                                              |
-| `atribuicao`          | Um atendente é atribuído ao chamado (ou desatribuído).                                           |
-| `resolvido`           | O chamado é marcado como resolvido.                                                              |
-| `fechado`             | O chamado é fechado.                                                                             |
+| `prioridade_alterada` | A prioridade do chamado é alterada.                                                                 |
+| `atribuicao`          | Um atendente é atribuído ao chamado (ou desatribuído).                                              |
+| `resolvido`           | O chamado é marcado como resolvido.                                                                 |
+| `fechado`             | O chamado é fechado.                                                                                |
 
 ## 3. A requisição
 
 `POST` com `Content-Type: application/json` e os seguintes headers:
 
-| Header                 | Conteúdo                                                                 |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `x-chamados-signature` | `sha256=<hex>` — HMAC SHA-256 do corpo bruto, calculado com o segredo.   |
-| `x-chamados-event`     | Tipo do evento (§2).                                                     |
-| `x-chamados-event-id`  | Identificador único do evento — use para deduplicar (§5).                |
+| Header                 | Conteúdo                                                               |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `x-chamados-signature` | `sha256=<hex>` — HMAC SHA-256 do corpo bruto, calculado com o segredo. |
+| `x-chamados-event`     | Tipo do evento (§2).                                                   |
+| `x-chamados-event-id`  | Identificador único do evento — use para deduplicar (§5).              |
 
 ### 3.1 Verificando a assinatura (obrigatório)
 
@@ -68,19 +68,19 @@ Rejeite com `401`/`403` requisições sem assinatura ou com assinatura inválida
 ```jsonc
 {
   "evento": {
-    "tipo": "status_alterado",        // tipo do evento (§2)
-    "id": "8f2c…",                    // mesmo valor do header x-chamados-event-id
-    "timestamp": "2026-07-20T14:03:11.000Z"  // ISO-8601, UTC
+    "tipo": "status_alterado", // tipo do evento (§2)
+    "id": "8f2c…", // mesmo valor do header x-chamados-event-id
+    "timestamp": "2026-07-20T14:03:11.000Z", // ISO-8601, UTC
   },
   "chamado": {
     "id": "uuid",
-    "numero": "2026-000123",          // número legível do chamado
+    "numero": "2026-000123", // número legível do chamado
     "titulo": "Erro ao emitir nota",
     "status": "em_atendimento",
     "prioridade": "alta",
     "natureza": "problema",
-    "sistema_alvo": "ERP Web",        // sistema relacionado, ou null
-    "categoria": "Financeiro"         // categoria, ou null
+    "sistema_alvo": "ERP Web", // sistema relacionado, ou null
+    "categoria": "Financeiro", // categoria, ou null
   },
   // Presentes apenas em mensagem_publica (texto puro, limitado a ~240 caracteres):
   "autor": { "nome": "Maria Silva" },
@@ -88,7 +88,7 @@ Rejeite com `401`/`403` requisições sem assinatura ou com assinatura inválida
   // Presente apenas em status_alterado / prioridade_alterada:
   "mudanca": { "de": "em_triagem", "para": "em_atendimento" },
   // Link direto para o chamado na plataforma:
-  "linkChamado": "https://<dominio>/portal/chamados/<id>"
+  "linkChamado": "https://<dominio>/portal/chamados/<id>",
 }
 ```
 
@@ -96,11 +96,11 @@ Campos condicionais vêm `null` quando não se aplicam ao evento.
 
 ### 3.3 Valores possíveis
 
-| Campo        | Valores                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------- |
+| Campo        | Valores                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
 | `status`     | `novo` · `em_triagem` · `aguardando_cliente` · `em_atendimento` · `resolvido` · `fechado` · `cancelado` |
-| `prioridade` | `baixa` · `media` · `alta` · `urgente`                                                        |
-| `natureza`   | `problema` · `alteracao` · `duvida`                                                           |
+| `prioridade` | `baixa` · `media` · `alta` · `urgente`                                                                  |
+| `natureza`   | `problema` · `alteracao` · `duvida`                                                                     |
 
 Novos valores podem ser adicionados no futuro — trate valores desconhecidos de forma tolerante (não falhe o processamento).
 

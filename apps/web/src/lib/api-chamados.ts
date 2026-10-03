@@ -3,7 +3,7 @@ import {
   Natureza,
   Prioridade,
   Papel,
-  type Complexidade,
+  Complexidade,
   type VisibilidadeMensagem,
 } from '@chamados/shared';
 import type { AnexoResumo, ChamadoView, FiltrosChamado, MensagemTimeline } from '@chamados/db';
@@ -81,6 +81,29 @@ export function parsearFiltros(sp: URLSearchParams): ResultadoFiltros {
       valores.push(v);
     }
     filtros.status = valores;
+  }
+
+  // `complexidade` (D-036 L3) segue a forma de `status`: CSV de valores do enum.
+  // Quem RECUSA o filtro ao cliente é a rota (`403`): aqui é só o contrato.
+  const complexidade = sp.get('complexidade');
+  if (complexidade !== null) {
+    const partes = complexidade
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (partes.length === 0) return { ok: false, erro: 'Parâmetro "complexidade" vazio.' };
+    const valores: Complexidade[] = [];
+    for (const p of partes) {
+      const v = valorEnum(Complexidade, p);
+      if (!v) {
+        return {
+          ok: false,
+          erro: `Complexidade inválida: "${p}". Valores: ${Object.values(Complexidade).join(', ')}.`,
+        };
+      }
+      valores.push(v);
+    }
+    filtros.complexidade = valores;
   }
 
   const natureza = sp.get('natureza');
@@ -172,6 +195,27 @@ function operadorIdDe(c: ChamadoView): string | null | undefined {
   return 'operador_id' in c ? c.operador_id : undefined;
 }
 
+/**
+ * Campos que só a EQUIPE recebe na projeção (D-036 L1/L2): os ids de
+ * sistema-alvo, categoria e operador, e a flag `ia_silenciada`. O predicado é a
+ * forma da view — o serializer do cliente (specs/03 §7) não tem `operador_id` —,
+ * não o papel recebido por parâmetro: a projeção só EMITE o que o domínio já
+ * autorizou. A view do cliente traz `sistema_alvo_id`/`categoria_id` (ele os
+ * escolhe no formulário), mas a API não os repassa: o cliente já recebe os nomes,
+ * e o contrato de L2 é de equipe (specs/11 §4.1).
+ */
+function camposEquipe(c: ChamadoView): Record<string, unknown> {
+  if (!('operador_id' in c)) return {};
+  return {
+    sistema_alvo_id: c.sistema_alvo_id ?? null,
+    categoria_id: c.categoria_id ?? null,
+    operador_id: c.operador_id ?? null,
+    ...('ia_silenciada' in c && c.ia_silenciada !== undefined
+      ? { ia_silenciada: c.ia_silenciada }
+      : {}),
+  };
+}
+
 function iso(v: Date | string | null | undefined): string | null {
   if (!v) return null;
   return v instanceof Date ? v.toISOString() : new Date(v).toISOString();
@@ -193,8 +237,10 @@ export function idsDeChamados(itens: ChamadoView[]): {
 /**
  * Item COMPACTO da listagem (specs/11 §4.1): sem a descrição (que só vem no
  * detalhe) e com nomes no lugar de UUIDs — o consumidor é um assistente, e cada
- * campo inútil é token desperdiçado. Campos internos (`complexidade`) só
- * aparecem se a view do papel os trouxe.
+ * campo inútil é token desperdiçado. Campos internos (`complexidade`,
+ * `ia_silenciada`) e os ids de L2 (D-036) só aparecem se a view do papel os
+ * trouxe — os ids existem para quem integra (a Forja mapeia sistema-alvo →
+ * repositório por id, porque o nome muda).
  */
 export function projetarItemLista(c: ChamadoView, nomes: Nomes): Record<string, unknown> {
   const complexidade = complexidadeDe(c);
@@ -213,6 +259,7 @@ export function projetarItemLista(c: ChamadoView, nomes: Nomes): Record<string, 
     solicitante_nome: nomes.usuarios.get(c.cliente_id)?.nome ?? null,
     sistema_nome: c.sistema_alvo_id ? (nomes.sistemas.get(c.sistema_alvo_id) ?? null) : null,
     categoria_nome: c.categoria_id ? (nomes.categorias.get(c.categoria_id) ?? null) : null,
+    ...camposEquipe(c),
     created_at: iso(c.created_at),
     updated_at: iso(c.updated_at),
   };
@@ -299,15 +346,12 @@ export function projetarDetalhe(
   nomes: Nomes,
   opts: { formato?: FormatoCorpo; anexos?: AnexoResumo[] } = {},
 ): Record<string, unknown> {
-  const complexidade = complexidadeDe(c);
-  const iaSilenciada = 'ia_silenciada' in c ? c.ia_silenciada : undefined;
   const formato = opts.formato ?? 'texto';
   return {
     ...projetarItemLista(c, nomes),
     descricao: projetarCorpo(formato, c.descricao_html, c.descricao_json),
     formato,
     anexos: (opts.anexos ?? []).map(projetarAnexo),
-    ...(iaSilenciada !== undefined ? { ia_silenciada: iaSilenciada } : {}),
     resolvido_em: iso(c.resolvido_em),
     fechar_automaticamente_em: iso(c.fechar_automaticamente_em),
     fechado_em: iso(c.fechado_em),
@@ -348,7 +392,11 @@ export function idsDeMensagens(mensagens: MensagemTimeline[]): Array<string | nu
   return mensagens.map((m) => m.autor_id);
 }
 
-/** O papel é de equipe (operador/admin)? Usado só para mensagens de erro claras. */
+/**
+ * O papel é de equipe (operador/admin)? Decide o filtro `complexidade` (D-036
+ * L3: o conjunto do resultado revelaria o campo interno ao cliente — specs/04
+ * §3.3), o mesmo critério do serializer que esconde o campo.
+ */
 export function ehEquipe(papel: Papel): boolean {
   return papel === Papel.operador || papel === Papel.admin;
 }
@@ -476,4 +524,58 @@ export function parsearEntradaCriar(corpo: Record<string, unknown>): ResultadoEn
       ...(solicitanteEmail !== undefined ? { solicitante_email: solicitanteEmail } : {}),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Silêncio da IA e atribuição (specs/11 §4.8/§4.9 — D-036 L1/L4)
+// ---------------------------------------------------------------------------
+
+/** Erro de contrato das rotas de mutação (o domínio decide o resto). */
+export interface ErroEntrada {
+  ok: false;
+  codigo: 'parametro_invalido';
+  erro: string;
+}
+
+/**
+ * `{ "silenciada": boolean }`. Só booleano JSON: `"true"`/`1` são recusados —
+ * uma flag que decide se a IA responde ao cliente não pode depender de coerção.
+ */
+export function parsearSilencioIa(
+  corpo: Record<string, unknown>,
+): { ok: true; silenciada: boolean } | ErroEntrada {
+  if (typeof corpo.silenciada !== 'boolean') {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: 'Informe "silenciada" como booleano (true silencia a IA, false reativa).',
+    };
+  }
+  return { ok: true, silenciada: corpo.silenciada };
+}
+
+/**
+ * `{ "operador_id": "<uuid>" | null }`. A CHAVE é obrigatória: `null` desatribui,
+ * e um corpo sem ela (`{}`) desatribuiria por engano se fosse lido como `null`.
+ */
+export function parsearAtribuicao(
+  corpo: Record<string, unknown>,
+): { ok: true; operadorId: string | null } | ErroEntrada {
+  if (!('operador_id' in corpo)) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: 'Informe "operador_id" (UUID de um operador/admin ativo, ou null para desatribuir).',
+    };
+  }
+  const v = corpo.operador_id;
+  if (v === null) return { ok: true, operadorId: null };
+  if (typeof v !== 'string' || !RE_UUID.test(v.trim())) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: '"operador_id" deve ser um UUID ou null.',
+    };
+  }
+  return { ok: true, operadorId: v.trim() };
 }

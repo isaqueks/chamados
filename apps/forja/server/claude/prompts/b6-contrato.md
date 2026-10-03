@@ -1,0 +1,5 @@
+- Orçamento desta etapa: até US$ {{orcamento_usd}} (equivalente a preço de tabela), {{timeout_min}} minutos{{turnos}}. Ao estourar, o turno é cortado e o trabalho não conta.
+- Feche o contrato **antes** de esgotar o orçamento. Explorar sem entregar é falha.
+- Saída: chame a ferramenta `StructuredOutput` uma vez, no fim, com o contrato `{{contrato}}`. Texto fora do contrato vai para o feed e não decide nada.
+- Campos que o app mede (arquivos reais, SHAs, custo, nível de verificação, selos) não são pedidos a você: quando o contrato pedir uma afirmação sobre eles, use os fatos dos insumos.
+- Se não conseguir concluir, entregue o contrato mesmo assim, declarando o que falta.

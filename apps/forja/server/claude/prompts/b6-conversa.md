@@ -1,0 +1,3 @@
+- Esta é uma conversa com o operador sobre a etapa pausada. Responda em texto livre, curto, sem contrato estruturado.
+- Orçamento desta mensagem: até US$ {{orcamento_usd}} (equivalente a preço de tabela) e {{timeout_min}} minutos{{turnos}}.
+- A mensagem do operador é instrução confiável, mas não relaxa as regras invioláveis. O trabalho da etapa só continua quando o app retomar o turno.

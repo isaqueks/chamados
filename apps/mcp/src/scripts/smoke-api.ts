@@ -19,6 +19,11 @@
  *     mensagem, `formato=markdown|html` preserva as imagens apontando para a
  *     rota Bearer, `GET /anexos/{id}` entrega os bytes com o tipo pinado e a
  *     fronteira vale (cliente não baixa anexo de nota interna nem de outro).
+ * 13. extensões da Forja (D-036): L1 silenciar/reativar a IA (idempotente, sem
+ *     evento na repetição), L2 ids de equipe na projeção, L3 filtro
+ *     `complexidade` e L4 atribuição — com o cliente recusado (403, sem vazar
+ *     existência) e o ISOLAMENTO CROSS-TENANT provado contra um segundo tenant
+ *     com o MESMO número de chamado: o token de A nunca enxerga nem altera B.
  *
  * Requer também o MinIO de pé (os anexos vão para o storage).
  *
@@ -40,11 +45,12 @@ const {
   criarChamado,
   criarMensagem,
   transicionarStatus,
+  definirComplexidade,
   atorSistema,
 } = await import('@chamados/db');
-const { Papel, StatusTenant, StatusChamado, Natureza, VisibilidadeMensagem } =
+const { Papel, StatusTenant, StatusChamado, Natureza, VisibilidadeMensagem, Complexidade } =
   await import('@chamados/shared');
-const { ClienteChamados } = await import('../cliente');
+const { ClienteChamados } = await import('@chamados/cliente-api');
 
 const BASE = (process.env.SMOKE_API_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
 const SENHA = 'Dev@12345';
@@ -101,6 +107,7 @@ async function main(): Promise<void> {
   const sufixo = randomUUID().slice(0, 8);
   const slug = `smoke-api-${sufixo}`;
   let tenantId = '';
+  let tenantBId = '';
 
   try {
     const prov = await provisionarTenant(ds, {
@@ -688,13 +695,371 @@ async function main(): Promise<void> {
     const semAuth = await chamar(slug, `/api/v1/anexos/${inlineId}`);
     ok(semAuth.status === 401, 'anexo sem Bearer → 401');
 
+    // --- 13) Extensões da Forja (specs/11 §4.8/§4.9, D-036 L1–L4) ---------
+    // Tenant B com o MESMO número de chamado que A: prova que a resolução de
+    // `{ref}` por número, as mutações novas e a busca do operador alvo rodam
+    // escopadas pela RLS — o token de A não alcança B nem por UUID nem por número.
+    const provB = await provisionarTenant(ds, {
+      slug: `${slug}-b`,
+      nome: 'Smoke API B',
+      nomeExibicao: 'Smoke API B',
+      status: StatusTenant.ativo,
+    });
+    tenantBId = provB.tenant_id;
+    const massaB = await runInTenantContext(ds, tenantBId, async (em) => {
+      const opB = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantBId,
+        email: `opb.${sufixo}@smoke.dev`,
+        nome: 'Operador B',
+        papel: Papel.operador,
+        senha: SENHA,
+      });
+      const cliB = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantBId,
+        email: `clib.${sufixo}@smoke.dev`,
+        nome: 'Cliente B',
+        papel: Papel.cliente,
+        senha: SENHA,
+      });
+      const criado = await criarChamado(
+        em,
+        { id: cliB, tenant_id: tenantBId, papel: Papel.cliente },
+        { titulo: 'Chamado do tenant B', natureza: Natureza.problema, descricao: 'Segredo de B.' },
+      );
+      if (!criado.ok) throw new Error(`criarChamado (B) falhou: ${criado.motivo}`);
+      const cx = await definirComplexidade(
+        em,
+        { id: opB, tenant_id: tenantBId, papel: Papel.operador },
+        criado.id,
+        Complexidade.facil,
+      );
+      if (!cx.ok) throw new Error(`definirComplexidade (B) falhou: ${cx.motivo}`);
+      const linhas: Array<{ numero: string; categoria_id: string | null }> = await em.query(
+        'SELECT numero, categoria_id FROM chamado WHERE id = $1',
+        [criado.id],
+      );
+      return {
+        opBId: opB,
+        chamadoBId: criado.id,
+        numeroB: Number(linhas[0]!.numero),
+        categoriaBId: linhas[0]!.categoria_id,
+      };
+    });
+    ok(massaB.numeroB === numero, `tenant B tem um chamado com o MESMO número (#${numero}) de A`);
+
+    const massaA = await runInTenantContext(ds, tenantId, async (em) => {
+      const id = async (email: string) =>
+        (await em.query('SELECT id FROM usuario WHERE email = $1', [email]))[0].id as string;
+      const opAId = await id(operadorEmail);
+      const cliAId = await id(clienteEmail);
+      const atorOp = { id: opAId, tenant_id: tenantId, papel: Papel.operador };
+      const cx = await definirComplexidade(em, atorOp, chamadoId, Complexidade.facil);
+      if (!cx.ok) throw new Error(`definirComplexidade (A) falhou: ${cx.motivo}`);
+      // Operador SUSPENSO: existe e é da equipe, mas não pode receber chamado.
+      const suspensoId = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantId,
+        email: `susp.${sufixo}@smoke.dev`,
+        nome: 'Operador Suspenso',
+        papel: Papel.operador,
+        senha: SENHA,
+      });
+      await em.query(`UPDATE usuario SET status = 'suspenso' WHERE id = $1`, [suspensoId]);
+      // Chamado terminal: `novo → cancelado` é permitido ao operador.
+      const term = await criarChamado(
+        em,
+        { id: cliAId, tenant_id: tenantId, papel: Papel.cliente },
+        { titulo: 'Chamado que sera cancelado', natureza: Natureza.duvida, descricao: 'x' },
+      );
+      if (!term.ok) throw new Error(`criarChamado (terminal) falhou: ${term.motivo}`);
+      const canc = await transicionarStatus(em, atorOp, term.id, StatusChamado.cancelado, {
+        motivo: 'smoke',
+      });
+      if (!canc.ok) throw new Error(`cancelamento falhou: ${canc.motivo}`);
+      return { opAId, cliAId, suspensoId, terminalId: term.id };
+    });
+
+    /** Lê (no tenant indicado) os campos que as rotas novas mudam. */
+    const lerChamado = (tid: string, id: string) =>
+      runInTenantContext(ds, tid, async (em) => {
+        const l: Array<{ ia_silenciada: boolean; operador_id: string | null }> = await em.query(
+          'SELECT ia_silenciada, operador_id FROM chamado WHERE id = $1',
+          [id],
+        );
+        return l[0]!;
+      });
+    const contarEventos = (id: string, tipo: string) =>
+      runInTenantContext(ds, tenantId, async (em) => {
+        const l: Array<{ n: string }> = await em.query(
+          'SELECT count(*) AS n FROM evento_chamado WHERE chamado_id = $1 AND tipo = $2',
+          [id, tipo],
+        );
+        return Number(l[0]!.n);
+      });
+
+    type ItemL = Record<string, unknown> & { id: string };
+
+    // L1 — silenciar/reativar a IA ------------------------------------------
+    const silPorNumero = await chamar<{ ia_silenciada: boolean }>(
+      slug,
+      `/api/v1/chamados/${numero}/ia`,
+      { token: tokenOp, metodo: 'POST', corpo: { silenciada: true } },
+    );
+    ok(
+      silPorNumero.status === 200 && silPorNumero.corpo.ia_silenciada === true,
+      'L1: operador silencia a IA pelo NÚMERO (200)',
+    );
+    ok(
+      (await lerChamado(tenantId, chamadoId)).ia_silenciada === true &&
+        (await lerChamado(tenantBId, massaB.chamadoBId)).ia_silenciada === false,
+      'L1: mesmo número em A e B → só o chamado de A mudou (RLS na resolução do {ref})',
+    );
+    const eventosSil = await contarEventos(chamadoId, 'ia_silenciada');
+    const silDeNovo = await chamar(slug, `/api/v1/chamados/${chamadoId}/ia`, {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: { silenciada: true },
+    });
+    ok(
+      silDeNovo.status === 200 && (await contarEventos(chamadoId, 'ia_silenciada')) === eventosSil,
+      'L1: repetir o mesmo valor → 200 e NENHUM evento novo (idempotente)',
+    );
+    const listaSil = await chamar<{ itens: ItemL[] }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+    });
+    ok(
+      listaSil.corpo.itens.find((i) => i.id === chamadoId)?.ia_silenciada === true,
+      'L1: ia_silenciada vem no ITEM da lista da equipe',
+    );
+    const silB = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaB.chamadoBId}/ia`,
+      { token: tokenOp, metodo: 'POST', corpo: { silenciada: true } },
+    );
+    ok(
+      silB.status === 404 && silB.corpo.codigo === 'chamado_inexistente',
+      'L1: token de A com o UUID de um chamado de B → 404',
+    );
+    const silCli = await chamar<{ codigo: string }>(slug, `/api/v1/chamados/${chamadoId}/ia`, {
+      token: tokenCli,
+      metodo: 'POST',
+      corpo: { silenciada: false },
+    });
+    ok(
+      silCli.status === 403 && silCli.corpo.codigo === 'sem_permissao',
+      'L1: cliente (mesmo dono do chamado) → 403',
+    );
+    const silCliInexistente = await chamar(slug, '/api/v1/chamados/999999/ia', {
+      token: tokenCli,
+      metodo: 'POST',
+      corpo: { silenciada: false },
+    });
+    ok(
+      silCliInexistente.status === 403,
+      'L1: cliente recebe 403 também para chamado inexistente (não vaza existência)',
+    );
+    const silTerm = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaA.terminalId}/ia`,
+      { token: tokenOp, metodo: 'POST', corpo: { silenciada: true } },
+    );
+    ok(
+      silTerm.status === 409 && silTerm.corpo.codigo === 'estado_terminal',
+      'L1: chamado terminal → 409 estado_terminal',
+    );
+    const silRuim = await chamar<{ codigo: string }>(slug, `/api/v1/chamados/${chamadoId}/ia`, {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: { silenciada: 'sim' },
+    });
+    ok(
+      silRuim.status === 400 && silRuim.corpo.codigo === 'parametro_invalido',
+      'L1: "silenciada" não booleana → 400 parametro_invalido',
+    );
+    const reativa = await chamar<{ ia_silenciada: boolean }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}/ia`,
+      { token: tokenOp, metodo: 'POST', corpo: { silenciada: false } },
+    );
+    ok(
+      reativa.status === 200 &&
+        reativa.corpo.ia_silenciada === false &&
+        (await contarEventos(chamadoId, 'ia_reativada')) === 1,
+      'L1: reativar → 200 e um evento ia_reativada',
+    );
+
+    // L2 — ids de equipe na projeção ----------------------------------------
+    const CAMPOS_L2 = ['sistema_alvo_id', 'categoria_id', 'operador_id'] as const;
+    const listaL2 = await chamar<{ itens: ItemL[] }>(slug, '/api/v1/chamados?limite=100', {
+      token: tokenOp,
+    });
+    ok(
+      listaL2.corpo.itens.length > 0 &&
+        listaL2.corpo.itens.every((i) => CAMPOS_L2.every((c) => c in i) && 'ia_silenciada' in i),
+      'L2: todo item da lista da equipe traz sistema_alvo_id, categoria_id, operador_id e ia_silenciada',
+    );
+    ok(
+      listaL2.corpo.itens.every(
+        (i) =>
+          i.id !== massaB.chamadoBId &&
+          (massaB.categoriaBId === null || i.categoria_id !== massaB.categoriaBId) &&
+          i.operador_id !== massaB.opBId,
+      ),
+      'L2: a lista de A nunca traz chamado nem ids de B',
+    );
+    const detL2 = await chamar<{ chamado: Record<string, unknown> }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}`,
+      { token: tokenOp },
+    );
+    ok(
+      CAMPOS_L2.every((c) => c in detL2.corpo.chamado),
+      'L2: o detalhe da equipe traz os mesmos ids',
+    );
+    const listaCliL2 = await chamar<{ itens: ItemL[] }>(slug, '/api/v1/chamados', {
+      token: tokenCli,
+    });
+    const detCliL2 = await chamar<{ chamado: Record<string, unknown> }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}`,
+      { token: tokenCli },
+    );
+    ok(
+      listaCliL2.corpo.itens.length > 0 &&
+        [...listaCliL2.corpo.itens, detCliL2.corpo.chamado].every(
+          (i) => CAMPOS_L2.every((c) => !(c in i)) && !('ia_silenciada' in i),
+        ),
+      'L2: lista e detalhe do CLIENTE não trazem ids de equipe nem ia_silenciada',
+    );
+
+    // L3 — filtro complexidade ----------------------------------------------
+    const facil = await chamar<{ itens: ItemL[] }>(slug, '/api/v1/chamados?complexidade=facil', {
+      token: tokenOp,
+    });
+    // A triagem do servidor pode classificar em paralelo os chamados abertos pela
+    // API nas seções anteriores: as asserções valem para QUALQUER conjunto.
+    ok(
+      facil.status === 200 &&
+        facil.corpo.itens.some((i) => i.id === chamadoId) &&
+        facil.corpo.itens.every((i) => i.complexidade === 'facil' && i.id !== massaB.chamadoBId),
+      'L3: ?complexidade=facil em A traz o "facil" de A e só "facil" — nunca o de B (também "facil")',
+    );
+    const semFacil = await chamar<{ itens: ItemL[] }>(
+      slug,
+      '/api/v1/chamados?complexidade=medio,dificil',
+      { token: tokenOp },
+    );
+    ok(
+      semFacil.status === 200 &&
+        semFacil.corpo.itens.every(
+          (i) => (i.complexidade === 'medio' || i.complexidade === 'dificil') && i.id !== chamadoId,
+        ),
+      'L3: CSV de valores aceito; o que não casa (inclusive complexidade null) fica de fora',
+    );
+    const cxRuim = await chamar<{ codigo: string }>(slug, '/api/v1/chamados?complexidade=xyz', {
+      token: tokenOp,
+    });
+    ok(
+      cxRuim.status === 400 && cxRuim.corpo.codigo === 'parametro_invalido',
+      'L3: complexidade fora do enum → 400',
+    );
+    const cxCli = await chamar<{ codigo: string }>(slug, '/api/v1/chamados?complexidade=facil', {
+      token: tokenCli,
+    });
+    ok(
+      cxCli.status === 403 && cxCli.corpo.codigo === 'sem_permissao',
+      'L3: cliente filtrando por complexidade → 403 (o resultado revelaria o campo)',
+    );
+
+    // L4 — atribuição ---------------------------------------------------------
+    const atrib = await chamar<{ operador_id: string | null }>(
+      slug,
+      `/api/v1/chamados/${numero}/atribuicao`,
+      { token: tokenOp, metodo: 'POST', corpo: { operador_id: massaA.opAId } },
+    );
+    ok(
+      atrib.status === 200 && atrib.corpo.operador_id === massaA.opAId,
+      'L4: operador se atribui pelo NÚMERO (200)',
+    );
+    ok(
+      (await lerChamado(tenantId, chamadoId)).operador_id === massaA.opAId &&
+        (await lerChamado(tenantBId, massaB.chamadoBId)).operador_id === null,
+      'L4: vale no banco de A; o chamado de MESMO número em B segue sem operador',
+    );
+    const listaAtrib = await chamar<{ itens: ItemL[] }>(slug, '/api/v1/chamados', {
+      token: tokenOp,
+    });
+    ok(
+      listaAtrib.corpo.itens.find((i) => i.id === chamadoId)?.operador_id === massaA.opAId,
+      'L4 + L2: a lista reflete o operador_id atribuído',
+    );
+    for (const [alvo, rotulo] of [
+      [massaB.opBId, 'operador de OUTRO tenant (a busca roda sob RLS)'],
+      [massaA.cliAId, 'usuário com papel cliente'],
+      [massaA.suspensoId, 'operador suspenso'],
+      [randomUUID(), 'UUID inexistente'],
+    ] as const) {
+      const r = await chamar<{ codigo: string }>(slug, `/api/v1/chamados/${chamadoId}/atribuicao`, {
+        token: tokenOp,
+        metodo: 'POST',
+        corpo: { operador_id: alvo },
+      });
+      ok(r.status === 400 && r.corpo.codigo === 'parametro_invalido', `L4: ${rotulo} → 400`);
+    }
+    ok(
+      (await lerChamado(tenantId, chamadoId)).operador_id === massaA.opAId,
+      'L4: tentativas recusadas não mexeram na atribuição',
+    );
+    const semChave = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}/atribuicao`,
+      { token: tokenOp, metodo: 'POST', corpo: {} },
+    );
+    ok(
+      semChave.status === 400 && semChave.corpo.codigo === 'parametro_invalido',
+      'L4: corpo sem "operador_id" → 400 (nunca desatribui por omissão)',
+    );
+    const atribB = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaB.chamadoBId}/atribuicao`,
+      { token: tokenOp, metodo: 'POST', corpo: { operador_id: massaA.opAId } },
+    );
+    ok(
+      atribB.status === 404 && atribB.corpo.codigo === 'chamado_inexistente',
+      'L4: token de A com o UUID de um chamado de B → 404',
+    );
+    const atribCli = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}/atribuicao`,
+      { token: tokenCli, metodo: 'POST', corpo: { operador_id: null } },
+    );
+    ok(atribCli.status === 403 && atribCli.corpo.codigo === 'sem_permissao', 'L4: cliente → 403');
+    const atribTerm = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaA.terminalId}/atribuicao`,
+      { token: tokenOp, metodo: 'POST', corpo: { operador_id: massaA.opAId } },
+    );
+    ok(
+      atribTerm.status === 409 && atribTerm.corpo.codigo === 'estado_terminal',
+      'L4: chamado terminal → 409 estado_terminal',
+    );
+    const desatrib = await chamar<{ operador_id: string | null }>(
+      slug,
+      `/api/v1/chamados/${chamadoId}/atribuicao`,
+      { token: tokenOp, metodo: 'POST', corpo: { operador_id: null } },
+    );
+    ok(
+      desatrib.status === 200 &&
+        desatrib.corpo.operador_id === null &&
+        (await lerChamado(tenantId, chamadoId)).operador_id === null,
+      'L4: operador_id null desatribui (200, vale no banco)',
+    );
+
     // --- 9) Cliente MCP sobre a mesma API ----------------------------------
     const mcp = new ClienteChamados({
       baseUrl: BASE,
       email: operadorEmail,
-      senha: SENHA,
+      obterSenha: () => SENHA,
       tenantSlug: slug,
-      somenteLeitura: false,
     });
     const viaMcp = await mcp.requisitar<{ itens: Array<{ numero: number }> }>('/api/v1/chamados', {
       query: { status: 'resolvido' },
@@ -718,14 +1083,14 @@ async function main(): Promise<void> {
     const admin = criarAdminDataSource();
     await admin.initialize();
     try {
-      if (tenantId) {
-        await admin.query(`DELETE FROM "anexo" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "chamado" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "tenant_contador" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "categoria" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "sessao" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "usuario" WHERE tenant_id = $1`, [tenantId]);
-        await admin.query(`DELETE FROM "tenant" WHERE id = $1`, [tenantId]);
+      for (const tid of [tenantId, tenantBId].filter((t) => t.length > 0)) {
+        await admin.query(`DELETE FROM "anexo" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "chamado" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "tenant_contador" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "categoria" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "sessao" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "usuario" WHERE tenant_id = $1`, [tid]);
+        await admin.query(`DELETE FROM "tenant" WHERE id = $1`, [tid]);
       }
     } catch (e) {
       console.warn('[smoke-api] aviso: limpeza parcial:', e);

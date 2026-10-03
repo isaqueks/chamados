@@ -10,7 +10,7 @@ import {
   MAX_IMAGEM_INLINE_BYTES,
   MAX_TEXTO_INLINE_CHARS,
 } from './ferramentas';
-import type { ArquivoBaixado } from './cliente';
+import type { ArquivoBaixado } from '@chamados/cliente-api';
 
 /** Tradução de argumentos das ferramentas → contrato HTTP (specs/11 §4.1/§7.2). */
 describe('ferramentas do MCP', () => {

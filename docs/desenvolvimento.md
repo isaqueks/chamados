@@ -28,9 +28,15 @@ Chamados/
 ├─ apps/
 │  ├─ web/       Next.js (App Router) — UI + API (inclui /api/v1 — specs/11)
 │  ├─ worker/    Worker BullMQ (triagem de IA, notificações, manutenção)
-│  └─ mcp/       Servidor MCP (stdio) que consome /api/v1 — ver §3.11
+│  ├─ mcp/       Servidor MCP (stdio) que consome /api/v1 — ver §3.11
+│  └─ forja/     Forja (D-036): client LOCAL de implementação de chamados com a CLI do
+│                Claude — specs em specs/forja/. Só roda na máquina do dev: NUNCA vai
+│                para a VPS (rsync exclui apps/forja; na VPS instale só os workspaces
+│                do servidor: npm install -w web -w @chamados/worker -w @chamados/mcp)
 ├─ packages/
 │  ├─ shared/    Enums canônicos (status, natureza, prioridade, papel, ...)
+│  ├─ storage/   Cliente S3/MinIO
+│  ├─ cliente-api/ Cliente HTTP tipado da /api/v1 (usado pelo mcp e pela Forja)
 │  └─ db/        TypeORM DataSource, entidades, migrations, RLS, smoke test
 ├─ docker-compose.yml   Postgres 16, Redis 7, MinIO
 ├─ .env.example         Variáveis de ambiente (copie para .env)
@@ -377,12 +383,19 @@ mesma RLS.
 }
 ```
 
-| Variável                       | Obrigatória | Descrição                                                                  |
-| ------------------------------ | ----------- | -------------------------------------------------------------------------- |
-| `CHAMADOS_URL`                 | sim         | Base da instalação. HTTPS obrigatório fora de `localhost`                  |
-| `CHAMADOS_EMAIL` / `_SENHA`    | sim         | Credenciais do usuário (recomendado: um `operador` dedicado, p/ auditoria) |
-| `CHAMADOS_TENANT`              | não         | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`)  |
-| `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas as ferramentas de leitura                           |
+| Variável                       | Obrigatória  | Descrição                                                                 |
+| ------------------------------ | ------------ | ------------------------------------------------------------------------- |
+| `CHAMADOS_URL`                 | sim          | Base da instalação. HTTPS obrigatório fora de `localhost`                 |
+| `CHAMADOS_EMAIL`               | sim          | E-mail do usuário (recomendado: um `operador` dedicado, p/ auditoria)     |
+| `CHAMADOS_SENHA`               | uma das duas | Senha do usuário                                                          |
+| `CHAMADOS_TOKEN`               | uma das duas | Token de sessão já aberta — usado sem login; sem senha, não reloga        |
+| `CHAMADOS_TENANT`              | não          | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`) |
+| `CHAMADOS_MCP_SOMENTE_LEITURA` | não          | `true` registra apenas as ferramentas de leitura                          |
+
+`CHAMADOS_TOKEN` é como a Forja (§3.12) entrega este MCP, em modo somente leitura,
+aos agentes que planejam e implementam: repassa o token da própria conexão em vez
+da senha (specs/11 §7.1, FJ-030 §4). Token recusado sem senha configurada vira erro
+`401 sessao_recusada` em toda ferramenta; o token nunca aparece em log.
 
 Ferramentas expostas: `chamados_listar`, `chamado_obter`, `sistemas_alvo_listar`,
 `anexo_obter` (leitura), `chamado_publicar_mensagem`, `chamado_alterar_status`,
@@ -407,20 +420,133 @@ npm run smoke:api
 Requer Postgres e MinIO de pé e migrations aplicadas; cria um tenant descartável
 e o remove ao final. Deve terminar com `RESULTADO: PASSOU`.
 
+### 3.12 Forja (D-036) — client local de implementação de chamados
+
+A **Forja** (`apps/forja`, specs em `specs/forja/`) roda **só na sua máquina**: lista
+os chamados do Chamados (pela `/api/v1`, com um operador dedicado), e implementa os
+escolhidos com a **CLI do Claude Code** (planejar → implementar → verificar → revisar
+→ relatório → aprovação humana → merge + push → responde e marca `resolvido`). Um
+único processo Node: Fastify em `127.0.0.1:4317`, SPA React, SQLite local,
+orquestrador e Terminal PTY (o `claude` interativo no navegador).
+
+**Pré-requisitos** (o Diagnóstico da Forja confere tudo no boot):
+
+- **CLI do Claude `2.1.288`, logada** com a assinatura: `claude --version` e
+  `claude auth status`. Outra versão bloqueia o pipeline até você "aceitar versão X"
+  no Diagnóstico, o que roda o smoke de perfis (≈ US$ 0,04 em haiku).
+- **git ≥ 2.38** (usa `merge-tree --write-tree`) com `user.name`/`user.email` (sem identidade global o Diagnóstico só **avisa**: a identidade por repositório também serve).
+- **Chromium do Playwright** para os prints antes/depois de alteração de UI (FJ-026/FJ-030):
+  `npx playwright install chromium` (o `forja-print` usa o `chrome-headless-shell` mais
+  novo em `~/.cache/ms-playwright`; o repositório-alvo não precisa ter Playwright). Sem ele,
+  o agente declara que não conseguiu fotografar e a aprovação pede "aprovar sem prints".
+- Módulos nativos `better-sqlite3` e `node-pty` compilados pelo `npm install` (se não
+  houver prebuild: `python3 make g++`). Sem `node-pty` a Forja sobe sem o Terminal.
+
+**Rodando:**
+
+```bash
+npm run build -w @chamados/forja   # builda a SPA (web/dist)
+npm run forja                      # sobe em 127.0.0.1:4317 e imprime o link com o token
+npm run dev:forja                  # dev: servidor (tsx watch) + Vite em 127.0.0.1:5173
+```
+
+Abra **o link impresso no terminal** (`/?t=<token>`): o token troca-se por um cookie
+`HttpOnly` e some da URL; reiniciou a Forja, reabra pelo link novo.
+
+**Configurar (2 passos, FJ-030).** O primeiro acesso abre o assistente:
+
+1. **Conexão** — URL, e-mail e senha do operador dedicado → **Testar e salvar**. Local é
+   `http://localhost:3000` (aí aparece o campo **tenant**, com o slug); **nunca**
+   `127.0.0.1`, que o proxy resolveria como tenant "127". Produção é a URL HTTPS do
+   tenant (o tenant vem do host). A senha vai para o keyring do sistema (ou arquivo `0600`).
+2. **Projeto** — **Escolher pasta…** do repositório local. A Forja valida (`git rev-parse`)
+   e mostra o que detectou: branch de destino, comandos (`setup` pelo lockfile; typecheck,
+   testes, lint, build e e2e pelos `scripts` do `package.json`), `.env` da raiz (copiado
+   para a worktree) e os sistemas-alvo que casam pelo nome. **Pronto** → Fila.
+
+Nada mais é obrigatório. Use um `.env` **de desenvolvimento** na raiz do repo: o agente
+sobe o app com ele para tirar os prints, e o print mostra o que o banco tiver. Se algo
+detectado estiver errado, ajuste no `<details>` **Avançado** do Projeto (YAML/JSON:
+`comandos`, `detectores`, `arquivos_locais`, `entrega`, `politica_status`, `gates`,
+`limites`, `modo_reforcado`). Modelos, cota, concorrência, limites e gates valem para
+todos os projetos e ficam em **Configurações** (`<dados>/configuracoes.json`, com
+"Restaurar padrões").
+
+Os agentes (planejador e condutor) leem o Chamados pelo MCP **somente leitura** deste
+monorepo (`apps/mcp` com `CHAMADOS_MCP_SOMENTE_LEITURA=true`), autenticado pelo token da
+conexão da Forja (`CHAMADOS_TOKEN`): nada a configurar. Escritas no Chamados continuam só
+pela Forja, depois da sua aprovação.
+
+Desligar: `Ctrl+C`/`SIGTERM` faz o desligamento limpo (escada de sinais nos agentes,
+PTYs encerrados, nenhum processo filho vivo, SQLite fechado). No boot seguinte a
+reconciliação retoma o que estava em curso.
+
+| Variável             | Padrão                                         | Descrição                                                                    |
+| -------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| `FORJA_PORTA`        | `4317`                                         | Porta do servidor (bind sempre `127.0.0.1`)                                  |
+| `FORJA_DADOS_DIR`    | `${XDG_DATA_HOME:-~/.local/share}/forja[-dev]` | Diretório de dados (absoluto; nunca dentro de um repositório)                |
+| `FORJA_MODO`         | (produção)                                     | `dev` (posto pelo `dev:forja`): aceita a origem do Vite e usa `forja-dev/`   |
+| `FORJA_SEM_KEYRING`  | —                                              | `1` = senha/chave em arquivo `0600` em vez do keyring do sistema             |
+| `FORJA_PTY_COMANDO`  | `claude`                                       | Binário do Terminal (só para teste/smoke; o pipeline nunca usa)              |
+| `FORJA_DB_LOG`       | —                                              | `true` = log de SQL do TypeORM                                               |
+| `FORJA_SMOKE_*`      | —                                              | Parâmetros do `smoke:local` (abaixo)                                         |
+| `FORJA_SPIKES_SAIDA` | `$TMPDIR/forja-spikes`                         | Onde os spikes gravam os brutos; `FORJA_SPIKE_FABLE=rodar` refaz a rodada S2 |
+
+Variáveis que a **Forja põe** nos processos que ela inicia (você não define): `FORJA_PRINT`
+(caminho do `forja-print.mjs`, no env do condutor do T1 com UI prevista: `node $FORJA_PRINT <url>
+<saida.png> [--viewport 1366x768] [--espera <ms>|<seletor>] [--storage <state.json>] [--full]`) e,
+no processo do MCP, `CHAMADOS_URL`, `CHAMADOS_EMAIL`, `CHAMADOS_TOKEN`, `CHAMADOS_TENANT` (só com
+`localhost`) e `CHAMADOS_MCP_SOMENTE_LEITURA=true`. O `apps/mcp` aceita `CHAMADOS_TOKEN` no
+lugar de `CHAMADOS_SENHA` também fora da Forja (§3.11).
+
+**Smokes e spikes:**
+
+```bash
+npm run smoke:cli -w @chamados/forja     # versão/login da CLI, git, módulos nativos (custo zero)
+FORJA_SMOKE_CLAUDE=1 npm run smoke:cli -w @chamados/forja   # + smoke de perfis (haiku, ≈ US$ 0,04)
+npm run smoke:local -w @chamados/forja   # Forja inteira de ponta a ponta, SEM Claude real
+npm run spike:s2 -w @chamados/forja      # spikes S1–S10 do roadmap (specs/forja/08 §2)
+```
+
+> **Custo dos spikes:** eles chamam a CLI **real** e gastam a assinatura. A mecânica roda em
+> haiku, mas o S2 roda uma rodada Fable + Opus de verdade (≈ US$ 0,29 equivalente; a rodada
+> inteira de 2026-10-02 somou ≈ US$ 0,72, `specs/forja/08` §2.1) — a rodada Fable é reaproveitada
+> nas execuções seguintes, salvo `FORJA_SPIKE_FABLE=rodar`. O **S7** exige o Chamados local de pé
+> (`npm run dev:web` + worker + Docker, Mailpit para os e-mails): ele provisiona e apaga um
+> tenant descartável via `@chamados/db`. S1/S6 imprimem PENDENTE.
+
+O `smoke:local` sobe o servidor de verdade num diretório temporário, abre a sessão,
+cria conexão (o login pode falhar: o erro precisa vir tipado), cria um projeto num
+clone descartável deste repositório, lista a fila, confere o Diagnóstico (CLI real,
+`auth status`, git, faixa "sem sandbox", autoteste de Host/Origin forjados), o SSE
+(replay + heartbeat), histórico/worktrees, o WebSocket do Terminal (Origin forjado →
+403, sem cookie → 401, handshake válido trocando bytes em frame binário) com um PTY
+falso, e termina com `SIGTERM` conferindo que nenhum processo filho ficou vivo. Variáveis:
+`FORJA_SMOKE_CHAMADOS_URL` (padrão `http://localhost:3000`), `FORJA_SMOKE_TENANT`,
+`FORJA_SMOKE_EMAIL`/`FORJA_SMOKE_SENHA` (para um login real), `FORJA_SMOKE_CLAUDE=1`
+(Terminal com o `claude` de verdade) e `FORJA_SMOKE_MANTER=1` (não apaga a área
+temporária). Deve terminar com `RESULTADO: PASSOU`.
+
+> **Deploy:** a Forja **não é implantada**. No rsync para a VPS, `--exclude apps/forja`
+> (além do `--exclude '.env*'` obrigatório) e, quando o lockfile mudar, instale só
+> `npm install -w web -w @chamados/worker -w @chamados/mcp` — `node-pty` e
+> `better-sqlite3` nunca vão para o servidor. `packages/cliente-api` vai (o `mcp` usa).
+
 ---
 
 ## 4. Portas e URLs
 
-| Recurso         | URL / porta                      | Credenciais (dev)                                                       |
-| --------------- | -------------------------------- | ----------------------------------------------------------------------- |
-| Web (Next.js)   | http://localhost:3000            | —                                                                       |
-| Health check    | http://localhost:3000/api/health | —                                                                       |
-| PostgreSQL      | localhost:5432                   | `chamados` / `chamados` (admin) · `chamados_app` / `chamados_app` (app) |
-| Redis           | localhost:6379                   | —                                                                       |
-| MinIO (API S3)  | http://localhost:9000            | `minioadmin` / `minioadmin`                                             |
-| MinIO (console) | http://localhost:9001            | `minioadmin` / `minioadmin`                                             |
-| Mailpit (SMTP)  | localhost:1025                   | — (aceita qualquer credencial)                                          |
-| Mailpit (inbox) | http://localhost:8025            | —                                                                       |
+| Recurso         | URL / porta                                      | Credenciais (dev)                                                       |
+| --------------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
+| Web (Next.js)   | http://localhost:3000                            | —                                                                       |
+| Health check    | http://localhost:3000/api/health                 | —                                                                       |
+| PostgreSQL      | localhost:5432                                   | `chamados` / `chamados` (admin) · `chamados_app` / `chamados_app` (app) |
+| Redis           | localhost:6379                                   | —                                                                       |
+| MinIO (API S3)  | http://localhost:9000                            | `minioadmin` / `minioadmin`                                             |
+| MinIO (console) | http://localhost:9001                            | `minioadmin` / `minioadmin`                                             |
+| Mailpit (SMTP)  | localhost:1025                                   | — (aceita qualquer credencial)                                          |
+| Mailpit (inbox) | http://localhost:8025                            | —                                                                       |
+| Forja           | http://127.0.0.1:4317 (dev: Vite 127.0.0.1:5173) | link com o token impresso no boot (§3.12)                               |
 
 Todas as portas são configuráveis via `.env`.
 
@@ -443,6 +569,9 @@ Todas as portas são configuráveis via `.env`.
 | `npm run smoke:notificacoes`             | testa e-mail + webhook (SMTP fake + HMAC)                      |
 | `npm run smoke:api`                      | testa a API `/api/v1` + cliente MCP (web precisa estar no ar)  |
 | `npm run mcp`                            | roda o servidor MCP (stdio) — normalmente iniciado pelo Claude |
+| `npm run forja`                          | sobe a Forja local (antes: `npm run build -w @chamados/forja`) |
+| `npm run dev:forja`                      | Forja em dev: servidor (tsx watch) + Vite                      |
+| `npm run smoke:local -w @chamados/forja` | Forja de ponta a ponta, sem Claude real                        |
 | `npm run dev`                            | sobe web + worker juntos                                       |
 | `npm run dev:web` / `npm run dev:worker` | sobe web / worker separados                                    |
 | `npm run build`                          | build de produção do web                                       |

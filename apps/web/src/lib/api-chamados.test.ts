@@ -14,6 +14,8 @@ import {
   idsDeChamados,
   parsearEntradaCriar,
   parsearFormato,
+  parsearSilencioIa,
+  parsearAtribuicao,
   projetarCorpo,
   projetarAnexo,
   agruparAnexos,
@@ -108,6 +110,16 @@ describe('parsearFiltros', () => {
     expect(parsearFiltros(sp('limite=2.5')).ok).toBe(false);
   });
 
+  it('complexidade aceita CSV do enum e rejeita valor fora dele (D-036 L3)', () => {
+    const r = parsearFiltros(sp('complexidade=facil,medio'));
+    expect(r.ok && r.filtros.complexidade).toEqual([Complexidade.facil, Complexidade.medio]);
+
+    const ruim = parsearFiltros(sp('complexidade=xyz'));
+    expect(ruim.ok).toBe(false);
+    expect(!ruim.ok && ruim.erro).toMatch(/Complexidade inválida/);
+    expect(parsearFiltros(sp('complexidade=')).ok).toBe(false);
+  });
+
   it('sem parâmetros, não inventa filtro nenhum', () => {
     const r = parsearFiltros(sp(''));
     expect(r.ok && Object.keys(r.filtros)).toEqual([]);
@@ -130,6 +142,32 @@ describe('projeções de chamado', () => {
     // O que ele pode ver continua lá.
     expect(item.status).toBe(StatusChamado.em_atendimento);
     expect(item.solicitante_nome).toBe('Cliente Ana');
+  });
+
+  it('equipe recebe os ids de L2 e ia_silenciada no ITEM da lista (D-036)', () => {
+    const item = projetarItemLista(CHAMADO_EQUIPE, NOMES);
+    expect(item.sistema_alvo_id).toBe('s-1');
+    expect(item.categoria_id).toBeNull();
+    expect(item.operador_id).toBe('u-op');
+    expect(item.ia_silenciada).toBe(false);
+
+    const det = projetarDetalhe(CHAMADO_EQUIPE, NOMES);
+    expect(det.operador_id).toBe('u-op');
+    expect(det.sistema_alvo_id).toBe('s-1');
+  });
+
+  it('cliente NÃO recebe ids de L2 nem ia_silenciada — nem a view dele traz sistema_alvo_id', () => {
+    // A view do cliente TEM sistema_alvo_id (ele o escolhe), mas o contrato de L2 é de equipe.
+    expect(CHAMADO_CLIENTE.sistema_alvo_id).toBe('s-1');
+    for (const proj of [
+      projetarItemLista(CHAMADO_CLIENTE, NOMES),
+      projetarDetalhe(CHAMADO_CLIENTE, NOMES),
+    ]) {
+      for (const campo of ['sistema_alvo_id', 'categoria_id', 'operador_id', 'ia_silenciada']) {
+        expect(campo in proj).toBe(false);
+      }
+      expect(proj.sistema_nome).toBe('ERP Financeiro');
+    }
   });
 
   it('detalhe entrega a descrição em TEXTO puro (sem HTML)', () => {
@@ -338,5 +376,27 @@ describe('formato e anexos', () => {
       url: '/api/v1/anexos/a2',
       tamanho_bytes: 10,
     });
+  });
+});
+
+describe('silêncio da IA e atribuição (D-036 L1/L4)', () => {
+  it('silenciada exige booleano JSON — sem coerção de string/número', () => {
+    expect(parsearSilencioIa({ silenciada: true })).toEqual({ ok: true, silenciada: true });
+    expect(parsearSilencioIa({ silenciada: false })).toEqual({ ok: true, silenciada: false });
+    for (const v of ['true', 1, null, undefined]) {
+      const r = parsearSilencioIa({ silenciada: v });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.codigo).toBe('parametro_invalido');
+    }
+  });
+
+  it('operador_id: UUID atribui, null desatribui, chave ausente é erro', () => {
+    const uuid = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+    expect(parsearAtribuicao({ operador_id: uuid })).toEqual({ ok: true, operadorId: uuid });
+    expect(parsearAtribuicao({ operador_id: null })).toEqual({ ok: true, operadorId: null });
+    // `{}` NÃO pode virar desatribuição silenciosa.
+    expect(parsearAtribuicao({}).ok).toBe(false);
+    expect(parsearAtribuicao({ operador_id: 'marina' }).ok).toBe(false);
+    expect(parsearAtribuicao({ operador_id: 42 }).ok).toBe(false);
   });
 });

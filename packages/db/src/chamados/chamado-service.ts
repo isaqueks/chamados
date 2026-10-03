@@ -10,6 +10,7 @@ import {
   Prioridade,
   Complexidade,
   Papel,
+  StatusUsuario,
   GatilhoIA,
   serializarChamadoParaCliente,
   type Ator,
@@ -404,6 +405,13 @@ export interface FiltrosChamado {
   atribuicao?: Atribuicao;
   sistema_alvo_id?: string;
   categoria_id?: string;
+  /**
+   * Complexidade INTERNA (specs/04 §10, D-036 L3). Só a equipe filtra por ela: o
+   * conjunto do resultado revelaria o campo ao cliente (specs/04 §3.3). Para o
+   * `cliente` é ignorada aqui como rede de segurança — a API recusa antes, com
+   * `403`. Presente, chamados com complexidade `null` ficam de fora.
+   */
+  complexidade?: Complexidade | Complexidade[];
   /** Equipe pode filtrar por autor; para cliente é ignorado (escopo é sempre o próprio). */
   cliente_id?: string;
   /**
@@ -482,6 +490,10 @@ export async function listarChamados(
   if (filtros.sistema_alvo_id)
     qb.andWhere('c.sistema_alvo_id = :sa', { sa: filtros.sistema_alvo_id });
   if (filtros.categoria_id) qb.andWhere('c.categoria_id = :cat', { cat: filtros.categoria_id });
+  if (filtros.complexidade && ator.papel !== Papel.cliente) {
+    const arr = Array.isArray(filtros.complexidade) ? filtros.complexidade : [filtros.complexidade];
+    if (arr.length > 0) qb.andWhere('c.complexidade IN (:...cx)', { cx: arr });
+  }
 
   if (filtros.atribuicao === 'nao_atribuido') {
     qb.andWhere('c.operador_id IS NULL');
@@ -620,7 +632,13 @@ export type MotivoMutacao =
 
 export type ResultadoMutacao = { ok: true } | { ok: false; motivo: MotivoMutacao };
 
-/** Atribui/reatribui o operador responsável (operador/admin — specs/04 §7). */
+/**
+ * Atribui/reatribui o operador responsável (operador/admin — specs/04 §7). O alvo
+ * precisa ser operador/admin ATIVO e não excluído — o mesmo universo que o
+ * seletor do painel oferece (`listarOperadoresDoTenant`); fora disso o motivo é
+ * `operador_invalido`. A busca do alvo roda sob RLS: um usuário de outro tenant
+ * simplesmente não é encontrado (specs/11 §4.9, D-036 L4).
+ */
 export async function atribuirOperador(
   em: EntityManager,
   ator: AtorChamado,
@@ -636,7 +654,11 @@ export async function atribuirOperador(
   const alvo = await em.findOne(UsuarioSchema, {
     where: { id: operadorId, deleted_at: IsNull() },
   });
-  if (!alvo || (alvo.papel !== Papel.operador && alvo.papel !== Papel.admin)) {
+  if (
+    !alvo ||
+    alvo.status !== StatusUsuario.ativo ||
+    (alvo.papel !== Papel.operador && alvo.papel !== Papel.admin)
+  ) {
     return { ok: false, motivo: 'operador_invalido' };
   }
 

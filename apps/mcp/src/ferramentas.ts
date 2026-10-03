@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ErroApi, type ArquivoBaixado, type ClienteChamados } from './cliente';
+import { ErroApi, type ArquivoBaixado, type ClienteChamados } from '@chamados/cliente-api';
 
 /**
  * Ferramentas MCP (specs/11 §7.2). Cada uma é um envelope fino sobre um endpoint

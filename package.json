@@ -37,6 +37,8 @@
     "smoke:manutencao": "npm run smoke:manutencao -w @chamados/worker",
     "smoke:api": "npm run smoke:api -w @chamados/mcp",
     "mcp": "npm run start -w @chamados/mcp",
+    "forja": "npm run start -w @chamados/forja",
+    "dev:forja": "npm run dev -w @chamados/forja",
     "seed:dev": "npm run seed:dev -w @chamados/db",
     "tenant:provisionar": "npm run tenant:provisionar -w @chamados/db --",
     "test": "vitest run",

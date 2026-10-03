@@ -14,12 +14,12 @@ Helpdesk IA-first, whitelabel multi-tenant, substituto do osTicket. Metodologia 
 
 ## Stack (D-001)
 
-Monorepo TypeScript · Next.js App Router · PostgreSQL 16 + RLS · **TypeORM** · Redis + BullMQ · MinIO/S3 · TipTap · better-auth · Claude Agent SDK (Opus 5, esforço `high`) atrás da interface `AIProvider`.
+Monorepo TypeScript · Next.js App Router · PostgreSQL 16 + RLS · **TypeORM** · Redis + BullMQ · MinIO/S3 · TipTap · autenticação própria (Argon2id + sessões server-side, D-010) · Claude Agent SDK (Opus 5, esforço `high`) atrás da interface `AIProvider`.
 
 ## Enums canônicos (resumo — fonte: specs/02)
 
 - status: `novo` `em_triagem` `aguardando_cliente` `em_atendimento` `resolvido` `fechado` `cancelado`
-- natureza: `problema` `alteracao` · prioridade: `baixa` `media` `alta` `urgente`
+- natureza: `problema` `alteracao` `duvida` (D-017) · prioridade: `baixa` `media` `alta` `urgente`
 - complexidade (interna): `facil` `medio` `dificil` · visibilidade de mensagem: `publica` `interna`
 - papéis: `admin` `operador` `cliente` `agente_ia`
 
@@ -29,7 +29,7 @@ Limpa, bonita, intuitiva, fácil de usar e **consistente**. shadcn/ui + Tailwind
 
 ## Estrutura do monorepo
 
-`apps/web` (Next.js 16 + shadcn/ui) · `apps/worker` (BullMQ) · `packages/db` (TypeORM: entidades, migrations, `runInTenantContext`) · `packages/shared` (enums canônicos). Guia de setup: `docs/desenvolvimento.md`.
+`apps/web` (Next.js 16 + shadcn/ui, inclui `/api/v1`) · `apps/worker` (BullMQ) · `apps/mcp` (servidor MCP stdio sobre `/api/v1`) · `apps/forja` (**Forja**, D-036: client local de implementação com a CLI do Claude — specs em `specs/forja/`, fora do deploy da VPS) · `packages/db` (TypeORM: entidades, migrations, `runInTenantContext`) · `packages/shared` (enums canônicos, máquina de estados, autorização) · `packages/storage` (S3/MinIO) · `packages/cliente-api` (cliente HTTP tipado da `/api/v1`, usado por mcp e forja). Guia de setup: `docs/desenvolvimento.md`.
 
 ## Comandos
 
@@ -42,6 +42,10 @@ npm run dev                   # web + worker (ou dev:web / dev:worker)
 npm run build                 # build de produção do web
 npm run typecheck             # typecheck de todos os workspaces
 npm run lint                  # eslint · npm run format (prettier)
+npm run build -w @chamados/forja && npm run forja   # Forja local (imprime o link com token)
+npm run dev:forja             # Forja em dev (servidor tsx watch + Vite)
+npm run smoke:local -w @chamados/forja   # Forja ponta a ponta, sem Claude real
+npm run spike:sN -w @chamados/forja      # spikes S1–S10 (CLI real: gastam assinatura)
 ```
 
-Portas: web 3000 · Postgres 5432 · Redis 6379 · MinIO 9000/9001 (console). Roles do banco: `chamados` (admin/migrations, com bypass de RLS) e `chamados_app` (aplicação, **sem** BYPASSRLS — nunca conecte a app com o role admin).
+Portas: web 3000 · Postgres 5432 · Redis 6379 · MinIO 9000/9001 (console) · Forja 4317 (Vite dev 5173). Roles do banco: `chamados` (admin/migrations, com bypass de RLS) e `chamados_app` (aplicação, **sem** BYPASSRLS — nunca conecte a app com o role admin).

@@ -2,7 +2,7 @@
 
 Substituto do osTicket: sistema de chamados prático e moderno, com um agente de IA que faz triagem, classifica, pede informações, resolve casos simples e gera SPECs de alteração.
 
-> **Status:** specs concluídas e marco **M0 (fundação)** implementado — monorepo, Docker Compose, TypeORM com RLS multi-tenant e smoke test de isolamento passando. As specs em `specs/` são a fonte da verdade; decisões em `specs/decisoes.md`; mudanças registradas no `CHANGELOG.md`.
+> **Status:** MVP (marcos **M0–M10** do roadmap) implementado e em produção com um tenant piloto; evolução contínua por ADRs (D-001 → D-036). A **Forja** (client local de implementação, D-036) tem o **MVP implementado** (`apps/forja`; `npm run forja`); configuração em 2 passos (conexão + pasta do repositório; o resto é autodetectado, FJ-030); pendências na entrada D-036 do `CHANGELOG.md` (prints pelo agente num chamado real, modo reforçado, smoke pago de perfis…). As specs em `specs/` são a fonte da verdade; decisões em `specs/decisoes.md`; mudanças registradas no `CHANGELOG.md`.
 
 ## Executando localmente
 
@@ -11,6 +11,9 @@ docker compose up -d     # postgres 16, redis, minio (tudo em Docker — D-002)
 npm install
 npm run migration:run
 npm run dev              # web em http://localhost:3000 + worker
+
+# Forja (local, opcional — docs §3.12)
+npm run build -w @chamados/forja && npm run forja   # http://127.0.0.1:4317 (link com token no terminal)
 ```
 
 Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs/desenvolvimento.md).
@@ -33,6 +36,7 @@ Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs
 | [09-seguranca-lgpd.md](specs/09-seguranca-lgpd.md)                                 | Ameaças, prompt injection, uploads, XSS, segredos, LGPD                     |
 | [10-roadmap-mvp.md](specs/10-roadmap-mvp.md)                                       | Corte do MVP, fases 2 e 3, riscos, ordem de implementação                   |
 | [11-api-mcp.md](specs/11-api-mcp.md)                                               | API HTTP `/api/v1` (login/senha) e servidor MCP para assistentes            |
+| [forja/](specs/forja/00-visao-geral.md)                                            | **Forja** (D-036): client local que implementa chamados com a CLI do Claude |
 
 ## Conceitos-chave
 
@@ -41,4 +45,5 @@ Guia completo (pré-requisitos, troubleshooting): [docs/desenvolvimento.md](docs
 - **SistemaAlvo:** cada tenant cadastra os sistemas sobre os quais abre chamados — repositório git, logs e conexão read-only ao BD, que a IA usa na triagem (com `git pull` a cada análise).
 - **IA fase 1:** Claude Agent SDK com Opus 5, esforço `high` (D-006, D-031), atrás da interface `AIProvider` para permitir troca de engine.
 - **Stack (D-001):** Next.js 16 App Router · PostgreSQL 16 + RLS · TypeORM · Redis/BullMQ · MinIO · TipTap · autenticação própria conforme spec 03 (D-010) — infraestrutura sempre em Docker (D-002).
+- **Forja (D-036):** app web **local** (`apps/forja`, MVP implementado) que lista os chamados pela API, implementa-os com a CLI do Claude Code (Fable orquestra, Opus implementam e revisam) em worktrees isoladas, gera relatório não técnico, espera aprovação humana, faz merge e responde/encerra o chamado. Specs em [specs/forja/](specs/forja/00-visao-geral.md).
 - **API + MCP (D-028):** API HTTP `/api/v1` (login por e-mail/senha, Bearer-only) e servidor MCP (`apps/mcp`) para usar o Chamados dentro do Claude — ler chamados e timeline, publicar mensagens, mudar status e abrir chamados (D-032), sempre no escopo do papel do usuário. Ver [specs/11](specs/11-api-mcp.md) e o guia em [docs/desenvolvimento.md](docs/desenvolvimento.md) §3.11.

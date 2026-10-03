@@ -10,7 +10,7 @@ Escopo relacionado, não duplicado aqui:
 - Ameaças, hardening e LGPD: `09-seguranca-lgpd.md`.
 - O `agente_ia` e suas ferramentas MCP **internas** (worker): `05-agente-ia.md` — nada a ver com este documento (lá o MCP é consumido pelo worker; aqui é oferecido a um cliente externo).
 
-Decisões de origem: **D-028** (API + MCP), **D-032** (criação de chamado) e **D-035** (anexos e formato rico) em `specs/decisoes.md`.
+Decisões de origem: **D-028** (API + MCP), **D-032** (criação de chamado), **D-035** (anexos e formato rico) e **D-036** (extensões mínimas para a Forja — L1 silenciar IA, L2 ids na projeção, L3 filtro `complexidade`, L4 atribuição) em `specs/decisoes.md`. O contrato de uso pela Forja está em `specs/forja/07-integracao-chamados.md` §11.
 
 ---
 
@@ -18,7 +18,7 @@ Decisões de origem: **D-028** (API + MCP), **D-032** (criação de chamado) e *
 
 1. **A API não é um bypass.** Todo endpoint passa pelo MESMO `autorizar()` (specs/03 §8), pelos MESMOS services de domínio e pela MESMA RLS da UI. Não existe caminho "de máquina" com mais poder que o humano equivalente: o token pertence a um `Usuario` real, com o papel dele.
 2. **Só login e senha.** Nenhuma credencial nova, nenhum token de API paralelo, nenhum segredo adicional para gerir. A API autentica com e-mail + senha do próprio usuário e devolve uma **sessão server-side** (`Sessao`, specs/02) — a mesma entidade revogável do cookie, apenas transportada em header.
-3. **Leitura primeiro.** A superfície de escrita é deliberadamente pequena: publicar mensagem, mudar status e **abrir chamado** (D-032 — o mesmo formulário mínimo do portal, specs/04 §2). Nada de gerenciar usuários, mexer em branding, sistemas-alvo ou guardrails da IA por esta API.
+3. **Leitura primeiro.** A superfície de escrita é deliberadamente pequena: publicar mensagem, mudar status, **abrir chamado** (D-032 — o mesmo formulário mínimo do portal, specs/04 §2) e, para integradores da equipe, **silenciar/reativar a IA** e **atribuir** um chamado (D-036 — os mesmos botões do painel). Nada de gerenciar usuários, mexer em branding, sistemas-alvo ou na configuração da IA por esta API.
 4. **Sem CSRF por construção.** A API aceita **apenas** `Authorization: Bearer`; o cookie de sessão do navegador **não** autentica `/api/v1`. Um site malicioso não consegue agir em nome do usuário logado no portal, porque o navegador não anexa o header sozinho.
 5. **Formato pensado para LLM.** Respostas em JSON compacto com o corpo das mensagens em **texto puro** por default (projeção do HTML sanitizado) — menos tokens, menos ruído, nenhuma tag para o modelo interpretar. Quando a estrutura ou as imagens importam, o consumidor pede `?formato=markdown` (gerado do documento fonte, imagens como `![alt](url)` no lugar em que o autor as colou) ou `?formato=html` (o HTML já sanitizado na escrita). Os **anexos** são sempre listados com metadados e baixados por rota própria (§4.7) — nunca embutidos em base64 no JSON.
 
@@ -66,27 +66,31 @@ Host que não resolve tenant → `404` com código `tenant_desconhecido`, sem re
 
 ## 4. Endpoints
 
-| Método   | Rota                               | Papéis                | O que faz                                    |
-| -------- | ---------------------------------- | --------------------- | -------------------------------------------- |
-| `POST`   | `/api/v1/sessao`                   | público               | Login por e-mail + senha → token             |
-| `DELETE` | `/api/v1/sessao`                   | autenticado           | Revoga a sessão corrente                     |
-| `GET`    | `/api/v1/chamados`                 | todos (escopo abaixo) | Lista/filtra chamados                        |
-| `GET`    | `/api/v1/chamados/{ref}`           | todos (escopo abaixo) | Chamado + timeline                           |
-| `POST`   | `/api/v1/chamados/{ref}/mensagens` | todos (escopo abaixo) | Publica mensagem `publica` ou nota `interna` |
-| `POST`   | `/api/v1/chamados/{ref}/status`    | todos (escopo abaixo) | Transiciona o status                         |
-| `POST`   | `/api/v1/chamados`                 | todos (escopo abaixo) | Abre um chamado (D-032)                      |
-| `GET`    | `/api/v1/sistemas-alvo`            | todos                 | Sistemas-alvo ativos (id, nome, descrição)   |
-| `GET`    | `/api/v1/anexos/{id}`              | todos (escopo abaixo) | Bytes de um anexo (imagem/arquivo) — D-035   |
+| Método   | Rota                                | Papéis                | O que faz                                    |
+| -------- | ----------------------------------- | --------------------- | -------------------------------------------- |
+| `POST`   | `/api/v1/sessao`                    | público               | Login por e-mail + senha → token             |
+| `DELETE` | `/api/v1/sessao`                    | autenticado           | Revoga a sessão corrente                     |
+| `GET`    | `/api/v1/chamados`                  | todos (escopo abaixo) | Lista/filtra chamados                        |
+| `GET`    | `/api/v1/chamados/{ref}`            | todos (escopo abaixo) | Chamado + timeline                           |
+| `POST`   | `/api/v1/chamados/{ref}/mensagens`  | todos (escopo abaixo) | Publica mensagem `publica` ou nota `interna` |
+| `POST`   | `/api/v1/chamados/{ref}/status`     | todos (escopo abaixo) | Transiciona o status                         |
+| `POST`   | `/api/v1/chamados`                  | todos (escopo abaixo) | Abre um chamado (D-032)                      |
+| `GET`    | `/api/v1/sistemas-alvo`             | todos                 | Sistemas-alvo ativos (id, nome, descrição)   |
+| `GET`    | `/api/v1/anexos/{id}`               | todos (escopo abaixo) | Bytes de um anexo (imagem/arquivo) — D-035   |
+| `POST`   | `/api/v1/chamados/{ref}/ia`         | operador/admin        | Silencia/reativa a IA no chamado — D-036 L1  |
+| `POST`   | `/api/v1/chamados/{ref}/atribuicao` | operador/admin        | Atribui/desatribui o operador — D-036 L4     |
 
 `{ref}` aceita o **UUID** ou o **número** do chamado (`12` ou `#12`) — o número é como a equipe se refere ao chamado no dia a dia. A resolução por número é escopada ao tenant pela RLS (`UNIQUE (tenant_id, numero)`).
 
 ### 4.1 `GET /api/v1/chamados`
 
-Query params, todos opcionais: `status` (aceita lista separada por vírgula), `natureza`, `prioridade`, `atribuicao` (`atribuido` | `nao_atribuido` | `<uuid do operador>`), `sistema_alvo_id`, `categoria_id`, `busca` (número ou full-text — specs/04 §10.4), `limite` (1–100, default 20), `cursor`.
+Query params, todos opcionais: `status` (aceita lista separada por vírgula), `natureza`, `prioridade`, `complexidade` (lista separada por vírgula, como `status` — **só equipe**, D-036 L3), `atribuicao` (`atribuido` | `nao_atribuido` | `<uuid do operador>`), `sistema_alvo_id`, `categoria_id`, `busca` (número ou full-text — specs/04 §10.4), `limite` (1–100, default 20), `cursor`.
 
-Valor inválido de enum é **rejeitado** com `400 parametro_invalido` (nunca silenciosamente ignorado — filtro que mente é pior que erro).
+Valor inválido de enum é **rejeitado** com `400 parametro_invalido` (nunca silenciosamente ignorado — filtro que mente é pior que erro). Parâmetro **desconhecido** é ignorado (não é filtro do contrato); quem integra não deve presumir que um parâmetro novo filtra antes de ele constar aqui.
 
-Resposta: `{ "itens": [...], "proximo_cursor": "…" | null }`. Cada item é uma **projeção compacta** (sem a descrição, que só vem no detalhe): `id`, `numero`, `titulo`, `status`, `natureza`, `prioridade`, `complexidade` (só equipe), `operador_nome`, `solicitante_nome`, `sistema_nome`, `categoria_nome`, `created_at`, `updated_at`.
+**`complexidade` (D-036 L3)** é atributo interno (specs/04 §3.3): filtrar por ele revelaria o campo ao cliente pelo conjunto do resultado. Por isso o `cliente` que o envia recebe `403 sem_permissao` — recusa explícita, pelo mesmo critério (`ehEquipe`) que esconde o campo na projeção; o serviço `listarChamados` ainda o ignora para o cliente, como rede de segurança. Com o filtro presente, chamados de complexidade `null` (ainda não classificados) ficam de fora.
+
+Resposta: `{ "itens": [...], "proximo_cursor": "…" | null }`. Cada item é uma **projeção compacta** (sem a descrição, que só vem no detalhe): `id`, `numero`, `titulo`, `status`, `natureza`, `prioridade`, `complexidade` (só equipe), `operador_nome` (só equipe), `solicitante_nome`, `sistema_nome`, `categoria_nome`, `created_at`, `updated_at` e, **só para a equipe (D-036)**, `ia_silenciada` (L1), `sistema_alvo_id`, `categoria_id` e `operador_id` (L2, UUID ou `null`). Os ids existem para quem integra (o nome de um sistema-alvo muda; o id não) e não custam query nova — já estão na view do chamado. A view do cliente traz `sistema_alvo_id`/`categoria_id` (ele os escolhe no formulário), mas a API **não** os repassa: o cliente recebe os nomes.
 
 ### 4.2 `GET /api/v1/chamados/{ref}`
 
@@ -105,6 +109,9 @@ Resposta: o chamado (com `descricao` no formato pedido e os **anexos da descriç
     "prioridade": "alta",
     "complexidade": "facil",
     "ia_silenciada": false,
+    "sistema_alvo_id": "…",
+    "categoria_id": null,
+    "operador_id": "…",
     "descricao": "…",
     "formato": "texto",
     "anexos": [
@@ -120,8 +127,13 @@ Resposta: o chamado (com `descricao` no formato pedido e os **anexos da descriç
     "solicitante_nome": "…",
     "operador_nome": "…",
     "sistema_nome": "…",
+    "categoria_nome": null,
     "created_at": "…",
-    "updated_at": "…"
+    "updated_at": "…",
+    "resolvido_em": null,
+    "fechar_automaticamente_em": null,
+    "fechado_em": null,
+    "reaberto_count": 0
   },
   "mensagens": [
     {
@@ -149,7 +161,9 @@ Resposta: o chamado (com `descricao` no formato pedido e os **anexos da descriç
 - **`anexos`** (D-035) inclui tanto arquivos anexados à parte (`inline: false`) quanto imagens coladas no rich text (`inline: true`). Em `texto` a imagem some do corpo (como sempre) mas continua listada; em `markdown`/`html` ela aparece no lugar em que foi colada, com a `src` reescrita para `/api/v1/anexos/{id}` — a rota que um cliente da API consegue seguir com o mesmo Bearer (a `/api/anexos/` da UI autentica por cookie).
 - A lista vem de `listarAnexosVisiveis`, alimentada **só** com os ids das mensagens que `listarMensagens` já devolveu ao papel: anexo de nota interna nunca chega ao cliente, por construção — não há filtro paralelo para desalinhar.
 
-`complexidade`, `ia_silenciada` e as mensagens `interna` (com seus anexos) **só existem na resposta para operador/admin** — para o `cliente` a query nem as traz (filtro no repositório, `listarMensagens`) e o serializer as remove (specs/03 §7). Chamado inexistente **ou** fora do escopo do papel → `404` idêntico (não vaza existência).
+O detalhe traz tudo o que o item da lista traz (§4.1) mais a descrição, os anexos e as datas do ciclo de vida (`resolvido_em`, `fechar_automaticamente_em` — o prazo do auto-fechamento de um `resolvido` —, `fechado_em`, `reaberto_count`).
+
+`complexidade`, `ia_silenciada`, os ids de L2 (`sistema_alvo_id`, `categoria_id`, `operador_id` — D-036) e as mensagens `interna` (com seus anexos) **só existem na resposta para operador/admin** — para o `cliente` a query nem as traz (filtro no repositório, `listarMensagens`) e o serializer as remove (specs/03 §7). Chamado inexistente **ou** fora do escopo do papel → `404` idêntico (não vaza existência).
 
 ### 4.3 `POST /api/v1/chamados/{ref}/mensagens`
 
@@ -212,23 +226,55 @@ Entrega os **bytes** do anexo. Autentica por Bearer e autoriza com o MESMO `auto
 
 Diferença deliberada da rota da UI: os bytes saem **pela aplicação** (`obterObjeto`), não por redirect a URL assinada do storage. O consumidor é um processo (servidor MCP) que muitas vezes não alcança o bucket (MinIO interno à VPS) e cujo `fetch` descarta o `Authorization` num redirect cross-origin. Os controles de specs/09 §5 se mantêm: `Content-Type` pinado ao tipo validado no upload, `Content-Disposition` seguro (`inline` só para imagem, `attachment` para o resto, nome em RFC 5987), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Não há **upload** por esta API (§8).
 
+### 4.8 `POST /api/v1/chamados/{ref}/ia` (D-036 L1)
+
+Silencia (`true`) ou reativa (`false`) a IA no chamado — o mesmo botão do painel (D-024). Existe para um integrador da equipe (a Forja, `specs/forja/07-integracao-chamados.md` §7) tirar a triagem automática do caminho enquanto implementa: uma mensagem do cliente re-dispara a triagem (specs/05 §2), que poderia responder ao cliente, gerar SPEC nova e abrir PR concorrente.
+
+Corpo: `{ "silenciada": true | false }` — booleano JSON; `"true"`/`1` são recusados (`400 parametro_invalido`).
+
+- Delega a `definirSilencioIa`, o MESMO serviço do painel: `autorizar(chamado · silenciar_ia)` — operador/admin sim, `cliente` e `agente_ia` nunca (a IA não silencia/reativa a si mesma).
+- **Idempotente**: repetir o valor atual é no-op, sem `EventoChamado` novo (comportamento do serviço).
+- Terminais (`fechado`/`cancelado`) recusam: `409 estado_terminal`.
+- Efeito: evento `ia_silenciada`/`ia_reativada` (interno). Sem notificação, sem webhook.
+- O `cliente` recebe `403 sem_permissao` **antes** da resolução do `{ref}` (o mesmo `autorizar()`, consultado na rota): responder 403 para chamado existente e 404 para inexistente vazaria a existência de chamados alheios.
+
+Sucesso `200`: `{ "ia_silenciada": true | false }`.
+
+### 4.9 `POST /api/v1/chamados/{ref}/atribuicao` (D-036 L4)
+
+Atribui o chamado a um operador (`"operador_id": "<uuid>"`) ou o desatribui (`"operador_id": null`) — o mesmo seletor do painel (specs/04 §7). É como um integrador marca quem está implementando, sem status novo.
+
+Corpo: `{ "operador_id": "<uuid>" | null }`. A **chave é obrigatória**: um corpo sem ela é `400 parametro_invalido` (nunca desatribui por omissão). Valor que não é UUID nem `null` → `400 parametro_invalido`.
+
+- Delega a `atribuirOperador`/`desatribuirOperador`: `autorizar(chamado · atribuir)` — operador/admin; `cliente` → `403` (antes da resolução do `{ref}`, como em §4.8).
+- O alvo precisa ser usuário **ativo**, não excluído, com papel `operador` ou `admin` — o mesmo universo que o seletor do painel oferece. Fora disso o domínio devolve `operador_invalido`, que a API traduz em **`400 parametro_invalido`** (é entrada inválida, não conflito). A busca do alvo roda sob RLS: um usuário de **outro tenant** simplesmente não é encontrado e cai no mesmo `400`.
+- Terminais recusam: `409 estado_terminal`.
+- Efeitos (os mesmos do painel, via `comDespacho`): `EventoChamado` `operador_atribuido`/`operador_desatribuido`, notificação `atribuicao` ao operador destino e webhook `atribuicao`.
+- **Não idempotente**: reatribuir à mesma pessoa grava outro evento e notifica de novo. Quem integra compara com o `operador_id` lido antes de chamar.
+
+Sucesso `200`: `{ "operador_id": "<uuid>" | null }`.
+
 ---
 
 ## 5. Escopo por papel
 
 A API herda integralmente a matriz de specs/03 §8.1 — não redefine nada:
 
-| Ação                        | admin                    | operador                 | cliente                   |
-| --------------------------- | ------------------------ | ------------------------ | ------------------------- |
-| Listar/ler chamados         | tenant                   | tenant                   | só os próprios            |
-| Ler mensagem `publica`      | ✅                       | ✅                       | ✅ (nos próprios)         |
-| Ler nota `interna`          | ✅                       | ✅                       | ❌ (nem sabe que existe)  |
-| Ver `complexidade`          | ✅                       | ✅                       | ❌                        |
-| Escrever mensagem `publica` | ✅                       | ✅                       | ✅ (nos próprios)         |
-| Escrever nota `interna`     | ✅                       | ✅                       | ❌                        |
-| Mudar status                | ✅                       | ✅                       | ⚠️ só reabrir `resolvido` |
-| Abrir chamado (D-032)       | ✅ em nome de um cliente | ✅ em nome de um cliente | ✅ só para si             |
-| Listar sistemas-alvo (§4.6) | ✅                       | ✅                       | ✅ (id/nome/descrição)    |
+| Ação                            | admin                    | operador                 | cliente                   |
+| ------------------------------- | ------------------------ | ------------------------ | ------------------------- |
+| Listar/ler chamados             | tenant                   | tenant                   | só os próprios            |
+| Ler mensagem `publica`          | ✅                       | ✅                       | ✅ (nos próprios)         |
+| Ler nota `interna`              | ✅                       | ✅                       | ❌ (nem sabe que existe)  |
+| Ver `complexidade`              | ✅                       | ✅                       | ❌                        |
+| Escrever mensagem `publica`     | ✅                       | ✅                       | ✅ (nos próprios)         |
+| Escrever nota `interna`         | ✅                       | ✅                       | ❌                        |
+| Mudar status                    | ✅                       | ✅                       | ⚠️ só reabrir `resolvido` |
+| Abrir chamado (D-032)           | ✅ em nome de um cliente | ✅ em nome de um cliente | ✅ só para si             |
+| Listar sistemas-alvo (§4.6)     | ✅                       | ✅                       | ✅ (id/nome/descrição)    |
+| Filtrar por `complexidade`      | ✅                       | ✅                       | ❌ (`403`) — D-036 L3     |
+| Ver ids de L2 / `ia_silenciada` | ✅                       | ✅                       | ❌ — D-036 L1/L2          |
+| Silenciar/reativar IA (§4.8)    | ✅                       | ✅                       | ❌ — D-036 L1             |
+| Atribuir/desatribuir (§4.9)     | ✅                       | ✅                       | ❌ — D-036 L4             |
 
 O `agente_ia` não usa esta API: é service account do worker, sem senha (specs/03 §6).
 
@@ -238,14 +284,14 @@ O `agente_ia` não usa esta API: é service account do worker, sem senha (specs/
 
 Sempre JSON: `{ "erro": "<mensagem legível>", "codigo": "<slug estável>" }`.
 
-| HTTP | Código                                                                 | Quando                                      |
-| ---- | ---------------------------------------------------------------------- | ------------------------------------------- |
-| 400  | `corpo_invalido`, `parametro_invalido`                                 | JSON malformado, enum/valor fora do domínio |
-| 401  | `credenciais_invalidas`, `nao_autenticado`                             | login falhou; token ausente/expirado        |
-| 403  | `sem_permissao`                                                        | papel não pode a ação                       |
-| 404  | `tenant_desconhecido`, `chamado_inexistente`                           | host sem tenant; chamado fora do escopo     |
-| 409  | `estado_terminal`, `transicao_invalida`, `sistema_alvo_obrigatorio`, … | regra de domínio recusou                    |
-| 429  | `muitas_tentativas`                                                    | rate limit do login                         |
+| HTTP | Código                                                                 | Quando                                                                                                      |
+| ---- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 400  | `corpo_invalido`, `parametro_invalido`                                 | JSON malformado, enum/valor fora do domínio; operador alvo inválido na atribuição (D-036)                   |
+| 401  | `credenciais_invalidas`, `nao_autenticado`                             | login falhou; token ausente/expirado                                                                        |
+| 403  | `sem_permissao`                                                        | papel não pode a ação (inclui `cliente` filtrando por `complexidade`, silenciando IA ou atribuindo — D-036) |
+| 404  | `tenant_desconhecido`, `chamado_inexistente`                           | host sem tenant; chamado fora do escopo                                                                     |
+| 409  | `estado_terminal`, `transicao_invalida`, `sistema_alvo_obrigatorio`, … | regra de domínio recusou                                                                                    |
+| 429  | `muitas_tentativas`                                                    | rate limit do login                                                                                         |
 
 O `codigo` é o contrato estável (o cliente decide por ele); a `mensagem` é para humanos.
 
@@ -257,15 +303,18 @@ Processo Node **stdio** (`apps/mcp`) que fala a API acima. É um cliente como ou
 
 ### 7.1 Configuração
 
-| Variável                       | Obrigatória | Descrição                                                             |
-| ------------------------------ | ----------- | --------------------------------------------------------------------- |
-| `CHAMADOS_URL`                 | sim         | Base da instalação (ex.: `https://suporte.empresa.com`)               |
-| `CHAMADOS_EMAIL`               | sim         | E-mail do usuário                                                     |
-| `CHAMADOS_SENHA`               | sim         | Senha do usuário                                                      |
-| `CHAMADOS_TENANT`              | não         | Slug do tenant (só onde o host não resolve — ex.: `localhost` em dev) |
-| `CHAMADOS_MCP_SOMENTE_LEITURA` | não         | `true` registra apenas as ferramentas de leitura                      |
+| Variável                       | Obrigatória  | Descrição                                                             |
+| ------------------------------ | ------------ | --------------------------------------------------------------------- |
+| `CHAMADOS_URL`                 | sim          | Base da instalação (ex.: `https://suporte.empresa.com`)               |
+| `CHAMADOS_EMAIL`               | sim          | E-mail do usuário                                                     |
+| `CHAMADOS_SENHA`               | uma das duas | Senha do usuário                                                      |
+| `CHAMADOS_TOKEN`               | uma das duas | Token de uma sessão já aberta (`POST /api/v1/sessao`) — FJ-030        |
+| `CHAMADOS_TENANT`              | não          | Slug do tenant (só onde o host não resolve — ex.: `localhost` em dev) |
+| `CHAMADOS_MCP_SOMENTE_LEITURA` | não          | `true` registra apenas as ferramentas de leitura                      |
 
 **Login preguiçoso**: a sessão é aberta na primeira ferramenta usada, mantida em memória e renovada automaticamente **uma vez** ao receber `401` (sessão expirada). A senha vive só na memória do processo e **nunca** é logada nem devolvida em mensagem de erro.
+
+**Sessão já aberta (`CHAMADOS_TOKEN`, D-036/FJ-030 §4)**: em vez da senha, o processo recebe o token de uma sessão existente e o usa como `Bearer` sem login (`@chamados/cliente-api`: `ConfigCliente.tokenInicial`, com `obterSenha` agora opcional). É assim que a Forja dá aos seus agentes este MCP em modo somente leitura, reaproveitando o token da própria conexão. Sem senha não há relogin: se o token for recusado (`401`), toda ferramenta falha com `ErroApi` `401 sessao_recusada` e mensagem acionável ("gere um token novo ou configure a senha"). Com as duas variáveis, o token vale primeiro e a senha só serve para relogar. O token, como a senha, vive só na memória do processo e **nunca** aparece em log ou mensagem de erro (o log de partida diz apenas `[token de sessão]`). O MCP nunca chama `DELETE /api/v1/sessao` — encerrar a sessão é de quem a abriu.
 
 ### 7.2 Ferramentas
 
@@ -301,7 +350,9 @@ Erros da API voltam ao modelo como erro de ferramenta com o `codigo` — corrig�
 - ~~**Criar chamado** pela API/MCP~~ — entrou em **D-032** (§4.5), sem anexos.
 - **Upload de anexos** pela API (na abertura ou em mensagem): só texto/markdown entra por aqui; imagem e arquivo continuam pelo portal. Download e listagem entraram em **D-035** (§4.2, §4.7).
 - **Eventos** (`EventoChamado`) na resposta do detalhe: a timeline de mensagens cobre o uso pretendido.
-- **Atribuição, prioridade, complexidade, silenciar IA, reexecutar triagem**: mutações de painel, deliberadamente fora da superfície inicial.
+- ~~**Atribuição** e **silenciar IA**~~ — entraram em **D-036** (§4.9, §4.8), para integradores da equipe (Forja).
+- **Prioridade, complexidade (escrita), reexecutar triagem**: mutações de painel, deliberadamente fora da superfície. A complexidade só se **lê** e **filtra** (equipe — §4.1).
+- **Ferramentas MCP para silenciar IA e atribuir**: o MCP não as ganha (D-036) — assistentes não decidem quem atende nem desligam a triagem. Os campos novos da projeção passam por `chamados_listar`/`chamado_obter` sem mudança.
 - **Streaming/transport HTTP do MCP**: só stdio, que é o modo local do Claude Code/Desktop.
 
 > DECISÃO PENDENTE: se a API deve ganhar um **token de aplicação** de longa duração (escopo reduzido, revogável no painel) como alternativa a login/senha em variável de ambiente. Hoje o token é a própria sessão, com a duração da spec 03 §4.4.
