@@ -169,14 +169,16 @@ describe('decidirAposVeredito (03 §2.4; 04 §6)', () => {
     ).toMatchObject({ decisao_do_app: 'relatando' });
   });
 
-  it('bloqueado ou escalar → precisa_humano', () => {
+  it('bloqueado ou escalar → relatando com aviso (FJ-035: o humano decide na aprovação)', () => {
     for (const v of [
       vereditoFalso({ decisao: 'bloqueado' }),
       vereditoFalso({ recomendacao: 'escalar' }),
     ]) {
-      expect(
-        decidirAposVeredito(entrada({ veredito: v, validacao: validarVeredito(v, ctxVal) })),
-      ).toMatchObject({ decisao: { para: 'precisa_humano' }, decisao_do_app: 'precisa_humano' });
+      const d = decidirAposVeredito(
+        entrada({ veredito: v, validacao: validarVeredito(v, ctxVal) }),
+      );
+      expect(d).toMatchObject({ decisao: { para: 'relatando' }, decisao_do_app: 'relatando' });
+      expect(JSON.stringify(d)).toMatch(/revisão (não conseguiu|pediu)/);
     }
   });
 

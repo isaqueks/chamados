@@ -126,11 +126,18 @@ describe('autodetectarProjeto (FJ-030 §1)', () => {
 
   it('.env na raiz e fora do git vira arquivo local copiado; rastreado, não', async () => {
     const r = novoRepo();
-    r.escrever('.gitignore', '.env\n');
+    r.escrever('.gitignore', '.env\nnode_modules/\n');
     r.commitar('ignore');
     r.escrever('.env', 'SEGREDO=1\n');
+    // Também os .env de subpastas (caso real: api-backend/.env e front-end/.env),
+    // nunca os de node_modules/build.
+    r.escrever('api-backend/.env', 'DB=x\n');
+    r.escrever('node_modules/x/.env', 'NAO=1\n');
     const d = await autodetectarProjeto(r.repo);
-    expect(d.arquivos_locais).toEqual([{ origem: '.env', destino: '.env', modo: 'copiar' }]);
+    expect(d.arquivos_locais).toEqual([
+      { origem: '.env', destino: '.env', modo: 'copiar' },
+      { origem: 'api-backend/.env', destino: 'api-backend/.env', modo: 'copiar' },
+    ]);
 
     const t = novoRepo();
     t.escrever('.env', 'PUBLICO=1\n');

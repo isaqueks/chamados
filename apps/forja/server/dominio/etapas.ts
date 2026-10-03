@@ -822,19 +822,13 @@ export async function rodarTurno(n: Nucleo, ctx: Ctx, espec: EspecTurno): Promis
         duracao_ms: resultado.duracaoMs,
       },
     });
-    const divergencias = await registrarDivergencias(
+    // Sentinela (05 §4.9) só registra e avisa (FJ-035): a execução segue.
+    await registrarDivergencias(
       n,
       execucao.id,
       sentinelaAntes,
       await medirSentinela(n, ctx.projeto.repo_dir),
     );
-    if (divergencias.length > 0) {
-      return {
-        tipo: 'fato',
-        evento: { tipo: 'sentinela_divergente', caminhos: divergencias },
-        etapa: fim,
-      };
-    }
 
     // Retomada que falhou logo de cara → sessão nova (01 §6.7 passo 3).
     if (sessao.modo === 'resume' && retomarInterrompido && resumeFalhou(resultado)) {

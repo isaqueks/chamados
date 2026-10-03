@@ -496,7 +496,7 @@ cota: { five_hour: 0.80, seven_day: 0.90, permitir_creditos_extras: false } # U-
 concorrencia: { implementacoes: 2, planejadores: 3 } # + 1 chamado de schema em voo (03 §7.3); `verificacoes` saiu (FJ-032)
 limites:
   ciclos: { max_auto: 2, max_total: 5 } # `max_correcoes_verificacao` saiu (FJ-032); arquivo antigo com a chave é aceito e a descarta
-  orcamento_usd: { planejar: 5, implementar: 25, revisar: 10, relatar: 2, por_chamado: 40 }
+  orcamento_usd: { planejar: 5, implementar: 25, revisar: 10, relatar: 2, por_chamado: 200 }
   timeout_min: { planejar: 15, implementar: 90, revisar: 45, relatar: 5, aviso_inatividade: 15 }
 gates:
   plano: nunca # FJ-034, 2026-10-03: default `nunca` (só `alertas_seguranca` para); `por_risco`/`sempre` continuam como opção

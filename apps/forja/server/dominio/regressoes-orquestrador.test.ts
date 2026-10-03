@@ -332,13 +332,11 @@ describe('sentinela e outbox (#10, #23, #28/#35)', () => {
     });
     await a.orq.ocioso();
     const e = await a.banco.ler((r) => r.execucoes.exigir(id));
-    expect([e.estado, e.motivo_estado]).toEqual(['precisa_humano', 'sentinela_divergente']);
+    // FJ-035: a sentinela REGISTRA a divergência (visível na aprovação) mas não
+    // para a execução nem trava o projeto — a execução chega à aprovação.
     expect(e.sentinela?.divergencias).toEqual(['~/.bashrc']);
-    expect((await a.orq.outbox.projetosTravados()).has(a.projetoId)).toBe(true);
-    await a.orq.descartar(id, { motivo: 'x', nota_interna: 'nota', remover_worktree: false });
-    // Descartar não destrava: só "Reconhecer".
-    expect((await a.orq.outbox.projetosTravados()).has(a.projetoId)).toBe(true);
-    await a.orq.reconhecerSentinela(id);
+    expect(e.sentinela?.reconhecida_em).not.toBeNull();
+    expect(e.estado).not.toBe('precisa_humano');
     expect((await a.orq.outbox.projetosTravados()).has(a.projetoId)).toBe(false);
   });
 

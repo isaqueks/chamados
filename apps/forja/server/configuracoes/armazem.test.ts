@@ -32,7 +32,7 @@ describe('configurações globais (FJ-030 §2)', () => {
       implementar: 25,
       revisar: 10,
       relatar: 2,
-      por_chamado: 40,
+      por_chamado: 200,
     });
     expect(c.limites.timeout_min).toMatchObject({
       planejar: 15,

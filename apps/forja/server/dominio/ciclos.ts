@@ -185,19 +185,24 @@ export function decidirAposVeredito(e: EntradaDecisaoVeredito): DecisaoVeredito 
 
   const decisao = e.validacao.decisao_efetiva;
   const incoerencias = [...e.validacao.incoerencias];
-  if (decisao === 'bloqueado') {
-    return precisaHumano('regra_conteudo_violada', 'a revisão não conseguiu avaliar (bloqueado)', {
-      incoerencias,
-    });
-  }
-  if (v.recomendacao === 'escalar') {
-    return precisaHumano(
-      'regra_conteudo_violada',
-      `revisão pediu humano: ${v.motivo_recomendacao}`,
-      {
-        incoerencias,
-      },
-    );
+  // FJ-035 (pedido do usuário: "é só implementar"): revisor que NÃO CONSEGUIU
+  // avaliar (`bloqueado`) ou que pediu humano (`escalar`) não para o pipeline —
+  // o relatório leva o motivo como aviso e o humano decide na aprovação, com
+  // um clique, já vendo o diff. Caso real do #62: "sem .env não apliquei a
+  // migration nem abri telas; falta um humano".
+  if (decisao === 'bloqueado' || v.recomendacao === 'escalar') {
+    return {
+      acao: 'transicao',
+      decisao: { para: 'relatando' },
+      decisao_do_app: 'relatando',
+      repetidos: [],
+      incoerencias: [
+        ...incoerencias,
+        decisao === 'bloqueado'
+          ? `revisão não conseguiu avaliar: ${v.motivo_recomendacao || 'sem motivo informado'}`
+          : `revisão pediu um humano: ${v.motivo_recomendacao}`,
+      ],
+    };
   }
 
   const criteriosOk = v.criterios.every(

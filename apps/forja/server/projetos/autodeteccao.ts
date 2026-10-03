@@ -136,10 +136,6 @@ async function detectarRemoto(dir: string): Promise<string | null> {
   return lista[0] ?? null;
 }
 
-async function rastreadoPeloGit(dir: string, caminho: string): Promise<boolean> {
-  return (await gitTexto(['ls-files', '--error-unmatch', '--', caminho], dir)) !== null;
-}
-
 /**
  * Lê o repositório e devolve o que a Forja consegue inferir. `repoDir` pode
  * ser qualquer pasta dentro do repositório: o resultado usa a raiz.
@@ -191,9 +187,12 @@ export async function autodetectarProjeto(
   const workspaces =
     (pkg !== null && pkg.workspaces !== undefined) || existsSync(join(dir, 'pnpm-workspace.yaml'));
 
+  // Todo `.env*` IGNORADO pelo git, em qualquer pasta (fora de node_modules/build):
+  // o caso real (2026-10-03) tinha `.env` em `api-backend/` e `front-end/`, e sem
+  // eles o agente não sobe a app nem aplica migration na worktree.
   const arquivos_locais: ProjetoDetectado['arquivos_locais'] = [];
-  if (existsSync(join(dir, '.env')) && !(await rastreadoPeloGit(dir, '.env'))) {
-    arquivos_locais.push({ origem: '.env', destino: '.env', modo: 'copiar' });
+  for (const rel of await envsIgnorados(dir)) {
+    arquivos_locais.push({ origem: rel, destino: rel, modo: 'copiar' });
   }
 
   return {
@@ -306,4 +305,22 @@ export function sistemasDoProjeto(e: {
     saida.push({ sistema_nome: s.nome, sistema_alvo_id: s.id });
   }
   return saida;
+}
+
+/** Caminhos relativos dos `.env*` que o git ignora (nunca os rastreados). */
+export async function envsIgnorados(dir: string): Promise<string[]> {
+  try {
+    const r = await git(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], {
+      cwd: dir,
+      aceitar: [0, 128],
+    });
+    if (r.codigo !== 0) return [];
+    return r.stdout
+      .split('\0')
+      .filter((p) => /(^|\/)\.env(\.[A-Za-z0-9_.-]+)?$/.test(p))
+      .filter((p) => !/(^|\/)(node_modules|build|dist|\.next|out|coverage)\//.test(p))
+      .sort();
+  } catch {
+    return existsSync(join(dir, '.env')) ? ['.env'] : [];
+  }
 }

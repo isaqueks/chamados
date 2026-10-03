@@ -42,13 +42,13 @@ export const MODELO_FABLE_PADRAO = 'claude-fable-5-1';
 export const MODELO_OPUS_PADRAO = 'claude-opus-5-5';
 export const ESFORCO_PADRAO: Esforco = 'high';
 
-/** Tetos padrão de `--max-budget-usd` (01 §6.2); 40 por chamado. */
+/** Tetos padrão de `--max-budget-usd` (01 §6.2); 200 por chamado (subido em 2026-10-03: o chamado real #56 passou de 40 só com planejar+implementar+revisar+relatar). */
 export const TETOS_ORCAMENTO_USD = {
   planejar: 5,
   implementar: 25,
   revisar: 10,
   relatar: 2,
-  por_chamado: 40,
+  por_chamado: 200,
 } as const;
 
 /** Timeouts padrão por etapa, em minutos (01 §3.2). Inatividade gera só aviso. */

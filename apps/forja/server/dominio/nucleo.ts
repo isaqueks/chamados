@@ -482,7 +482,14 @@ export class Nucleo {
     return saida;
   }
 
-  /** Execução + projeto (o `config_snapshot` é a configuração que vale para ela, 02 §4.6). */
+  /**
+   * Execução + projeto. O `config_snapshot` (02 §4.6) vale para o que define a
+   * REPRODUTIBILIDADE da execução: repo, entrega, detectores, arquivos locais,
+   * modo reforçado. Limites, gates e modelos vêm das configurações globais
+   * ATUAIS (sobrepostos pelo `avancado` do projeto): o usuário sobe o teto de
+   * custo nas Configurações e "tentar de novo" tem que enxergar o valor novo
+   * (caso real de 2026-10-03: "já aumentei o orçamento, aparece a mesma coisa").
+   */
   async carregar(
     execucaoId: string,
   ): Promise<{ execucao: Execucao; projeto: Projeto; config: ConfigResolvida }> {
@@ -490,8 +497,29 @@ export class Nucleo {
       const execucao = await r.execucoes.obter(execucaoId);
       if (!execucao) throw naoEncontrado('execução');
       const projeto = await r.projetos.exigir(execucao.projeto_id);
-      return { execucao, projeto, config: execucao.config_snapshot };
+      return { execucao, projeto, config: this.configAoVivo(execucao, projeto) };
     });
+  }
+
+  /** Snapshot + limites/gates/modelos globais atuais (ver `carregar`). */
+  configAoVivo(execucao: Execucao, projeto: Projeto): ConfigResolvida {
+    const snap = execucao.config_snapshot;
+    try {
+      // Só limites/gates/modelos interessam aqui: a detecção vazia basta, porque
+      // repo/entrega/detectores continuam vindo do snapshot.
+      const atual = resolverConfig(
+        {
+          repo_dir: projeto.repo_dir,
+          branch_destino: projeto.branch_destino ?? undefined,
+          avancado: projeto.avancado ?? undefined,
+        },
+        this.configuracoes.ler(),
+        detectadoVazio(projeto.repo_dir),
+      );
+      return { ...snap, limites: atual.limites, gates: atual.gates, modelos: atual.modelos };
+    } catch {
+      return snap;
+    }
   }
 
   fonte(conexaoId: string): FonteChamados | null {

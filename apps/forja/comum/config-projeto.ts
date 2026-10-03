@@ -384,7 +384,7 @@ export const ConfiguracoesGlobaisSchema = z
             implementar: z.number().positive().default(25),
             revisar: z.number().positive().default(10),
             relatar: z.number().positive().default(2),
-            por_chamado: z.number().positive().default(40),
+            por_chamado: z.number().positive().default(200),
           })
           .prefault({}),
         timeout_min: z

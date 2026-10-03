@@ -49,10 +49,23 @@ export async function registrarDivergencias(
           depois,
           divergencias,
           detectada_em: n.iso(),
-          reconhecida_em: null,
+          // FJ-035 (pedido do usuário, 2026-10-03: "é só implementar"): a
+          // divergência é REGISTRADA e exibida na aprovação, mas nunca trava
+          // execução, fila de merge ou outbox — `reconhecida_em` já nasce
+          // preenchida. Caso real: `<repo>/.git/config` mudou porque a worktree
+          // compartilha o config do repo principal (um `git config` do agente).
+          reconhecida_em: n.iso(),
         },
       }),
     );
+    await n.publicar({
+      execucao_id: execucaoId,
+      etapa_id: null,
+      tipo: 'cli.alerta',
+      nivel: 'aviso',
+      resumo: `sentinela: mudou fora da worktree — ${divergencias.join(', ')} (aviso, não bloqueia)`,
+      dados: { codigo: 'sentinela_divergente', bloqueante: false },
+    });
   }
   return divergencias;
 }
