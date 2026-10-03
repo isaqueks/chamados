@@ -465,9 +465,23 @@ describe('proximoEstado — fatos do código', () => {
     expect(para(proximoEstado(at('implementando'), { ...ok, diff_vazio: true }))).toBe(
       'precisa_humano',
     );
-    expect(para(proximoEstado(at('implementando'), { ...ok, bloqueios: ['falta acesso'] }))).toBe(
-      'precisa_humano',
-    );
+    // FJ-033 no T1: bloqueio comum vira suposição (segue); só "sem suposição" para.
+    expect(
+      para(
+        proximoEstado(at('implementando'), {
+          ...ok,
+          bloqueios: ['decisao_do_operador: Adotado: aceitar a rolagem'],
+        }),
+      ),
+    ).toBe('verificando');
+    expect(
+      para(
+        proximoEstado(at('implementando'), {
+          ...ok,
+          bloqueios: ['informacao_do_cliente: sem suposição: apagar dados de produção?'],
+        }),
+      ),
+    ).toBe('precisa_humano');
     expect(para(proximoEstado(at('implementando'), { ...ok, commit_feito: false }))).toBe(
       'recusado',
     );

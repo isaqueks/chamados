@@ -1000,6 +1000,15 @@ function ir(
   return a.ok ? { tipo: 'transicao', transicao: a.transicao } : recusado(a.erro);
 }
 
+/** Bloqueio que exige humano: o agente escreveu "sem suposição"/"sem recomendação" (sem acento também). */
+export function semSuposicao(bloqueio: string): boolean {
+  const texto = bloqueio
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return /(^|:\s*)sem (suposicao|recomendacao)\b/.test(texto);
+}
+
 function voltar(atual: EstadoAtualExecucao, ator: AtorTransicao): DecisaoMaquina {
   if (!atual.estado_anterior) return recusado(`"${atual.estado}" sem estado_anterior (I-9)`);
   return ir(atual, atual.estado_anterior, ator);
@@ -1068,7 +1077,11 @@ export function proximoEstado(atual: EstadoAtualExecucao, evento: EventoMaquina)
       // Só o que exige um humano decidir (decisão do operador, informação do
       // cliente, arquivo fora do plano) leva a `precisa_humano`. Caso real do
       // chamado #56 (2026-10-03).
-      const bloqueiosHumanos = evento.bloqueios.filter((b) => !b.startsWith('ambiente:'));
+      // FJ-033 estendida ao T1 (pedido do usuário, 2026-10-03, chamado #56:
+      // "quadro passa de 1124 para 1244px… decidir se aceita"): o implementador
+      // DECIDE e registra; só para quando declara explicitamente que não há
+      // suposição razoável. Os demais bloqueios viram suposições no relatório.
+      const bloqueiosHumanos = evento.bloqueios.filter((b) => semSuposicao(b));
       if (bloqueiosHumanos.length > 0) {
         return ir(
           atual,

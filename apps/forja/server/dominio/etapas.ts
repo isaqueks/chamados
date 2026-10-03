@@ -1,3 +1,4 @@
+import { semSuposicao } from './maquina-execucao';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -2332,6 +2333,13 @@ export async function relatar(n: Nucleo, execucaoId: string): Promise<void> {
   const plano = await planoOficial(n, execucaoId);
   const veredito =
     (await ultimoArtefato<VereditoRegistrado>(n, execucaoId, 'veredito'))?.conteudo ?? null;
+  const resumoImpl =
+    (await ultimoArtefato<ResumoImplRegistrado>(n, execucaoId, 'resumo_impl'))?.conteudo ?? null;
+  // Bloqueios que o implementador declarou mas que não param (FJ-033 no T1):
+  // viram suposições no relatório, para o humano conferir na aprovação.
+  const suposicoesImpl = (resumoImpl?.bloqueios ?? [])
+    .filter((b) => !semSuposicao(`${b.precisa}: ${b.descricao}`))
+    .map((b) => `Decidido na implementação (${b.precisa}): ${b.descricao}`);
   const versao = ((await ultimoArtefato(n, execucaoId, 'relatorio'))?.artefato.versao ?? 0) + 1;
   const tipoResposta = tipoRespostaExigido({
     momento: 'conclusao',
@@ -2527,7 +2535,7 @@ export async function relatar(n: Nucleo, execucaoId: string): Promise<void> {
       regenerado: regeneracoes > 0,
       evidencia_visual: evidenciaVisual,
       evidencia_visual_motivo: execucao.evidencia_visual_motivo,
-      suposicoes_plano: (plano?.suposicoes as string[] | undefined) ?? [],
+      suposicoes_plano: [...((plano?.suposicoes as string[] | undefined) ?? []), ...suposicoesImpl],
     });
     const resposta = respostaRegistrada({
       resposta: relatorio.resposta_ao_cliente,
