@@ -1,4 +1,4 @@
-import { CameraIcon, CheckIcon, CircleIcon, MinusIcon, XIcon } from 'lucide-react';
+import { CameraIcon, CheckIcon, CircleIcon, GitMergeIcon, MinusIcon, XIcon } from 'lucide-react';
 import type { EstadoNoTrilha, NoTrilhaDto } from '@comum/dto';
 import { EstadoExecucaoBadge } from '@/componentes/badges';
 import { formatarCustoEquivalente } from '@/lib/formato';
@@ -16,7 +16,8 @@ import {
  * Implementar → Coleta → Revisar → Relatar → Aprovação → Merge → Chamados.
  * Cada nó mostra a duração; no hover, o custo e o modelo. Com o badge `UI`,
  * Implementar e Coleta ganham os sub-nós "prints antes"/"prints depois"
- * (FJ-026, 03 §5.4) com o resultado no hover. Os estados laterais (pausado,
+ * (FJ-026, 03 §5.4) com o resultado no hover; o Merge ganha "Resolvendo
+ * conflito com <destino>" quando o agente resolve um conflito (FJ-036). Os estados laterais (pausado,
  * cota, assumido) aparecem como selo sobre o nó atual. O estado de cada nó é
  * ícone + texto acessível (nunca só cor); sem animação com
  * `prefers-reduced-motion` (regra global).
@@ -38,7 +39,11 @@ const CLASSE_NO: Record<EstadoNoTrilha, string> = {
   pulado: 'text-muted-foreground/70 line-through',
 };
 
-const ROTULO_SUBNO = { prints_antes: 'prints antes', prints_depois: 'prints depois' } as const;
+const ROTULO_SUBNO = {
+  prints_antes: 'prints antes',
+  prints_depois: 'prints depois',
+  resolver_conflito: 'resolvendo conflito',
+} as const;
 
 export function TrilhaEtapas({
   nos,
@@ -117,8 +122,14 @@ export function TrilhaEtapas({
                                 />
                               }
                             >
-                              <CameraIcon className="size-3" aria-hidden />
-                              {ROTULO_SUBNO[s.chave]}
+                              {s.chave === 'resolver_conflito' ? (
+                                <GitMergeIcon className="size-3" aria-hidden />
+                              ) : (
+                                <CameraIcon className="size-3" aria-hidden />
+                              )}
+                              {s.chave === 'resolver_conflito'
+                                ? (s.detalhe ?? ROTULO_SUBNO[s.chave])
+                                : ROTULO_SUBNO[s.chave]}
                               <SubIcone className="size-3" aria-hidden />
                               <span className="sr-only">: {ROTULO_ESTADO_NO[s.estado]}</span>
                             </TooltipTrigger>

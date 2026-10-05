@@ -386,9 +386,12 @@ export interface NoTrilhaDto {
   duracao_ms: number | null;
   custo_micro_usd: number | null;
   modelo: string | null;
-  /** "prints antes"/"prints depois" com o badge `UI` (FJ-026). */
+  /**
+   * "prints antes"/"prints depois" com o badge `UI` (FJ-026); no Merge,
+   * "Resolvendo conflito com <destino>" (FJ-036; texto em `detalhe`).
+   */
   subnos: {
-    chave: 'prints_antes' | 'prints_depois';
+    chave: 'prints_antes' | 'prints_depois' | 'resolver_conflito';
     estado: EstadoNoTrilha;
     detalhe: string | null;
   }[];
@@ -681,7 +684,12 @@ export interface AprovacaoDto {
   politica_padrao: PoliticaStatus;
   /** FJ-034: avisos (nunca exigências) acima do botão Aprovar e mergear. */
   avisos: AvisoAprovacaoDto[];
-  reaprovacao: { patch_anterior: string; patch_atual: string } | null;
+  reaprovacao: {
+    patch_anterior: string;
+    patch_atual: string;
+    /** FJ-036: o destino avançou e o agente resolveu o conflito (null = outro motivo). */
+    conflito: { destino: string; sha_destino: string; arquivos: string[] } | null;
+  } | null;
 }
 
 export type SeloArquivo = 'banco' | 'regra_negocio' | 'sensivel' | 'frontend';

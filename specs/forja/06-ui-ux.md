@@ -209,7 +209,7 @@ Cada bloco de texto tem uma origem, e ela é sempre visível por um rótulo disc
 └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Trilha de etapas:** Preparar, Planejar, (Decisão), Implementar, Verificar, Revisar, Relatar, Aprovação, Merge, Chamados (outbox). Cada nó mostra a duração e, no hover, o custo e o modelo. O nó Verificar é a **coleta** do app (instantânea, sem comandos, FJ-032); quem roda os checks aparece no feed de Implementar e Revisar. Com o badge `UI`, Implementar e Verificar ganham o sub-nó "prints antes"/"prints depois" (`03-pipeline.md` §5.4), com o resultado por tela no hover; o feed registra cada print como evento ⚙ com miniatura. Em retrabalho, a trilha ganha o marcador "ciclo k/2 auto · total t/5" (limites em 03-pipeline). Os nós laterais (pausado, cota, assumido) aparecem como selo sobre o nó atual.
+**Trilha de etapas:** Preparar, Planejar, (Decisão), Implementar, Verificar, Revisar, Relatar, Aprovação, Merge, Chamados (outbox). Cada nó mostra a duração e, no hover, o custo e o modelo. O nó Verificar é a **coleta** do app (instantânea, sem comandos, FJ-032); quem roda os checks aparece no feed de Implementar e Revisar. Com o badge `UI`, Implementar e Verificar ganham o sub-nó "prints antes"/"prints depois" (`03-pipeline.md` §5.4), com o resultado por tela no hover; o feed registra cada print como evento ⚙ com miniatura. Em retrabalho, a trilha ganha o marcador "ciclo k/2 auto · total t/5" (limites em 03-pipeline). Os nós laterais (pausado, cota, assumido) aparecem como selo sobre o nó atual. **(FJ-036, 2026-10-04)** Quando o agente resolve um conflito com o destino, o nó Merge ganha o sub-nó (ícone de merge) "Resolvendo conflito com <destino>" (atual) → "Conflito com <destino> resolvido pelo agente" (feito) ou "a resolução parou" (falhou); duração e custo do turno de conflito somam no Merge. Em `precisa_humano` com `conflito_merge`, o botão "Tentar de novo" se chama **"Resolver conflito com o agente"** e a faixa explica que o agente resolve e pede reaprovação (Assumir continua possível); com `conflito_schema`, a faixa diz que migration/schema é resolvida por um humano (Assumir → Devolver).
 
 **Plano:** `entendimento`, confiança com justificativa, **"Suposições assumidas"** (`plano.suposicoes`: as escolhas do planejador e as perguntas/decisões que o app assumiu; FJ-033, 2026-10-03), passos com o estado vindo dos commits do app (F-08), critérios de aceite, `schema_banco` previsto, `fora_de_escopo` e `alertas_seguranca` (faixa vermelha no topo da coluna, se houver). "Plano completo" abre um sheet com o `plano.v1` legível (suposições logo após o entendimento) e a aba JSON; o "Ver plano" da mesa de planos mostra as suposições no mesmo lugar.
 
@@ -318,7 +318,7 @@ Aba **Evidências** (wireframe curto):
 - **Assumir** (`T`): igual à Execução. Ao devolver, a aprovação atual é invalidada, porque o patch muda.
 - **Descartar**: diálogo com motivo, nota interna opcional e manter/remover a worktree.
 
-**Patch mudou depois da aprovação** (rebase na fila, ajuste): a tela volta com a faixa "reaprovação necessária: o patch mudou de 4f9a1c para 7d02be", e o Interdiff passa a ser obrigatório (F-11).
+**Patch mudou depois da aprovação** (rebase na fila, ajuste): a tela volta com a faixa "reaprovação necessária: o patch mudou de 4f9a1c para 7d02be", e o Interdiff passa a ser obrigatório (F-11). _(Desde FJ-034 o Interdiff é aviso, não exigência.)_ **Conflito resolvido pelo agente (FJ-036, 2026-10-04):** a tela abre como reaprovação (G2', um clique) com a faixa "Reaprovação: o destino avançou e o conflito foi resolvido pelo agente; veja o Interdiff" e os arquivos que conflitaram (`AprovacaoDto.reaprovacao.conflito`), mesmo que o `patch-id` não tenha mudado; a seção do relatório vira "Mudou desde a sua aprovação". O Interdiff mostra só os arquivos dos dois patches (o que o destino fez em outros arquivos não aparece), e o Diff usa como base o `T0` integrado. O alerta "conflita com o destino atual" passa a dizer "na fila de merge, o agente resolve o conflito e pede sua reaprovação".
 
 ### 4.4 Mesa de planos (lote, G1 em bloco)
 
@@ -385,7 +385,7 @@ Cada linha é uma execução própria (F-14), com uma mini-trilha, o estado, o c
 ```
 
 - Os itens mostram os passos da integração (integrar → conferir `patch-id` → reverificação pelo revisor, só quando o destino andou e os arquivos se cruzam (FJ-032) → avançar a ref por CAS → push, F-10) como sub-trilha. Sem interseção, o passo de reverificação aparece como "dispensado". O detalhe da regra fica em 03-pipeline.
-- `patch-id` diferente do aprovado: o item sai da fila para `aguardando_aprovacao`, com a faixa de reaprovação (§4.3). Conflito: `precisa_humano` (§5.5). Reverificação pelo revisor reprovada: volta ao retrabalho, com as instruções do revisor; turno que não concluiu: `falhou` com "Tentar de novo" (reenfileira).
+- `patch-id` diferente do aprovado: o item sai da fila para `aguardando_aprovacao`, com a faixa de reaprovação (§4.3). Conflito: o agente resolve e a execução volta como reaprovação; `precisa_humano` só em migration/schema ou na 3ª ocorrência (§5.5; FJ-036). Reverificação pelo revisor reprovada: volta ao retrabalho, com as instruções do revisor; turno que não concluiu: `falhou` com "Tentar de novo" (reenfileira).
 - O aviso "sua cópia local" usa o texto acima quando a cópia do usuário está na branch de destino e suja (X-3, [NV: spike S9]; plano B: bloquear o item com "limpe sua cópia ou mude de branch" e o botão [Tentar de novo]).
 - **Pendências com o Chamados** (`mergeado_pendente_chamado`): o passo do outbox que falhou, o erro legível, o próximo backoff e [Tentar agora]. O merge **nunca** é refeito (F-16).
 - **Publicado em produção** aceita vários chamados de uma vez, com um diálogo que lista cada um (Gdeploy, F-11).
@@ -515,8 +515,9 @@ Nada mais é perguntado. Configurações e Avançado ficam para depois e são op
 
 ### 5.5 Conflito
 
-1. Antes de aprovar: o alerta "conflita com main atual" (§4.3) lista os arquivos. O usuário pode aprovar mesmo assim (o diálogo avisa), ou pedir ajustes, ou assumir.
-2. Na fila: conflito → `precisa_humano`. A Execução mostra o cartão "Conflito com main@<sha>" com os arquivos e as ações [Assumir no terminal] [Abrir worktree no chat livre] [Descartar]. Depois da resolução humana, [Devolver ao pipeline] → coleta, revisão, novo relatório e **reaprovação** (o patch mudou). O resolvedor automático fica para a Fase 3. A preparação mecânica da worktree para o humano resolver fica em 03-pipeline.
+1. Antes de aprovar: o alerta "conflita com main atual" (§4.3) lista os arquivos e avisa que o agente resolve na fila. Não bloqueia.
+2. **(FJ-036, 2026-10-04)** Na fila: conflito → `resolvendo_conflito`. A Execução mostra o sub-nó "Resolvendo conflito com main" e o feed do turno; o agente resolve na worktree do chamado, o app commita o merge, e seguem coleta, revisão e novo relatório. A Aprovação volta como **reaprovação** (um clique) com a faixa do conflito e o Interdiff. Depois de aprovar, a execução volta à fila normalmente.
+3. Para por mérito: conflito em migration/schema (`conflito_schema`, Assumir → Devolver) ou a 3ª ocorrência na mesma execução / marcador que sobrou (`conflito_merge`). Nesse caso a Execução mostra a faixa "Precisa de você: conflito com o destino" com [Resolver conflito com o agente] (o mesmo caminho automático) e [Assumir no terminal]. _(Texto anterior, até FJ-036: conflito → `precisa_humano` com [Assumir no terminal] [Abrir worktree no chat livre] [Descartar]; resolvedor automático na Fase 3.)_
 
 ### 5.6 Assumir no terminal
 

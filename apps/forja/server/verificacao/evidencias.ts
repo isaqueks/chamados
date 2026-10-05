@@ -54,23 +54,61 @@ export function motivoGeralDoMotivo(motivo: string | null | undefined): string |
   return motivo.slice(PREFIXO_MOTIVO_GERAL.length).trim() || null;
 }
 
+/**
+ * TOLERANTE por decisão (2026-10-03): o agente escreveu uma `descricao` com mais
+ * de 300 caracteres e o validador rejeitava o arquivo INTEIRO, descartando prints
+ * que existiam ("alteração de interface sem prints: 0.descricao: Too big"). Texto
+ * longo é truncado, campo ausente vira padrão, id fora do padrão é normalizado;
+ * só uma entrada sem `id` utilizável é descartada — e só ela.
+ */
+const texto = (max: number, padrao = '') =>
+  z
+    .unknown()
+    .optional()
+    .transform((v) => (typeof v === 'string' ? v : v == null ? padrao : String(v)))
+    .transform((v) => v.trim().slice(0, max));
+const caminhoOpcional = z
+  .unknown()
+  .optional()
+  .transform((v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 300) : null));
 const EntradaTelaSchema = z.object({
-  id: z.string().regex(/^[\w-]{1,40}$/, 'id de tela: letras, dígitos, _ ou -'),
-  descricao: z.string().max(300).default(''),
-  rota: z.string().max(300).default(''),
-  antes: z.string().max(300).nullable().optional(),
-  depois: z.string().max(300).nullable().optional(),
-  motivo_sem_antes: z.string().max(500).optional(),
+  id: z.unknown().transform((v) =>
+    (v == null ? '' : String(v))
+      .trim()
+      .replace(/[^\w-]+/g, '_')
+      .slice(0, 40),
+  ),
+  descricao: texto(300),
+  rota: texto(300),
+  antes: caminhoOpcional,
+  depois: caminhoOpcional,
+  motivo_sem_antes: z
+    .unknown()
+    .optional()
+    .transform((v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 500) : undefined)),
 });
 
 const TelasJsonSchema = z.union([
-  z.array(EntradaTelaSchema),
-  z.object({
-    telas: z.array(EntradaTelaSchema).default([]),
-    motivo_geral: z.string().max(1000).optional(),
-    /** FJ-031: "minha implementação não altera UI" (B7 condicional). */
-    nao_se_aplica: z.boolean().optional(),
-  }),
+  z
+    .array(z.unknown())
+    .transform((lista) =>
+      lista
+        .map((e) => EntradaTelaSchema.safeParse(e))
+        .flatMap((r) => (r.success && r.data.id ? [r.data] : [])),
+    ),
+  z
+    .object({
+      telas: z.array(z.unknown()).default([]),
+      motivo_geral: texto(1000).optional(),
+      /** FJ-031: "minha implementação não altera UI" (B7 condicional). */
+      nao_se_aplica: z.boolean().optional(),
+    })
+    .transform((o) => ({
+      ...o,
+      telas: o.telas
+        .map((e) => EntradaTelaSchema.safeParse(e))
+        .flatMap((r) => (r.success && r.data.id ? [r.data] : [])),
+    })),
 ]);
 
 /** Prefixo do `motivo` quando o agente declarou `nao_se_aplica` e o diff toca UI (FJ-031). */

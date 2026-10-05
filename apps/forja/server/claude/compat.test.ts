@@ -90,12 +90,19 @@ describe('checagens de boot (01 §7)', () => {
       { ok: false, authMethod: null, subscriptionType: null, erro: 'sem login' },
       { encontrada: '2.43.0', ok: true, erro: null },
     );
+    // Versão diferente é só AVISO (2026-10-03); login ausente bloqueia.
     expect(itens.map((i) => [i.codigo, i.estado, i.bloqueia])).toEqual([
-      ['cli_versao', 'erro', 'pipeline'],
+      ['cli_versao', 'aviso', null],
       ['cli_login', 'erro', 'pipeline'],
       ['git_versao', 'ok', null],
     ]);
-    expect(itens[0]!.detalhe).toContain('claude install 2.1.288');
+    expect(itens[0]!.detalhe).toContain('2.2.0');
+    const semCli = itensDiagnosticoCli(
+      { encontrada: null, ok: false, erro: 'claude não encontrado' },
+      { ok: true, authMethod: 'claude.ai', subscriptionType: 'max', erro: null },
+      { encontrada: '2.43.0', ok: true, erro: null },
+    );
+    expect([semCli[0]!.estado, semCli[0]!.bloqueia]).toEqual(['erro', 'pipeline']);
   });
 
   it('--bare como padrão futuro', () => {

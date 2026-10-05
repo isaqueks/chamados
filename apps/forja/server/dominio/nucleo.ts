@@ -514,9 +514,20 @@ export class Nucleo {
           avancado: projeto.avancado ?? undefined,
         },
         this.configuracoes.ler(),
-        detectadoVazio(projeto.repo_dir),
+        {
+          ...detectadoVazio(projeto.repo_dir),
+          remoto: snap.repo.remoto,
+          branch_destino: snap.repo.branch_destino,
+        },
       );
-      return { ...snap, limites: atual.limites, gates: atual.gates, modelos: atual.modelos };
+      // Entrega também ao vivo: é preferência do usuário, não parte do diff.
+      return {
+        ...snap,
+        limites: atual.limites,
+        gates: atual.gates,
+        modelos: atual.modelos,
+        entrega: atual.entrega,
+      };
     } catch {
       return snap;
     }
@@ -546,8 +557,10 @@ const SAIDAS_QUE_MANTEM_FILA: readonly EstadoExecucao[] = [
  * da fila travando o destino inteiro, e o G2 seguinte falhava com I-3/I-5.
  *
  * Exceções: `push_recusado` ("tentar de novo mais tarde" reaproveita a
- * aprovação) e o item em `conflito` com `conflito_merge`, que fica visível na
- * Fila de merge até a próxima aprovação o substituir (`enfileirar`).
+ * aprovação) e o item em `conflito` (`conflito_merge`/`conflito_schema` ou a
+ * resolução automática de FJ-036), que fica visível na Fila de merge até a
+ * próxima aprovação o substituir (`enfileirar`). A aprovação é invalidada do
+ * mesmo jeito: é o que faz a próxima tela ser uma reaprovação (G2').
  */
 async function encerrarFilaAoSair(
   r: Repositorios,
@@ -560,8 +573,14 @@ async function encerrarFilaAoSair(
   if (!terminal && SAIDAS_QUE_MANTEM_FILA.includes(t.para)) return;
   if (!terminal && t.para === 'precisa_humano' && t.motivo_estado === 'push_recusado') return;
   const item = await r.filaMerge.ativoDaExecucao(execucaoId);
+  // FJ-036: o item em `conflito` também fica durante a resolução automática e
+  // no conflito de migration/schema (a próxima aprovação o substitui).
   const manterConflito =
-    !terminal && item?.estado === 'conflito' && t.motivo_estado === 'conflito_merge';
+    !terminal &&
+    item?.estado === 'conflito' &&
+    (t.para === 'resolvendo_conflito' ||
+      t.motivo_estado === 'conflito_merge' ||
+      t.motivo_estado === 'conflito_schema');
   if (item && !manterConflito) {
     await r.filaMerge.mudarEstado(item.id, 'devolvido', {
       motivo: `a execução foi para ${t.para}${t.motivo_estado ? ` (${t.motivo_estado})` : ''}`,
@@ -591,6 +610,8 @@ export function etapaDoEstado(estado: EstadoExecucao): TipoEtapa | null {
     case 'na_fila_merge':
     case 'integrando':
       return 'integrar';
+    case 'resolvendo_conflito':
+      return 'resolver_conflito';
     default:
       return null;
   }

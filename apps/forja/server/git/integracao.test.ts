@@ -3,14 +3,19 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { criarRepoTemporario, linhas, type RepoTemporario } from './apoio-testes';
 import {
+  abortarMerge,
+  arquivosComMarcadores,
   atualizarRefCas,
   avancarRefLocal,
   calcularPatchId,
+  concluirMergeDestino,
   ErroRemotoDivergente,
   estadoCopiaUsuario,
+  iniciarMergeDestino,
   integrarEmWorktreeDestacada,
   jaIntegrado,
   mensagemMerge,
+  mergeEmCurso,
   patchIdConfere,
   preChecarConflito,
   pushDestino,
@@ -234,5 +239,75 @@ describe('fila de merge com git real', () => {
         remoto: alvo,
       }),
     ).rejects.toBeInstanceOf(ErroRemotoDivergente);
+  });
+});
+
+describe('resolução automática de conflito na worktree do chamado (FJ-036)', () => {
+  let r: RepoTemporario;
+
+  beforeEach(() => {
+    r = criarRepoTemporario();
+    r.g(['checkout', '-q', '-b', 'forja/chamado-7']);
+    r.escrever('src/app.ts', linhas(30, { 28: 'do chamado' }));
+    r.commitar('forja: passo 1 (#7)');
+    // `arquivos_locais` copiado para a worktree: nunca entra no commit do app.
+    r.escrever('.env', 'SEGREDO=1\n');
+  });
+
+  afterEach(() => r.limpar());
+
+  function destino(conteudo: Record<number, string>) {
+    r.g(['checkout', '-q', 'main']);
+    r.escrever('src/app.ts', linhas(30, conteudo));
+    r.escrever('docs/novo.md', '# novo\n');
+    r.g(['add', 'src/app.ts', 'docs/novo.md']);
+    r.g(['commit', '-q', '--no-verify', '-m', 'destino andou']);
+    const t0 = r.g(['rev-parse', 'HEAD']);
+    r.g(['checkout', '-q', 'forja/chamado-7']);
+    return t0;
+  }
+
+  it('conflito: o merge fica em curso com marcadores; concluir faz o commit de merge sem os locais', async () => {
+    const t0 = destino({ 28: 'do destino' });
+    const m = await iniciarMergeDestino(r.repo, t0, 'forja: resolve conflito com main@x');
+    expect(m).toEqual({ tipo: 'conflito', arquivos: ['src/app.ts'] });
+    expect(await mergeEmCurso(r.repo)).toBe(t0);
+    expect(await arquivosComMarcadores(r.repo, ['src/app.ts', 'docs/novo.md'])).toEqual([
+      'src/app.ts',
+    ]);
+    r.escrever('src/app.ts', linhas(30, { 28: 'do chamado e do destino' }));
+    expect(await arquivosComMarcadores(r.repo, ['src/app.ts'])).toEqual([]);
+    const sha = await concluirMergeDestino(r.repo, 'forja: resolve conflito com main@x', {
+      excluir: ['.env'],
+      branch: 'forja/chamado-7',
+    });
+    expect(await mergeEmCurso(r.repo)).toBeNull();
+    expect(r.g(['rev-list', '--parents', '-n1', sha]).split(' ')).toHaveLength(3);
+    expect(r.g(['ls-tree', '-r', '--name-only', sha])).not.toContain('.env');
+    expect(readFileSync(join(r.repo, 'docs/novo.md'), 'utf8')).toBe('# novo\n');
+  });
+
+  it('resolução que fica igual ao HEAD ainda grava o destino como segundo pai', async () => {
+    const t0 = destino({ 28: 'do destino' });
+    await iniciarMergeDestino(r.repo, t0, 'm');
+    r.escrever('src/app.ts', linhas(30, { 28: 'do chamado' }));
+    r.g(['rm', '-q', '--cached', 'docs/novo.md']);
+    r.g(['clean', '-qf', 'docs']);
+    const sha = await concluirMergeDestino(r.repo, 'forja: resolve conflito com main@x');
+    expect(r.g(['rev-list', '--parents', '-n1', sha]).split(' ')).toContain(t0);
+  });
+
+  it('sem conflito o app commita; destino já integrado não faz nada; abortar volta ao HEAD', async () => {
+    const t0 = destino({ 2: 'do destino' });
+    const m = await iniciarMergeDestino(r.repo, t0, 'forja: integra main');
+    expect(m.tipo).toBe('limpo');
+    expect(await iniciarMergeDestino(r.repo, t0, 'de novo')).toEqual({ tipo: 'ja_integrado' });
+    const t1 = destino({ 28: 'conflita' });
+    const antes = r.g(['rev-parse', 'HEAD']);
+    await iniciarMergeDestino(r.repo, t1, 'm');
+    await abortarMerge(r.repo);
+    expect(await mergeEmCurso(r.repo)).toBeNull();
+    expect(r.g(['rev-parse', 'HEAD'])).toBe(antes);
+    expect(r.g(['status', '--porcelain', '--untracked-files=no'])).toBe('');
   });
 });

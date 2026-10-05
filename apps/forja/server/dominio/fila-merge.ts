@@ -4,6 +4,7 @@ import type { JsonLivre } from '../db/json';
 import {
   avancarRefLocal,
   calcularPatchId,
+  casaAlgum,
   caminhoWorktreeIntegracao,
   ehAncestral,
   estadoCopiaUsuario,
@@ -43,7 +44,54 @@ import { projetosTravados } from './outbox';
  * projeto. Se o destino andou desde a aprovação E cruza arquivos do patch, um
  * turno T2 do revisor (Opus) reverifica o resultado integrado antes de avançar
  * a ref; sem interseção, integra direto.
+ *
+ * Conflito (FJ-036): vira `resolvendo_conflito` — o agente resolve na worktree
+ * do chamado (`resolucao-conflito.ts`) e o humano só reaprova. Migration/schema
+ * ou a 3ª ocorrência na mesma execução → `precisa_humano`.
  */
+
+/** Resoluções automáticas de conflito por execução antes de `precisa_humano` (FJ-036). */
+export const MAX_RESOLUCOES_AUTOMATICAS = 2;
+
+/**
+ * Conflito na integração (FJ-036; 03 §8.4): o que fazer com ele. `ocorrencia`
+ * conta este conflito e os anteriores da execução (cada um é um item da fila
+ * com `arquivos_em_conflito`: a resolução gera uma reaprovação, que enfileira
+ * um item novo). Arquivo do detector `banco` → humano direto (dado é
+ * irreversível); além de {@link MAX_RESOLUCOES_AUTOMATICAS} → humano.
+ */
+export async function decidirConflito(
+  n: Nucleo,
+  execucaoId: string,
+  itemId: string,
+  arquivos: readonly string[],
+  ehBanco: (caminho: string) => boolean,
+): Promise<{ resultado: ResultadoIntegracao; texto: string; ocorrencia: number }> {
+  const itens = await n.banco.ler((r) => r.filaMerge.daExecucao(execucaoId));
+  const ocorrencia =
+    itens.filter((i) => i.id !== itemId && (i.arquivos_em_conflito?.length ?? 0) > 0).length + 1;
+  const lista = arquivos.join(', ');
+  const banco = arquivos.filter(ehBanco);
+  if (banco.length > 0) {
+    return {
+      resultado: 'conflito_schema',
+      ocorrencia,
+      texto: `conflito em migration/schema (${banco.join(', ')}): resolva à mão — dado é irreversível. Arquivos: ${lista}`,
+    };
+  }
+  if (ocorrencia > MAX_RESOLUCOES_AUTOMATICAS) {
+    return {
+      resultado: 'conflito',
+      ocorrencia,
+      texto: `conflito com o destino de novo, depois de ${MAX_RESOLUCOES_AUTOMATICAS} resoluções automáticas: ${lista}`,
+    };
+  }
+  return {
+    resultado: 'resolver_conflito',
+    ocorrencia,
+    texto: `conflito com o destino (o agente resolve, ${ocorrencia}ª de ${MAX_RESOLUCOES_AUTOMATICAS}): ${lista}`,
+  };
+}
 
 /** Recusas de push seguidas antes de `precisa_humano` (03 §8.2). */
 export const MAX_RECUSAS_PUSH = 3;
@@ -119,6 +167,20 @@ export class FilaMerge {
       ...(projeto.remoto_url ? { urlEsperada: projeto.remoto_url } : {}),
       ...(credencial ? { credencial } : {}),
     };
+  }
+
+  /**
+   * `T0` atual do destino da execução (fetch com a credencial do projeto, como
+   * no passo 1): a base que a resolução automática de conflito integra (FJ-036).
+   */
+  async baseDestino(execucaoId: string): Promise<string> {
+    const { execucao, projeto, config } = await this.n.carregar(execucaoId);
+    return resolverBaseIntegracao({
+      repoDir: projeto.repo_dir,
+      modo: config.entrega.modo === 'merge_local' ? 'merge_local' : 'merge_e_push',
+      destino: execucao.branch_destino,
+      remoto: this.remoto(projeto, config.repo.remoto),
+    });
   }
 
   /**
@@ -289,13 +351,17 @@ export class FilaMerge {
         estrategia: config.entrega.estrategia,
       });
       if (integ.tipo === 'conflito') {
+        // FJ-036: o agente resolve (até 2× por execução); migration/schema → humano.
+        const decisao = await decidirConflito(n, execucaoId, item.id, integ.arquivos, (c) =>
+          casaAlgum(c, config.detectores.banco),
+        );
         await this.mudarItem(item.id, 'conflito', {
           arquivos_em_conflito: integ.arquivos,
-          tentativas_conflito: item.tentativas_conflito + 1,
+          tentativas_conflito: decisao.ocorrencia,
           motivo: `conflito em ${integ.arquivos.length} arquivo(s)`,
         });
         await fecharEtapa('comando_vermelho');
-        return concluir('conflito', `conflito com o destino: ${integ.arquivos.join(', ')}`);
+        return concluir(decisao.resultado, decisao.texto);
       }
 
       // Passo 4: patch-id do integrado × aprovado (03 §2.5).

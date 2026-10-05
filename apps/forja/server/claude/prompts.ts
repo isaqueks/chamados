@@ -60,6 +60,7 @@ const NOMES_TEMPLATES = [
   'retomar',
   'correcao-contrato',
   'b7-evidencias',
+  'resolver-conflito',
 ] as const;
 type NomeTemplate = (typeof NOMES_TEMPLATES)[number];
 
@@ -332,6 +333,49 @@ export function insumosT1(e: InsumosT1): SecaoInsumo[] {
   return secoes;
 }
 
+/**
+ * Turno T1 de conflito (FJ-036; 03 §8.4): o destino andou, a integração
+ * conflitou e o app deixou o merge em curso na worktree do chamado.
+ */
+export interface InsumosConflito {
+  plano: unknown;
+  ciclo: number;
+  destino: string;
+  /** `T0` que o app está integrando (`MERGE_HEAD`). */
+  shaDestino: string;
+  /** `merge-base` do HEAD com `T0`: `<base>..<T0>` é o que o destino fez. */
+  shaBase: string;
+  arquivos: readonly string[];
+  scripts: readonly ScriptDica[];
+}
+
+export function insumosConflito(e: InsumosConflito): SecaoInsumo[] {
+  return [
+    { titulo: 'Plano aprovado', conteudo: json(e.plano), origem: 'derivado_do_cliente' },
+    {
+      titulo: 'Resolver o conflito com o destino',
+      conteudo: preencher(template('resolver-conflito'), {
+        destino: e.destino,
+        sha_destino: e.shaDestino,
+        faixa_destino: `${e.shaBase}..${e.shaDestino}`,
+        arquivos: lista(e.arquivos.map((a) => `\`${a}\``)),
+        ciclo: String(e.ciclo),
+      }),
+      origem: 'app',
+    },
+    secaoScriptsDica(e.scripts),
+  ];
+}
+
+/** Conflito resolvido pelo agente desde a aprovação (FJ-036): contexto do T2 e do T3. */
+export interface ConflitoResolvidoInsumo {
+  destino: string;
+  shaDestino: string;
+  arquivos: readonly string[];
+  /** Como o agente resolveu (`resumo_tecnico` do turno de conflito). */
+  resumoTecnico?: string | null;
+}
+
 /** Insumos do T2 (03 §3.2): plano, faixa de SHA, comandos do T1, dicas, refs válidas. */
 export interface InsumosT2 {
   plano: unknown;
@@ -345,6 +389,8 @@ export interface InsumosT2 {
   scripts: readonly ScriptDica[];
   /** Reverificação na fila de merge (FJ-032): o destino andou e cruza os arquivos do patch. */
   reverificacao?: { destino: string; arquivosEmComum: readonly string[] } | null;
+  /** Conflito com o destino resolvido pelo agente (FJ-036): reverificação da resolução. */
+  conflitoResolvido?: ConflitoResolvidoInsumo | null;
   revisaoSegurancaObrigatoria: boolean;
   sensiveis: readonly string[];
   refsEvidencia: readonly string[];
@@ -378,6 +424,23 @@ export function insumosT2(e: InsumosT2): SecaoInsumo[] {
               'Arquivos alterados dos dois lados (onde uma quebra é mais provável):',
               lista(e.reverificacao.arquivosEmComum),
               'Rode os checks do projeto aqui e reprove se algo quebrou por causa da integração.',
+            ].join('\n'),
+            origem: 'app' as const,
+          },
+        ]
+      : []),
+    ...(e.conflitoResolvido
+      ? [
+          {
+            titulo: 'Reverificação: conflito com o destino resolvido pelo agente',
+            conteudo: [
+              `O destino \`${e.conflitoResolvido.destino}\` avançou depois da aprovação; a Forja integrou \`${e.conflitoResolvido.shaDestino}\` nesta branch e o implementador resolveu o conflito nestes arquivos:`,
+              lista(e.conflitoResolvido.arquivos.map((a) => `\`${a}\``)),
+              ...(e.conflitoResolvido.resumoTecnico
+                ? ['', 'Como ele diz que resolveu:', e.conflitoResolvido.resumoTecnico]
+                : []),
+              '',
+              'Confira se as DUAS intenções (a do chamado e a do destino) foram preservadas, se não sobrou marcador e se os checks do projeto passam no resultado. Reprove se a resolução descartou o que o destino fez ou quebrou o chamado.',
             ].join('\n'),
             origem: 'app' as const,
           },

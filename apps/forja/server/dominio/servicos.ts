@@ -22,6 +22,7 @@ import {
   type ChamadoResumoDto,
   type ConexaoDto,
   type DiagnosticoDto,
+  type AprovacaoDto,
   type DiffArquivoDto,
   type DiffDto,
   type EntradaRota,
@@ -93,9 +94,9 @@ import {
   seguirComAchadosPermitido,
   sha8,
 } from './aplicacao-resultados';
-import { planoComUi } from './etapas';
+import { arquivosDoDiff, conflitoPendente, planoComUi } from './etapas';
 import { avaliarFreio, LIMIARES_PADRAO, montarCotaDto } from './freio-cota';
-import { avisosG2, type ContextoG2 } from './gates';
+import { avisosG2, MENSAGEM_REAPROVACAO_CONFLITO, type ContextoG2 } from './gates';
 import { arquivosEmComum, chaveDestino, faseDoLote, montarMesa, planoLimpo } from './lote';
 import { estadoTerminal } from './maquina-execucao';
 import { ErroForja, naoEncontrado } from './nucleo';
@@ -199,6 +200,7 @@ const TIPO_ETAPA_TRILHA: Partial<Record<Etapa['tipo'], NoTrilhaDto['chave']>> = 
   revisar: 'revisar',
   relatar: 'relatar',
   integrar: 'merge',
+  resolver_conflito: 'merge',
 };
 
 function indiceTrilha(estado: EstadoExecucao): number {
@@ -367,6 +369,35 @@ export class ServicosForja implements FachadaJson {
       if (i === atual && (e.estado === 'falhou' || e.estado === 'precisa_humano'))
         estado = 'falhou';
       const ev = etapas.filter((x) => x.tipo === 'evidenciar');
+      const resolucoes = etapas.filter((x) => x.tipo === 'resolver_conflito');
+      const emResolucao =
+        e.estado === 'resolvendo_conflito' ||
+        (lateral !== null && e.estado_anterior === 'resolvendo_conflito');
+      const ultimaResolucao = resolucoes.at(-1)?.estado;
+      const estadoConflito: NoTrilhaDto['estado'] = emResolucao
+        ? 'atual'
+        : ultimaResolucao === 'concluida'
+          ? 'feito'
+          : e.estado === 'precisa_humano'
+            ? 'falhou'
+            : 'pendente';
+      // FJ-036: "Resolvendo conflito com <destino>" no Merge.
+      const subConflito: NoTrilhaDto['subnos'] =
+        p.chave === 'merge' && (emResolucao || resolucoes.length > 0)
+          ? [
+              {
+                chave: 'resolver_conflito',
+                estado: estadoConflito,
+                detalhe: {
+                  atual: `Resolvendo conflito com ${e.branch_destino}`,
+                  feito: `Conflito com ${e.branch_destino} resolvido pelo agente`,
+                  falhou: `Conflito com ${e.branch_destino}: a resolução parou`,
+                  pendente: `Conflito com ${e.branch_destino}`,
+                  pulado: `Conflito com ${e.branch_destino}`,
+                }[estadoConflito],
+              },
+            ]
+          : [];
       return {
         chave: p.chave,
         estado,
@@ -386,7 +417,7 @@ export class ServicosForja implements FachadaJson {
                   detalhe: null,
                 },
               ]
-            : [],
+            : subConflito,
         lateral: i === atual ? lateral : null,
       };
     });
@@ -1090,7 +1121,7 @@ export class ServicosForja implements FachadaJson {
     };
     ctx: ContextoAprovacaoFinal;
     mensagensNovas: MensagemClienteDto[];
-    reaprovacao: { patch_anterior: string; patch_atual: string } | null;
+    reaprovacao: AprovacaoDto['reaprovacao'];
   }> {
     const e = await this.exec(id);
     const d = await this.banco.ler(async (r) => ({
@@ -1120,9 +1151,24 @@ export class ServicosForja implements FachadaJson {
     const invalidada = d.aprovs
       .filter((a) => (a.tipo === 'final' || a.tipo === 'reaprovacao') && a.invalidada_em)
       .at(-1);
+    // FJ-036: conflito resolvido pelo agente desde a aprovação é SEMPRE reaprovação
+    // (mesmo com o patch-id igual: o código ao redor veio do destino).
+    const conflito = await conflitoPendente(this.banco, e, diffArt.sha_git ?? relatorio.sha);
     const reaprovacao =
-      invalidada?.patch_id && diffArt.patch_id && invalidada.patch_id !== diffArt.patch_id
-        ? { patch_anterior: invalidada.patch_id, patch_atual: diffArt.patch_id }
+      invalidada?.patch_id &&
+      diffArt.patch_id &&
+      (invalidada.patch_id !== diffArt.patch_id || conflito)
+        ? {
+            patch_anterior: invalidada.patch_id,
+            patch_atual: diffArt.patch_id,
+            conflito: conflito
+              ? {
+                  destino: conflito.destino,
+                  sha_destino: conflito.sha_destino,
+                  arquivos: conflito.arquivos,
+                }
+              : null,
+          }
         : null;
     const contexto: ContextoG2 = {
       relatorio: {
@@ -1139,6 +1185,7 @@ export class ServicosForja implements FachadaJson {
       mensagem_nova_cliente_id: novas.at(-1)?.id ?? null,
       achados_em_aberto: relatorio.achados_em_aberto.length,
       reaprovacao: reaprovacao !== null,
+      conflito_resolvido: reaprovacao?.conflito ?? null,
       incoerencias: relatorio.incoerencias,
       // FJ-034: riscos do plano que não pararam no G1 (planos antigos não têm o campo).
       avisos_plano:
@@ -1226,8 +1273,10 @@ export class ServicosForja implements FachadaJson {
       alertas.push({
         tipo: 'reaprovacao',
         nivel: 'aviso',
-        mensagem: 'O patch mudou depois da aprovação: confira o interdiff.',
-        detalhes: [],
+        mensagem: c.reaprovacao.conflito
+          ? MENSAGEM_REAPROVACAO_CONFLITO
+          : 'O patch mudou depois da aprovação: confira o interdiff.',
+        detalhes: c.reaprovacao.conflito?.arquivos ?? [],
       });
     }
     if (relatorio.conteudo.achados_em_aberto.length) {
@@ -1304,10 +1353,13 @@ export class ServicosForja implements FachadaJson {
     para: string,
     porArquivo: { caminho: string; selos: SeloArquivo[] }[],
     patchId: string | null,
+    /** Restringe aos caminhos (literais); `null` = tudo. */
+    caminhos: readonly string[] | null = null,
   ): Promise<DiffDto> {
     const LIMITE = 2 * 1024 * 1024;
+    const filtro = caminhos ? ['--', ...caminhos.map((c) => `:(literal)${c}`)] : [];
     const bruto = (
-      await git(['diff', '--no-color', '--no-ext-diff', `${de}..${para}`], {
+      await git(['diff', '--no-color', '--no-ext-diff', `${de}..${para}`, ...filtro], {
         cwd: dir,
         aceitar: [0, 128],
       })
@@ -1315,10 +1367,16 @@ export class ServicosForja implements FachadaJson {
     const truncado = bruto.length > LIMITE;
     const texto = truncado ? bruto.slice(0, LIMITE) : bruto;
     const status = (
-      await git(['diff', '--name-status', `${de}..${para}`], { cwd: dir, aceitar: [0, 128] })
+      await git(['diff', '--name-status', `${de}..${para}`, ...filtro], {
+        cwd: dir,
+        aceitar: [0, 128],
+      })
     ).stdout;
     const nums = (
-      await git(['diff', '--numstat', `${de}..${para}`], { cwd: dir, aceitar: [0, 128] })
+      await git(['diff', '--numstat', `${de}..${para}`, ...filtro], {
+        cwd: dir,
+        aceitar: [0, 128],
+      })
     ).stdout;
     const blocos = texto.split(/^(?=diff --git )/m).filter((b) => b.startsWith('diff --git '));
     const selos = new Map(porArquivo.map((a) => [a.caminho, a.selos]));
@@ -1353,7 +1411,9 @@ export class ServicosForja implements FachadaJson {
     const c = await this.contextoAprovacao(p.id);
     return this.montarDiff(
       c.projeto.repo_dir,
-      c.e.sha_base ?? c.diff.base,
+      // A base do diff registrada no relatório (`baseDoDiff`): depois de o app
+      // integrar o destino (FJ-032/FJ-036), o `sha_base` traria o destino junto.
+      c.diff.base || (c.e.sha_base ?? ''),
       c.e.sha_verificado ?? c.diff.sha,
       c.diff.por_arquivo,
       c.diff.patch_id,
@@ -1373,7 +1433,23 @@ export class ServicosForja implements FachadaJson {
       rels.at(-2)?.sha_git ??
       null;
     if (!atual || !anterior) throw naoEncontrado('versão anterior');
-    return this.montarDiff(projeto.repo_dir, anterior, atual, [], null);
+    // Só os arquivos dos dois patches (FJ-036): depois de integrar o destino, o
+    // `anterior..atual` traria tudo o que o destino fez em outros arquivos.
+    const diffs = await this.banco.ler((r) => r.artefatos.listar(e.id, { tipo: 'diff' }));
+    const baseDe = (sha: string) =>
+      ([...diffs].reverse().find((d) => d.sha_git === sha)?.conteudo as { base?: string } | null)
+        ?.base ?? null;
+    const [baseAnt, baseAtual] = [baseDe(anterior), baseDe(atual)];
+    const caminhos =
+      baseAnt && baseAtual
+        ? [
+            ...new Set([
+              ...(await arquivosDoDiff(projeto.repo_dir, baseAnt, anterior).catch(() => [])),
+              ...(await arquivosDoDiff(projeto.repo_dir, baseAtual, atual).catch(() => [])),
+            ]),
+          ]
+        : null;
+    return this.montarDiff(projeto.repo_dir, anterior, atual, [], null, caminhos);
   }
 
   async aprovacao_evidencias(

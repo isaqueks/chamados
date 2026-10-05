@@ -399,6 +399,8 @@ export interface ContextoG2 {
   achados_em_aberto: number;
   /** G2': já houve aprovação e o `patch-id` mudou depois. */
   reaprovacao: boolean;
+  /** FJ-036: a reaprovação vem de um conflito com o destino resolvido pelo agente. */
+  conflito_resolvido?: { destino: string; arquivos: readonly string[] } | null;
   /** Arquivos em conflito com a ponta do destino (pré-checagem; vazio = sem conflito previsto). */
   conflito_arquivos?: readonly string[];
   /** `relatorio.incoerencias` (validação cruzada que seguiu com aviso, FJ-034). */
@@ -406,6 +408,10 @@ export interface ContextoG2 {
   /** `plano.avisos` ⚙ (riscos que não pararam no G1, FJ-034). */
   avisos_plano?: readonly string[];
 }
+
+/** Faixa/aviso da reaprovação depois de um conflito resolvido pelo agente (FJ-036). */
+export const MENSAGEM_REAPROVACAO_CONFLITO =
+  'Reaprovação: o destino avançou e o conflito foi resolvido pelo agente; veja o Interdiff.';
 
 /**
  * Avisos do G2 (FJ-034, 2026-10-03 — "dois cliques"): tudo o que antes era
@@ -443,7 +449,7 @@ export function avisosG2(ctx: ContextoG2): AvisoAprovacaoDto[] {
   if (conflito.length > 0) {
     avisos.push({
       tipo: 'conflito_previsto',
-      mensagem: `Conflito previsto com o destino em ${conflito.join(', ')}: na fila de merge vira "precisa de você".`,
+      mensagem: `Conflito previsto com o destino em ${conflito.join(', ')}: na fila de merge o agente resolve e pede reaprovação (FJ-036).`,
     });
   }
   const sensiveis = ctx.sensiveis ?? [];
@@ -457,7 +463,9 @@ export function avisosG2(ctx: ContextoG2): AvisoAprovacaoDto[] {
   if (ctx.reaprovacao) {
     avisos.push({
       tipo: 'reaprovacao',
-      mensagem: 'O patch mudou depois da aprovação anterior: o Interdiff mostra o que mudou.',
+      mensagem: ctx.conflito_resolvido
+        ? MENSAGEM_REAPROVACAO_CONFLITO
+        : 'O patch mudou depois da aprovação anterior: o Interdiff mostra o que mudou.',
     });
   }
   avisos.push({

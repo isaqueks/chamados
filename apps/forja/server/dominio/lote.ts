@@ -358,6 +358,7 @@ export function pesoAvanco(estado: EstadoExecucao): number {
     case 'revisando':
       return 1;
     case 'integrando':
+    case 'resolvendo_conflito':
     case 'verificando':
       return 2;
     case 'implementando':

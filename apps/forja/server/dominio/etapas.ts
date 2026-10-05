@@ -33,6 +33,7 @@ import {
   type NomePerfil,
 } from '../claude/perfis';
 import {
+  insumosConflito,
   insumosT1,
   insumosT2,
   insumosT3,
@@ -74,16 +75,22 @@ import type { Execucao } from '../db/entidades/execucao';
 import type { Projeto } from '../db/entidades/projeto';
 import type { JsonLivre, ObjetoJson } from '../db/json';
 import {
+  abortarMerge,
+  arquivosComMarcadores,
   calcularPatchId,
   casaAlgum,
   commitCheckpoint,
+  concluirMergeDestino,
   dirGitComum,
   ehAncestral,
   ErroCheckpointBranch,
   criarWorktreeExecucao,
   git,
+  iniciarMergeDestino,
   mensagemPasso,
+  mergeEmCurso,
   MENSAGEM_AO_INTERROMPER,
+  refDoHead,
   resolverSha,
   selosDoDiff,
   shaHead,
@@ -380,6 +387,12 @@ export interface EspecTurno {
    * estado esperado e sessão que não vira a `session_id_condutor`.
    */
   avulso?: { cwd: string; estado: EstadoExecucao };
+  /**
+   * Turno do perfil num estado que não é o dele, na worktree e na sessão da
+   * execução (FJ-036: T1 de conflito em `resolvendo_conflito`, etapa
+   * `resolver_conflito`). A sessão vira a `session_id_condutor` como no T1.
+   */
+  foraDoEstado?: { estado: EstadoExecucao; tipo: TipoEtapa };
   /** T2: scripts do projeto (dicas) que entram no allow (FJ-032). */
   scriptsProjeto?: readonly string[];
 }
@@ -537,7 +550,9 @@ async function configMcpDaEtapa(n: Nucleo, ctx: Ctx): Promise<ConfigMcpGerada | 
 export async function rodarTurno(n: Nucleo, ctx: Ctx, espec: EspecTurno): Promise<FimTurno> {
   const { execucao, config } = ctx;
   if (!execucao.worktree_dir) throw new ErroForja('pre_condicao_falhou', 'execução sem worktree');
-  const tipo: TipoEtapa = espec.conversar ? 'conversar' : TIPO_ETAPA_PERFIL[espec.perfil];
+  const tipo: TipoEtapa = espec.conversar
+    ? 'conversar'
+    : (espec.foraDoEstado?.tipo ?? TIPO_ETAPA_PERFIL[espec.perfil]);
   const chaveOrc = ORCAMENTO_PERFIL[espec.perfil];
   const modelos =
     espec.perfil === 'planejador' ? config.modelos.planejador : config.modelos.condutor;
@@ -547,7 +562,7 @@ export async function rodarTurno(n: Nucleo, ctx: Ctx, espec: EspecTurno): Promis
     ? espec.avulso.estado
     : espec.conversar
       ? 'pausado_usuario'
-      : ESTADO_PERFIL[espec.perfil];
+      : (espec.foraDoEstado?.estado ?? ESTADO_PERFIL[espec.perfil]);
   const cwd = espec.avulso?.cwd ?? execucao.worktree_dir;
 
   let sessao = { modo: espec.modo, sessionId: espec.sessionId };
@@ -2016,6 +2031,8 @@ async function preparoT2(
     sha: string;
     ciclo: number;
     reverificacao?: { destino: string; arquivosEmComum: readonly string[] } | null;
+    /** FJ-036: conflito resolvido pelo agente desde a aprovação. */
+    conflito?: ConflitoPendente | null;
   },
 ) {
   const { execucao, projeto, config } = ctx;
@@ -2054,6 +2071,14 @@ async function preparoT2(
     comandosDoImplementador: textoComandosDoStream(resumo?.comandos_stream ?? []),
     scripts,
     reverificacao: e.reverificacao ?? null,
+    conflitoResolvido: e.conflito
+      ? {
+          destino: e.conflito.destino,
+          shaDestino: e.conflito.sha_destino,
+          arquivos: e.conflito.arquivos,
+          resumoTecnico: e.conflito.resumo_tecnico,
+        }
+      : null,
     revisaoSegurancaObrigatoria: segurancaObrigatoria,
     sensiveis: execucao.selos?.sensivel ?? [],
     refsEvidencia: refs,
@@ -2094,7 +2119,8 @@ export async function revisar(n: Nucleo, execucaoId: string): Promise<void> {
   const sha = execucao.sha_verificado as string;
   const base = await baseDoDiff(n, execucao, sha);
   const ciclo = execucao.ciclo_total + 1;
-  const t2 = await preparoT2(n, ctx, { dir, base, sha, ciclo });
+  const conflito = await conflitoPendente(n.banco, execucao, sha);
+  const t2 = await preparoT2(n, ctx, { dir, base, sha, ciclo, conflito });
   const { plano, refs, segurancaObrigatoria, prompt } = t2;
   const anteriorArt = await ultimoArtefato<VereditoRegistrado>(n, execucaoId, 'veredito');
   const etapas = await etapasDa(n, execucaoId);
@@ -2314,6 +2340,348 @@ export async function reverificarIntegracao(
 }
 
 // ---------------------------------------------------------------------------
+// resolvendo_conflito — T1 de conflito (FJ-036; 03 §8.4)
+// ---------------------------------------------------------------------------
+
+/** Conflito com o destino que o agente resolveu e ainda não foi aprovado (FJ-036). */
+export interface ConflitoPendente {
+  destino: string;
+  sha_destino: string;
+  arquivos: string[];
+  /** Ocorrência deste conflito na execução (1, 2…). */
+  ocorrencia: number;
+  /** Como o agente resolveu (`resumo_tecnico` do turno de conflito), se registrado. */
+  resumo_tecnico: string | null;
+}
+
+/**
+ * Há resolução de conflito pendente de reaprovação no `sha`? O item da fila
+ * fica em `conflito` até a próxima aprovação (`enfileirar` o substitui) e o
+ * `T0` que o app integrou (`sha_destino_antes`) está no histórico do `sha`.
+ * Alimenta o T2 (reverificação da resolução), o T3 ("Mudou desde a sua
+ * aprovação") e a faixa de reaprovação da Aprovação.
+ */
+export async function conflitoPendente(
+  banco: Nucleo['banco'],
+  execucao: Pick<Execucao, 'id' | 'worktree_dir' | 'branch_destino'>,
+  sha: string | null,
+): Promise<ConflitoPendente | null> {
+  const dir = execucao.worktree_dir;
+  if (!dir || !sha) return null;
+  const { item, resumo } = await banco.ler(async (r) => ({
+    item: await r.filaMerge.ativoDaExecucao(execucao.id),
+    resumo: await r.artefatos.ultimaVersao(execucao.id, 'resumo_impl'),
+  }));
+  if (item?.estado !== 'conflito' || !item.sha_destino_antes) return null;
+  if (!(await ehAncestral(dir, item.sha_destino_antes, sha).catch(() => false))) return null;
+  const resolucao = (
+    (resumo?.conteudo as unknown as ResumoImplRegistrado | undefined)?.resolucoes_conflito ?? []
+  ).find((x) => x.sha_destino === item.sha_destino_antes);
+  return {
+    destino: execucao.branch_destino,
+    sha_destino: item.sha_destino_antes,
+    arquivos: item.arquivos_em_conflito ?? [],
+    ocorrencia: item.tentativas_conflito,
+    resumo_tecnico: resolucao?.resumo_tecnico ?? null,
+  };
+}
+
+/** `forja: resolve conflito com <destino>@<sha7>` (FJ-036). */
+export function mensagemResolucaoConflito(destino: string, t0: string): string {
+  return `forja: resolve conflito com ${destino}@${t0.slice(0, 7)}`;
+}
+
+/**
+ * `resolvendo_conflito` (FJ-036; 03 §8.4): o destino andou e a integração
+ * conflitou. O app commita o que houver, integra o `T0` atual na worktree do
+ * chamado com `merge --no-commit` (os marcadores ficam) e abre um turno T1 de
+ * conflito na sessão condutora. No fim confere que não sobrou marcador (1
+ * correção), commita o merge e segue para a coleta → T2 (reverificação da
+ * resolução) → T3 (nova versão) → reaprovação. Conflito em migration/schema
+ * (detector `banco`) → `precisa_humano` com o merge desfeito.
+ *
+ * Retomada (reinício, interrupção, "tentar de novo" depois de uma parada): com
+ * o merge ainda em curso, só o turno é refeito — o `T0` é o `MERGE_HEAD`.
+ */
+export async function resolverConflito(
+  n: Nucleo,
+  execucaoId: string,
+  baseDestino: () => Promise<string>,
+): Promise<void> {
+  const ctx = await n.carregar(execucaoId);
+  const { execucao, projeto, config } = ctx;
+  const dir = execucao.worktree_dir as string;
+  const destino = execucao.branch_destino;
+  const opCp = opcoesCheckpoint(execucao, config);
+  const fato = (evento: EventoMaquina) => aplicarFato(n, execucaoId, evento, 'resolvendo_conflito');
+  const desfecho = (
+    resultado: 'resolvido' | 'conflito_merge' | 'conflito_schema' | 'impedimento',
+    texto?: string,
+  ) => fato({ tipo: 'conflito_resolvido', resultado, texto });
+  const itens = await n.banco.ler((r) => r.filaMerge.daExecucao(execucaoId));
+  let item = itens.find((i) => i.estado === 'conflito') ?? itens.at(-1) ?? null;
+  if (!item) {
+    await desfecho('conflito_merge', 'sem item da fila de merge para resolver: aprove de novo');
+    return;
+  }
+  const ehBanco = (c: string) => casaAlgum(c, config.detectores.banco);
+
+  let t0 = await mergeEmCurso(dir);
+  let arquivos = item.arquivos_em_conflito ?? [];
+  if (!t0) {
+    // Ponto de partida limpo (o merge exige) e nunca com o HEAD fora da branch.
+    try {
+      await commitCheckpoint(dir, MENSAGEM_AO_INTERROMPER, opCp);
+    } catch (e) {
+      if (!(e instanceof ErroCheckpointBranch)) throw e;
+      await fato({ tipo: 'sentinela_divergente', caminhos: [`HEAD da worktree: ${e.message}`] });
+      return;
+    }
+    // `T0` atual (o destino pode ter andado de novo); sem rede, o do conflito.
+    let base: string | null;
+    try {
+      base = await baseDestino();
+    } catch (e) {
+      n.log(`#${execucao.numero}: base do destino indisponível (${String(e)}); usa a do conflito`);
+      base = item.sha_destino_antes;
+    }
+    if (!base) {
+      await fato({
+        tipo: 'falha_infra',
+        motivo: 'setup_falhou',
+        texto: 'base do destino indisponível para resolver o conflito',
+      });
+      return;
+    }
+    t0 = base;
+    // Intenção antes de agir: `baseDoDiff` passa a contar este T0 (03 §8.1).
+    item = await n.banco.transacao((r) =>
+      r.filaMerge.atualizar(item!.id, { sha_destino_antes: base }),
+    );
+    const m = await iniciarMergeDestino(dir, t0, mensagemResolucaoConflito(destino, t0));
+    if (m.tipo !== 'conflito') {
+      // O conflito sumiu (o destino mudou de novo) ou já estava integrado:
+      // segue para a coleta → T2 → T3 → reaprovação do mesmo jeito.
+      const head = await shaHead(dir);
+      if (m.tipo === 'limpo') {
+        await n.publicar({
+          execucao_id: execucaoId,
+          etapa_id: null,
+          tipo: 'git.checkpoint',
+          nivel: 'info',
+          resumo: `Destino integrado sem conflito: ${sha8(head)}`,
+          dados: {
+            sha: head,
+            passo: null,
+            mensagem: mensagemResolucaoConflito(destino, t0),
+            arquivos: 0,
+          },
+        });
+      }
+      await n.transicionar(
+        execucaoId,
+        {
+          tipo: 'conflito_resolvido',
+          resultado: 'resolvido',
+          texto: 'o destino integrou sem conflito',
+        },
+        { patch: { sha_atual: head } },
+      );
+      return;
+    }
+    arquivos = m.arquivos;
+    item = await n.banco.transacao((r) =>
+      r.filaMerge.atualizar(item!.id, { arquivos_em_conflito: m.arquivos }),
+    );
+  }
+  const shaDestino = t0;
+
+  // Migration/schema: dado é irreversível — humano direto, worktree de volta ao HEAD.
+  const banco = arquivos.filter(ehBanco);
+  if (banco.length > 0) {
+    await abortarMerge(dir);
+    await desfecho(
+      'conflito_schema',
+      `conflito em migration/schema (${banco.join(', ')}): resolva à mão — dado é irreversível`,
+    );
+    return;
+  }
+
+  const ciclo = execucao.ciclo_total + 1;
+  const plano = await planoOficial(n, execucaoId);
+  const regras = await regrasDoRepositorio(projeto.repo_dir, execucao.sha_base);
+  const locais = destinosLocais(config);
+  const mergeBase = (
+    await git(['merge-base', 'HEAD', shaDestino], { cwd: dir, aceitar: [0, 1] })
+  ).stdout.trim();
+  const prompt = montarPromptTurno({
+    perfil: 'condutor_t1',
+    regrasRepositorio: regras,
+    arquivosLocais: locais,
+    evidencias: {
+      forjaPrint: n.deps.forjaPrint ?? null,
+      dirEvidencias: dirEvidencias(n, execucaoId),
+      // O `antes` é do commit base: na resolução só o `depois` pode mudar.
+      somenteDepois: true,
+      telasDoPlano: (plano?.telas_afetadas ?? []).map((t) => ({ id: t.id, rota: t.rota })),
+    },
+    insumos: insumosConflito({
+      plano,
+      ciclo,
+      destino,
+      shaDestino,
+      shaBase: mergeBase || (execucao.sha_base as string),
+      arquivos,
+      scripts: await scriptsDoProjeto(config, dir),
+    }),
+    orcamento: {
+      orcamentoUsd:
+        orcamentoEfetivo(config, 'implementar', execucao.custo_micro_usd) ??
+        config.limites.orcamento_usd.implementar,
+      timeoutMin: config.limites.timeout_min.implementar,
+    },
+  });
+  const agentes = gerarAgentesT1({
+    modelo: config.modelos.subagentes.modelo,
+    esforco: esforco(config.modelos.subagentes.esforco_implementador),
+    promptImplementador: montarPromptSubagente('implementador', regras, locais).prompt,
+  });
+  const retomar = etapaParaRetomar(await etapasDa(n, execucaoId), 'resolver_conflito', ciclo);
+  const sessaoAtual = execucao.session_id_condutor;
+  // Sem `aoCheckpoint`: um commit no meio fecharia o merge com marcadores.
+  const especBase = {
+    perfil: 'condutor_t1' as const,
+    foraDoEstado: { estado: 'resolvendo_conflito' as const, tipo: 'resolver_conflito' as const },
+    sistema: prompt.sistema,
+    agentes,
+    ciclo,
+  };
+  let fim = await rodarTurno(n, ctx, {
+    ...especBase,
+    sessionId: retomar?.session_id ?? sessaoAtual ?? n.novoSessionId(),
+    modo: retomar || sessaoAtual ? 'resume' : 'novo',
+    retomarTurnoInterrompido: retomar !== null,
+    retomada: retomar !== null,
+    prompt: retomar
+      ? montarPromptRetomada(
+          `resolução do conflito com ${destino} (${sha8(shaDestino)}) em curso: ${arquivos.join(', ')}`,
+        )
+      : prompt.stdin,
+    promptSessaoNova: prompt.stdin,
+  });
+  let correcoes = 0;
+  const bash: ComandoDoStream[] = [];
+  for (;;) {
+    if (fim.tipo === 'parado') return;
+    if (fim.tipo === 'fato') {
+      await fato(fim.evento);
+      return;
+    }
+    bash.push(...fim.medido.bash);
+    const resumo = fim.saida as ResumoImplV1;
+    const bloqueios = resumo.bloqueios.map((b) => `${b.precisa}: ${b.descricao}`);
+    const humanos = bloqueios.filter((b) => semSuposicao(b));
+    if (humanos.length > 0) {
+      // O merge fica em curso: "Tentar de novo" refaz o turno; Assumir → Devolver commita.
+      await desfecho('impedimento', `impedimento declarado na resolução: ${humanos.join('; ')}`);
+      return;
+    }
+    const ref = await refDoHead(dir);
+    if (ref !== `refs/heads/${execucao.branch}`) {
+      await fato({
+        tipo: 'sentinela_divergente',
+        caminhos: [`HEAD da worktree saiu da branch durante a resolução (${ref ?? 'destacado'})`],
+      });
+      return;
+    }
+    if (!(await mergeEmCurso(dir)) && !(await ehAncestral(dir, shaDestino, 'HEAD'))) {
+      await desfecho('conflito_merge', 'o merge do destino foi desfeito durante a resolução');
+      return;
+    }
+    const restantes = await arquivosComMarcadores(dir, arquivos);
+    if (restantes.length > 0) {
+      if (correcoes < 1) {
+        correcoes += 1;
+        fim = await rodarTurno(n, ctx, {
+          ...especBase,
+          sessionId: fim.sessionId,
+          modo: 'resume',
+          prompt: montarPromptCorrecao([
+            `ainda há marcadores de conflito em: ${restantes.join(', ')} — resolva e remova todos (não commite)`,
+          ]),
+        });
+        continue;
+      }
+      await desfecho(
+        'conflito_merge',
+        `marcadores de conflito restantes depois da resolução: ${restantes.join(', ')}`,
+      );
+      return;
+    }
+    const head = await concluirMergeDestino(
+      dir,
+      mensagemResolucaoConflito(destino, shaDestino),
+      opCp,
+    );
+    await n.publicar({
+      execucao_id: execucaoId,
+      etapa_id: fim.etapa.id,
+      tipo: 'git.checkpoint',
+      nivel: 'info',
+      resumo: `Conflito com ${destino} resolvido: ${sha8(head)}`,
+      dados: {
+        sha: head,
+        passo: null,
+        mensagem: mensagemResolucaoConflito(destino, shaDestino),
+        arquivos: arquivos.length,
+      },
+    });
+    // Nova versão do resumo_impl: o do T1 fica; a resolução é anexada (T2/T3 a leem).
+    const anterior = (await ultimoArtefato<ResumoImplRegistrado>(n, execucaoId, 'resumo_impl'))
+      ?.conteudo;
+    const registrado: ResumoImplRegistrado | null = anterior
+      ? {
+          ...anterior,
+          bloqueios: [...anterior.bloqueios, ...resumo.bloqueios],
+          comandos_stream: [
+            ...(anterior.comandos_stream ?? []),
+            ...comandosDeVerificacaoDoStream(bash),
+          ],
+          resolucoes_conflito: [
+            ...(anterior.resolucoes_conflito ?? []),
+            {
+              destino,
+              sha_destino: shaDestino,
+              sha: head,
+              arquivos,
+              resumo_tecnico: resumo.resumo_tecnico,
+            },
+          ],
+        }
+      : null;
+    const etapaId = fim.etapa.id;
+    await n.transicionar(
+      execucaoId,
+      { tipo: 'conflito_resolvido', resultado: 'resolvido' },
+      {
+        patch: { sha_atual: head },
+        dentro: async (r) => {
+          if (!registrado) return;
+          await r.artefatos.criar({
+            execucao_id: execucaoId,
+            etapa_id: etapaId,
+            tipo: 'resumo_impl',
+            contrato: 'resumo_impl.v1',
+            conteudo: registrado as unknown as JsonLivre,
+          });
+        },
+      },
+    );
+    return;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // relatando — T3 (04 §6–§8; 03 §2.4 linhas de `relatando`)
 // ---------------------------------------------------------------------------
 
@@ -2379,6 +2747,7 @@ export async function relatar(n: Nucleo, execucaoId: string): Promise<void> {
   ];
   const evidenciaVisual = execucao.evidencia_visual ?? 'nao_se_aplica';
   const etapasExec = await etapasDa(n, execucaoId);
+  const conflito = await conflitoPendente(n.banco, execucao, sha);
   const condutorEditouMedido = etapasExec.some((e) => e.condutor_editou);
   const momento = (lista: readonly CapturaRegistrada[], id: string) =>
     lista.find((c) => c.tela_id === id)?.resultado ?? 'sem captura';
@@ -2412,6 +2781,11 @@ export async function relatar(n: Nucleo, execucaoId: string): Promise<void> {
     `evidencia_visual: ${evidenciaVisual}${execucao.evidencia_visual_motivo ? ` — declare: "${declaracaoSemPrints(execucao.evidencia_visual_motivo)}"` : ''}`,
     `Refs válidas: ${refs.join(', ') || '(nenhuma)'}`,
     `Achados em aberto: ${achadosEmAberto(veredito).join(' | ') || '(nenhum)'}`,
+    ...(conflito
+      ? [
+          `Mudou desde a sua aprovação (FJ-036): o destino ${conflito.destino} avançou; a Forja integrou ${sha8(conflito.sha_destino)} nesta branch e o agente resolveu o conflito em: ${conflito.arquivos.join(', ') || '(arquivos não registrados)'}.${conflito.resumo_tecnico ? ` Como resolveu: ${conflito.resumo_tecnico}` : ''} Comece \`mudou_desde_a_ultima_versao\` por isso, em linguagem simples.`,
+        ]
+      : []),
   ].join('\n');
   const regras = await regrasDoRepositorio(projeto.repo_dir, execucao.sha_base);
   const prompt = montarPromptTurno({
@@ -2583,6 +2957,7 @@ export async function relatar(n: Nucleo, execucaoId: string): Promise<void> {
 const PERFIL_DO_ESTADO: Partial<Record<string, NomePerfil>> = {
   planejando: 'planejador',
   implementando: 'condutor_t1',
+  resolvendo_conflito: 'condutor_t1',
   verificando: 'condutor_t1',
   revisando: 'condutor_t2',
   relatando: 'condutor_t3',

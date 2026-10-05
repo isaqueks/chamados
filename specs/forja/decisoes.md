@@ -181,6 +181,7 @@ Todas as ADRs abaixo têm data **2026-10-02**. Elas registram o porquê; o contr
 **Alternativas descartadas:** resolvedor automático de conflito no MVP (Fase 3, sempre com reaprovação); rebase silencioso sem reaprovação (muda o patch aprovado).
 **Consequências:** o humano aprovou exatamente o que entra: patch diferente → reaprovação com interdiff (FJ-014). Algoritmo em `03-pipeline.md`.
 **Atualização (FJ-032, 2026-10-03):** a "reverificação" deixou de ser por comando. Só quando o destino andou desde a aprovação **e** os arquivos que mudaram nele se cruzam com os do patch, a Forja roda um turno T2 de **reverificação pelo revisor** na worktree de integração antes de avançar a ref; sem interseção, integra direto. Reprovado → T1 (`ciclo_total` += 1); turno que não conclui → `falhou` (`setup_falhou`).
+**Atualização (FJ-036, 2026-10-04):** o resolvedor automático de conflito foi antecipado da Fase 3. Conflito na integração → `resolvendo_conflito`: o agente resolve na worktree do chamado, o app commita o merge e a execução passa por coleta → T2 → T3 → **reaprovação** (G2'). Até 2 resoluções automáticas por execução; migration/schema e a 3ª ocorrência vão a `precisa_humano`.
 
 ## FJ-013 — Modo de entrega padrão: `merge_e_push` (2026-10-02)
 
@@ -537,6 +538,35 @@ Cada extensão traz spec 11 atualizada, CHANGELOG e smoke cross-tenant (regra 6 
 - Menos barreira contra erro humano e contra injeção: os sinais heurísticos do plano (05 §6.1) deixam de parar em `nunca`. Compensam: `alertas_seguranca` ainda para, o `revisor_seguranca` do T2 continua obrigatório pelo gatilho de 04 §4.6 (sensíveis, dependência nova, áreas sensíveis), o diff e os avisos ficam à vista no G2, e `por_risco` continua a um clique em Configurações. Resíduo aceito pelo usuário.
 - Specs com a marca "(FJ-034, 2026-10-03)": 02 (`gates`, `aprovado_sem_prints`), 03 (§2.4 linha de aprovar, §4, §7.4, §11 relatório × diff), 04 §7.2, 06 (§4.1, §4.3, §4.4, §4.5, §7 Configurações); FJ-014 com "Atualização".
 - Testes: `avisosG2`/`avaliarG2` (sem exigências; dado velho; mensagem nova depois; resposta inválida), G1 `nunca` com avisos e `por_risco` inalterado, `decidirRelatorio` seguindo com aviso, config antiga com as chaves removidas, regras do botão na web, `naMesaDePlanos`, jornadas FJ-026 (sem prints → aprova num clique com `aprovado_sem_prints` gravado) e ajuste do caso `curl|sh` (#3) para `por_risco`.
+
+## FJ-036 — Conflito de merge é resolvido pelo agente; o humano só reaprova (2026-10-04)
+
+**Status:** aceita (decisão do agente principal sobre o princípio do usuário em FJ-034). Antecipa a Fase 3 de FJ-012 (FORA-10) e vale sobre `03-pipeline.md` J5/§8.1 passo 3/§8.3 e `06-ui-ux.md` §5.5 onde conflitarem.
+
+**Contexto:** caso real (2026-10-04): depois do merge do #63 em `feature/clean`, as execuções #59 e #52 — aprovadas e na fila — conflitaram em `api-backend/routes/rest/api/v2/analise/index.ts` (+ um teste) e pararam em `precisa_humano (conflito_merge)`. Princípio do usuário (FJ-034): _"estou fazendo essa ferramenta para facilitar minha vida, não dificultar ou adicionar mais etapas"_. Resolver conflito textual é trabalho do Opus, não de quem aprova.
+
+**Decisão** (`03-pipeline.md` §8.4):
+
+1. **Conflito → `resolvendo_conflito`.** O app commita o que houver na worktree do chamado, pega o `T0` atual do destino, grava-o no item **antes** de agir e faz `git merge --no-ff --no-commit <T0>` — os marcadores ficam. Abre um **turno T1 de conflito** (etapa `resolver_conflito`) na sessão condutora (perfil `condutor_t1`, bypass) com `prompts/resolver-conflito.md`: as duas intenções (plano/implementação e destino via `git log/diff <merge-base>..<T0>`), resolver sem descartar um lado, remover os marcadores, rodar os checks, refazer só os prints `depois` se mexeu em UI, não commitar. O app confere os marcadores (1 correção), commita `forja: resolve conflito com <destino>@<sha7>` e segue para a **coleta → T2 de reverificação da resolução → T3** (versão nova com "Mudou desde a sua aprovação") → `aguardando_aprovacao` como **reaprovação** (G2', um clique, mesmo com `patch-id` igual). Aprovada, a execução volta à fila normalmente.
+2. **Limite:** 2 resoluções automáticas por execução (conflito de novo depois da 2ª → `precisa_humano` `conflito_merge` com os arquivos). Arquivo em conflito que casa o detector `banco` (migration/schema) → `precisa_humano` `conflito_schema` direto, sem tocar a worktree (ou com o merge desfeito, se descoberto na resolução): dado é irreversível.
+3. **UI:** a Execução mostra o sub-nó "Resolvendo conflito com <destino>" no Merge; a Aprovação mostra a faixa "Reaprovação: o destino avançou e o conflito foi resolvido pelo agente; veja o Interdiff" com os arquivos, e o relatório "Mudou desde a sua aprovação". O Interdiff passa a mostrar só os arquivos dos dois patches e o Diff usa a base registrada no relatório (o `T0` integrado), para o que o destino fez não aparecer como se fosse do chamado.
+4. **"Tentar de novo" em `precisa_humano (conflito_merge)`** → `resolvendo_conflito` (mesmo caminho; o limite de 2 vale só para o automático). Na tela, o botão se chama "Resolver conflito com o agente". Assumir continua disponível.
+
+**Alternativas descartadas:**
+
+- **Manter `precisa_humano` com Assumir** (FJ-012 original): é exatamente a etapa a mais que o usuário recusou.
+- **Rebase silencioso da branch sobre o destino sem reaprovação**: muda o patch aprovado; o humano tem de ver o que entrou (F-11).
+- **Resolver na worktree de integração destacada** (sem voltar ao pipeline): pularia a revisão e o relatório; o patch integrado não seria o aprovado.
+- **Resolver também migration/schema**: um merge errado de migration é dado perdido em produção; o custo do humano aqui é mérito, não processo.
+
+**Consequências:**
+
+- Máquina (`maquina-execucao.ts`): arestas `integrando → resolvendo_conflito` (código), `resolvendo_conflito → verificando` e `→ precisa_humano` (código; `conflito_merge`, `conflito_schema`, `regra_conteudo_violada`, `timeout_etapa`, `orcamento_etapa`, `sentinela_divergente`), `precisa_humano → resolvendo_conflito` (humano); `resolvendo_conflito` entra em `ESTADOS_COM_AGENTE` (pausar, cota, interromper, Assumir, falha) e em "antes de mergeado" (Descartar/Encerrar). `ResultadoIntegracao.resolver_conflito` e o evento `conflito_resolvido`.
+- O item da fila em `conflito` fica até a próxima aprovação (também em `conflito_schema`) e a aprovação vigente é invalidada; `tentativas_conflito` passa a ser a ocorrência na execução. `baseDoDiff` já contava o `T0` integrado. `ResumoImplRegistrado.resolucoes_conflito` (nova versão do artefato a cada resolução).
+- Primitivas git: `iniciarMergeDestino`, `mergeEmCurso`, `arquivosComMarcadores`, `abortarMerge`, `concluirMergeDestino` (commit de merge mesmo com a árvore igual ao HEAD). O deny de `git merge*`/`git commit*` do T1 mantém o merge nas mãos do app.
+- As execuções paradas em `precisa_humano (conflito_merge)` antes desta decisão (#59, #52) destravam com "Resolver conflito com o agente" depois de reiniciar a Forja; não há migration (o item `conflito` com `sha_destino_antes`/`arquivos_em_conflito` já tem o que o caminho novo precisa).
+- Specs com a marca "(FJ-036, 2026-10-04)": 00 (glossário), 01 §6.2, 02 (`resolvendo_conflito`, `tentativas_conflito`), 03 (§2.1, §2.2, §2.4, §8.1, §8.3, §8.4 nova, §10, §11), 04 (§4.4 T2, §4.7, §4.8 nova, §5 `ResumoImplRegistrado`), 06 (§4.2, §4.3, §4.7, §5.5), 08 (FORA-10); FJ-012 com "Atualização".
+- Testes: tabela exaustiva com as arestas novas, `conflito_resolvido` e "tentar de novo" em `conflito_merge`; primitivas git (merge em curso, marcadores, commit de merge sem `arquivos_locais`, árvore igual ao HEAD, abortar); jornada J5 (runner falso resolvendo: sessão condutora, commit de merge com 2 pais, T2/T3 com o contexto, reaprovação com faixa, Interdiff/Diff sem os arquivos do destino, sub-nó da trilha; 2ª ocorrência resolve, 3ª para; "tentar de novo" resolve e mergeia), marcador que sobra (1 correção → `precisa_humano` com o merge em curso → "tentar de novo" retoma) e migration → `conflito_schema` sem tocar a worktree.
 
 ---
 

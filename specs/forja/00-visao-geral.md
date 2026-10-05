@@ -210,7 +210,7 @@ O significado está resumido abaixo; transições, gatilhos e quem decide ficam 
 |                     | `retrabalho_humano`           | Humano pediu ajustes; volta a implementar com os comentários                                                                             |
 | Merge               | `na_fila_merge`               | Aprovado, na fila serial                                                                                                                 |
 |                     | `integrando`                  | App integrando (com reverificação pelo revisor quando exigida, FJ-032) e avançando a ref                                                 |
-|                     | `resolvendo_conflito`         | Fase 3 (no MVP, conflito → `precisa_humano`)                                                                                             |
+|                     | `resolvendo_conflito`         | O agente resolve o conflito com o destino na worktree do chamado; o humano só reaprova (FJ-036, 2026-10-04; antes Fase 3)                |
 |                     | `mergeado`                    | Ref de destino avançada (e push feito, conforme o modo)                                                                                  |
 | Comunicação         | `comunicando`                 | Outbox em andamento                                                                                                                      |
 |                     | `mergeado_pendente_chamado`   | Merge feito, mas o Chamados falhou; retentativa e botão "tentar agora"                                                                   |

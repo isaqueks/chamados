@@ -386,13 +386,14 @@ export class DiagnosticoForja implements PortaDiagnostico {
         item(
           'cli_smoke',
           'Smoke de perfis da versão nova',
-          ultimo?.smoke_aprovado ? 'ok' : ultimo ? 'erro' : 'pendente',
+          ultimo?.smoke_aprovado ? 'ok' : ultimo ? 'aviso' : 'pendente',
           ultimo
             ? ultimo.smoke_aprovado
               ? `Aprovado em ${ultimo.em}.`
               : `Reprovado em ${ultimo.em}: ${ultimo.falhas.slice(0, 3).join('; ')}`
-            : `Aceite a versão ${versao} para rodar o smoke (≈ US$ 0,04 equivalente, haiku).`,
-          ultimo?.smoke_aprovado ? null : 'pipeline',
+            : `Opcional: aceite a versão ${versao} para rodar o smoke de perfis (≈ US$ 0,04 equivalente, haiku).`,
+          // Smoke de perfis é opcional: nunca bloqueia (ver cli_versao).
+          null,
         ),
       );
     }

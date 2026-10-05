@@ -1,10 +1,16 @@
 import 'reflect-metadata';
+import { setDefaultResultOrder } from 'node:dns';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { iniciarForja } from './boot/forja';
 import { carregarConfig, ErroConfig, PORTA_VITE_DEV } from './config';
 import { ErroMigracao } from './db/erros';
 import { gerarTokenBoot } from './http/seguranca-local';
 import { recusaPorRoot } from './processos/usuario';
+
+// IPv4 primeiro (2026-10-04): o host do Chamados atrás do Cloudflare resolvia
+// para IPv6 e o `fetch` do Node falhava de forma intermitente ("fetch failed"),
+// segurando o outbox depois do merge. `curl` ia bem; o Node tentava o AAAA antes.
+setDefaultResultOrder('ipv4first');
 
 /**
  * Processo da Forja (specs/forja/01 §4.1): lê a config, sobe tudo por

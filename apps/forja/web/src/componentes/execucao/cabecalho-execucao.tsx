@@ -132,7 +132,10 @@ export function CabecalhoExecucao({
               onClick={() => tentar.mutate(undefined)}
               disabled={tentar.isPending}
             >
-              Tentar de novo
+              {/* FJ-036: no conflito com o destino, "tentar de novo" = o agente resolve. */}
+              {ex.estado === 'precisa_humano' && ex.motivo_estado === 'conflito_merge'
+                ? 'Resolver conflito com o agente'
+                : 'Tentar de novo'}
             </Button>
           )}
           {tem('assumir') && (

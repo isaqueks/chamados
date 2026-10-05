@@ -58,6 +58,7 @@ const PRE_MERGE: TEstado[] = [
   'retrabalho_humano',
   'na_fila_merge',
   'integrando',
+  'resolvendo_conflito',
   'precisa_humano',
   ...LATERAIS,
 ];
@@ -70,7 +71,13 @@ const ANTES_IMPL: TEstado[] = [
   'aguardando_decisao',
   'aguardando_cliente_resposta',
 ];
-const COM_AGENTE: TEstado[] = ['planejando', 'implementando', 'revisando', 'relatando'];
+const COM_AGENTE: TEstado[] = [
+  'planejando',
+  'implementando',
+  'revisando',
+  'relatando',
+  'resolvendo_conflito',
+];
 const COM_PROCESSO: TEstado[] = ['preparando', ...COM_AGENTE, 'verificando', 'integrando'];
 
 type Linha = [de: TEstado | TEstado[], para: TEstado, atores: AtorTransicao[]];
@@ -112,6 +119,11 @@ const ESPERADO: Linha[] = [
   ['integrando', 'implementando', ['codigo']],
   ['integrando', 'precisa_humano', ['codigo']],
   ['integrando', 'falhou', ['codigo']],
+  // FJ-036: resolução automática de conflito
+  ['integrando', 'resolvendo_conflito', ['codigo']],
+  ['resolvendo_conflito', 'verificando', ['codigo']],
+  ['resolvendo_conflito', 'precisa_humano', ['codigo']],
+  ['precisa_humano', 'resolvendo_conflito', ['humano']],
   ['mergeado', 'comunicando', ['codigo']],
   ['comunicando', 'aguardando_deploy', ['codigo']],
   ['aguardando_deploy', 'comunicando', ['humano']],
@@ -193,14 +205,31 @@ describe('tabela de transições (03 §2.4) — exaustivo', () => {
     }
   });
 
-  it('terminais não saem; resolvendo_conflito é inalcançável no MVP', () => {
+  it('terminais não saem; resolvendo_conflito só a partir da integração ou do humano (FJ-036)', () => {
     for (const t of ['concluido', 'descartado', 'cancelado'] as TEstado[]) {
       expect(destinosPossiveis(t)).toEqual([]);
       expect(transicaoValida(t, 'na_fila', 'humano').valida).toBe(false);
     }
-    for (const de of ESTADOS) {
-      expect(destinosPossiveis(de, ANTERIOR)).not.toContain('resolvendo_conflito');
-    }
+    const chegam = ESTADOS.filter((de) =>
+      destinosPossiveis(de, LATERAIS.includes(de) ? 'resolvendo_conflito' : null).includes(
+        'resolvendo_conflito',
+      ),
+    ).filter((de) => !LATERAIS.includes(de));
+    expect(chegam.sort()).toEqual(['integrando', 'precisa_humano']);
+    // Nunca pula a coleta/revisão/relatório: a resolução sempre volta pela coleta.
+    expect(destinosPossiveis('resolvendo_conflito').sort()).toEqual(
+      [
+        'assumido_manual',
+        'cancelado',
+        'descartado',
+        'falhou',
+        'interrompido',
+        'pausado_cota',
+        'pausado_usuario',
+        'precisa_humano',
+        'verificando',
+      ].sort(),
+    );
   });
 
   it('depois de mergeado não há descarte nem volta (03 §2.5)', () => {
@@ -594,11 +623,85 @@ describe('proximoEstado — fatos do código', () => {
         'push_recusado',
       ],
       [{ tipo: 'integracao_concluida', resultado: 'recomecar' }, 'permanece', null],
+      [
+        { tipo: 'integracao_concluida', resultado: 'resolver_conflito' },
+        'resolvendo_conflito',
+        null,
+      ],
     ];
     for (const [ev, destino, m] of casos) {
       const d = proximoEstado(at('integrando'), ev);
       expect([para(d), motivo(d)], ev.resultado).toEqual([destino, m]);
     }
+  });
+
+  it('resolução de conflito (FJ-036): resolvido → coleta; senão precisa_humano com o motivo', () => {
+    const casos: [
+      (EventoMaquina & { tipo: 'conflito_resolvido' })['resultado'],
+      string,
+      TMotivo | null,
+    ][] = [
+      ['resolvido', 'verificando', null],
+      ['conflito_merge', 'precisa_humano', 'conflito_merge'],
+      ['conflito_schema', 'precisa_humano', 'conflito_schema'],
+      ['impedimento', 'precisa_humano', 'regra_conteudo_violada'],
+    ];
+    for (const [resultado, destino, m] of casos) {
+      const d = proximoEstado(at('resolvendo_conflito'), { tipo: 'conflito_resolvido', resultado });
+      expect([para(d), motivo(d)], resultado).toEqual([destino, m]);
+    }
+    // Só vale em `resolvendo_conflito`.
+    expect(
+      para(proximoEstado(at('integrando'), { tipo: 'conflito_resolvido', resultado: 'resolvido' })),
+    ).toBe('recusado');
+    // Turno de agente: estouro, cota, pausa e interrupção valem como nos outros.
+    expect(
+      motivo(
+        proximoEstado(at('resolvendo_conflito'), { tipo: 'etapa_estourou', causa: 'timeout' }),
+      ),
+    ).toBe('timeout_etapa');
+    expect(
+      para(
+        proximoEstado(at('resolvendo_conflito'), {
+          tipo: 'limite_cota',
+          overage_nao_autorizado: false,
+        }),
+      ),
+    ).toBe('pausado_cota');
+    expect(para(proximoEstado(at('resolvendo_conflito'), { tipo: 'processo_interrompido' }))).toBe(
+      'interrompido',
+    );
+  });
+
+  it('tentar de novo em conflito_merge → o agente resolve (FJ-036), nunca a fila nem Assumir', () => {
+    const conflito: EstadoAtualExecucao = {
+      estado: 'precisa_humano',
+      estado_anterior: null,
+      motivo_estado: 'conflito_merge',
+    };
+    const t = proximoEstado(conflito, { tipo: 'tentar_novamente', etapa_anterior: 'integrar' });
+    expect(t.tipo === 'transicao' && [t.transicao.para, t.transicao.ator]).toEqual([
+      'resolvendo_conflito',
+      'humano',
+    ]);
+    // Parado no turno de conflito por outro motivo (timeout): volta ao turno.
+    expect(
+      para(
+        proximoEstado(
+          { estado: 'precisa_humano', estado_anterior: null, motivo_estado: 'timeout_etapa' },
+          { tipo: 'tentar_novamente', etapa_anterior: 'resolver_conflito' },
+        ),
+      ),
+    ).toBe('resolvendo_conflito');
+    // Conflito em migration/schema segue o mapeamento por etapa (não resolve sozinho).
+    expect(
+      para(
+        proximoEstado(
+          { estado: 'precisa_humano', estado_anterior: null, motivo_estado: 'conflito_schema' },
+          { tipo: 'tentar_novamente', etapa_anterior: 'integrar' },
+        ),
+      ),
+    ).toBe('na_fila_merge');
   });
 
   it('outbox: mergeado → comunicando → (deploy | pendente | concluido)', () => {

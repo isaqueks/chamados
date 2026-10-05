@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { EstrategiaIntegracao, ModoEntrega } from '../../comum/estados';
+import { commitCheckpoint, type OpcoesCheckpoint } from './checkpoint';
 import { ErroGit, ehAncestral, git, redigirCredenciais, resolverSha, statusPorcelain } from './git';
 import { criarWorktreeDestacada, listarWorktrees, removerWorktree } from './worktrees';
 
@@ -259,6 +262,91 @@ export function integrarDestinoNaBranch(
   mensagem: string,
 ): Promise<ResultadoIntegracao> {
   return mergeNaArvore(worktreeChamado, t0, mensagem, 'merge_no_ff');
+}
+
+// ---------------------------------------------------------------------------
+// Resolução automática de conflito na worktree do chamado (FJ-036; 03 §8.4)
+// ---------------------------------------------------------------------------
+
+/** `MERGE_HEAD` da worktree (merge em curso), ou `null`. */
+export function mergeEmCurso(dir: string): Promise<string | null> {
+  return resolverSha(dir, 'MERGE_HEAD');
+}
+
+export type InicioMergeDestino =
+  /** `T0` já é ancestral do HEAD: nada a integrar. */
+  | { tipo: 'ja_integrado' }
+  /** Merge sem conflito, já commitado pelo app. */
+  | { tipo: 'limpo'; sha: string }
+  /** Merge em curso com marcadores nos `arquivos` (nada commitado). */
+  | { tipo: 'conflito'; arquivos: string[] };
+
+/**
+ * `git merge --no-ff --no-commit <T0>` na worktree do chamado (FJ-036): em
+ * conflito, o merge FICA em curso com os marcadores para o agente resolver; sem
+ * conflito, o app commita na hora. A worktree tem de estar limpa (o chamador
+ * commita antes).
+ */
+export async function iniciarMergeDestino(
+  dir: string,
+  t0: string,
+  mensagem: string,
+): Promise<InicioMergeDestino> {
+  if (await ehAncestral(dir, t0, 'HEAD').catch(() => false)) return { tipo: 'ja_integrado' };
+  const r = await git(['merge', '--no-ff', '--no-commit', t0], { cwd: dir, aceitar: [0, 1] });
+  if (r.codigo === 1) {
+    const arquivos = await arquivosEmConflito(dir);
+    if (arquivos.length === 0) {
+      // exit 1 sem arquivo em conflito (ex.: arquivo local não rastreado no caminho).
+      await git(['merge', '--abort'], { cwd: dir, aceitar: [0, 128] });
+      throw new ErroGit('merge', 1, r.stdout, r.stderr || 'merge do destino falhou sem conflito');
+    }
+    return { tipo: 'conflito', arquivos };
+  }
+  await git(['commit', '--no-verify', '--quiet', '--allow-empty', '-m', mensagem], { cwd: dir });
+  return { tipo: 'limpo', sha: (await resolverSha(dir, 'HEAD')) as string };
+}
+
+/** Desfaz o merge em curso (conflito em migration/schema: a worktree volta ao HEAD). */
+export async function abortarMerge(dir: string): Promise<void> {
+  await git(['merge', '--abort'], { cwd: dir, aceitar: [0, 128] });
+}
+
+const MARCADOR_CONFLITO = /^(<{7}|>{7})( |$)/m;
+
+/**
+ * Arquivos que ainda têm marcador de conflito (`<<<<<<< `/`>>>>>>> ` no início
+ * da linha). `=======` sozinho não conta (sublinhado de título em Markdown).
+ * Arquivo apagado na resolução não tem marcador.
+ */
+export async function arquivosComMarcadores(
+  dir: string,
+  arquivos: readonly string[],
+): Promise<string[]> {
+  const restantes: string[] = [];
+  for (const a of arquivos) {
+    const texto = await readFile(join(dir, a), 'utf8').catch(() => null);
+    if (texto !== null && MARCADOR_CONFLITO.test(texto)) restantes.push(a);
+  }
+  return restantes;
+}
+
+/**
+ * Conclui o merge do destino com o commit do app (FJ-036): `add -A` (sem os
+ * `arquivos_locais`) + commit de merge, mesmo que a resolução tenha deixado a
+ * árvore igual ao HEAD (o `MERGE_HEAD` precisa virar segundo pai, senão a
+ * próxima integração conflita de novo). Devolve o sha.
+ */
+export async function concluirMergeDestino(
+  dir: string,
+  mensagem: string,
+  opcoes: OpcoesCheckpoint = {},
+): Promise<string> {
+  await commitCheckpoint(dir, mensagem, opcoes);
+  if (await mergeEmCurso(dir)) {
+    await git(['commit', '--no-verify', '--quiet', '--allow-empty', '-m', mensagem], { cwd: dir });
+  }
+  return (await resolverSha(dir, 'HEAD')) as string;
 }
 
 // ---------------------------------------------------------------------------

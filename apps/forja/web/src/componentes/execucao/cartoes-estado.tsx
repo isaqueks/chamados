@@ -212,7 +212,16 @@ export function CartoesEstado({
         ))}
       >
         {ex.motivo_estado === 'conflito_merge' && (
-          <span>Resolva assumindo no terminal ou abra a worktree no chat livre.</span>
+          <span>
+            O agente resolve o conflito e pede sua reaprovação: use "Resolver conflito com o
+            agente". Se preferir resolver você, assuma no terminal.
+          </span>
+        )}
+        {ex.motivo_estado === 'conflito_schema' && (
+          <span>
+            Conflito em migration/schema: dado é irreversível, então a Forja não resolve sozinha.
+            Assuma no terminal, resolva e devolva.
+          </span>
         )}
       </Faixa>,
     );

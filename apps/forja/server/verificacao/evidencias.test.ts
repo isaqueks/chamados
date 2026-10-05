@@ -100,9 +100,12 @@ describe('coletarEvidencias (FJ-030 §3)', () => {
     r = await coletarEvidencias(dirExec, CHECKPOINT);
     expect(r.motivo).toMatch(/inválido/);
 
+    // Tolerância (2026-10-03): id fora do padrão é normalizado e o caminho ruim
+    // vira problema DA TELA, nunca rejeição do arquivo inteiro.
     telas([{ id: '../x', depois: 'a.png' }]);
     r = await coletarEvidencias(dirExec, CHECKPOINT);
-    expect(r.motivo).toMatch(/fora do formato/);
+    expect(r.motivo).not.toMatch(/fora do formato/);
+    expect(r.evidencia_visual).toBe('sem_evidencia_visual');
   });
 
   it('motivo_geral honesto do agente vira sem_evidencia_visual com o texto dele', async () => {

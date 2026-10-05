@@ -56,11 +56,14 @@ function ListaOuVazio({ itens, vazio }: { itens: string[]; vazio: string }) {
 export function AbaRelatorio({
   relatorio,
   versao,
+  desdeAprovacao = false,
   tecnico,
   aoAbrirEvidencias,
 }: {
   relatorio: RelatorioRegistrado;
   versao: number;
+  /** FJ-036: reaprovação depois de um conflito resolvido pelo agente. */
+  desdeAprovacao?: boolean;
   tecnico: TecnicoDto | undefined;
   aoAbrirEvidencias: () => void;
 }) {
@@ -188,7 +191,11 @@ export function AbaRelatorio({
           </Secao>
         )}
         {versao > 1 && (
-          <Secao titulo={`Mudou desde a versão ${versao - 1}`}>
+          <Secao
+            titulo={
+              desdeAprovacao ? 'Mudou desde a sua aprovação' : `Mudou desde a versão ${versao - 1}`
+            }
+          >
             <ListaOuVazio
               itens={r.mudou_desde_a_ultima_versao ?? []}
               vazio="O agente não declarou mudanças."

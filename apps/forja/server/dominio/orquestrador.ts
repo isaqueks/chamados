@@ -61,6 +61,7 @@ import {
   reavaliarPlano,
   recapturarPrints,
   relatar,
+  resolverConflito,
   revisar,
   verificar,
 } from './etapas';
@@ -566,6 +567,9 @@ export class Orquestrador {
         return;
       case 'relatar':
         await relatar(n, execucaoId);
+        return;
+      case 'resolver_conflito':
+        await resolverConflito(n, execucaoId, () => this.filaMerge.baseDestino(execucaoId));
         return;
       case 'integrar':
         await this.integrar(execucaoId, true);

@@ -71,6 +71,23 @@ export const ResumoImplRegistrado = ResumoImplV1.extend({
    * Ausente em artefatos anteriores a FJ-032.
    */
   comandos_stream: z.array(ComandoDoStream).optional(),
+  /**
+   * Conflitos com o destino resolvidos pelo agente na fila de merge (FJ-036),
+   * do mais antigo ao mais novo. Cada resolução gera uma versão nova deste
+   * artefato (o resumo do T1 original fica). Ausente antes de FJ-036.
+   */
+  resolucoes_conflito: z
+    .array(
+      z.object({
+        destino: z.string(),
+        sha_destino: Sha,
+        /** Commit de merge do app que concluiu a resolução. */
+        sha: Sha,
+        arquivos: z.array(z.string()),
+        resumo_tecnico: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type ResumoImplRegistrado = z.infer<typeof ResumoImplRegistrado>;
 

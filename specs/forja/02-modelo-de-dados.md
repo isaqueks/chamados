@@ -48,7 +48,7 @@ Lista canônica (glossário §3). Semântica das transições → 03. Aqui: sign
 | `retrabalho_humano`           | ativo        | humano pediu ajustes; volta a T1 com os comentários                                                                                                                           |
 | `na_fila_merge`               | ativo        | aprovado; `item_fila_merge` aguardando a vez                                                                                                                                  |
 | `integrando`                  | ativo        | integração, reverificação pelo revisor (só se o destino andou ∧ arquivos se cruzam, FJ-032), CAS da ref e push                                                                |
-| `resolvendo_conflito`         | ativo        | Fase 3 (resolvedor); no MVP conflito vai a `precisa_humano`                                                                                                                   |
+| `resolvendo_conflito`         | ativo        | Turno T1 de conflito (FJ-036, 2026-10-04; `03-pipeline.md` §8.4): o agente resolve o merge do destino deixado em curso na worktree; o app commita e segue para a coleta       |
 | `mergeado`                    | ativo        | ref avançada (e push feito, conforme `entrega.modo`)                                                                                                                          |
 | `comunicando`                 | ativo        | outbox de encerramento em curso                                                                                                                                               |
 | `mergeado_pendente_chamado`   | espera       | outbox falhou de forma retentável; botão "tentar agora"                                                                                                                       |
@@ -349,20 +349,20 @@ CHECKs: `tipo IN ('final','reaprovacao') ⇒ patch_id IS NOT NULL AND sha IS NOT
 
 Uma entrada na fila **serial** por `(projeto_id, branch_destino)` (F-10).
 
-| campo                             | tipo        | nulo      | significado                                                                  |
-| --------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------- |
-| id                                | uuid        | não       | PK                                                                           |
-| projeto_id / branch_destino       | uuid / text | não       | chave da fila                                                                |
-| execucao_id / aprovacao_id        | uuid        | não       | FKs; a aprovação vigente que autoriza                                        |
-| ordem                             | int         | não       | posição (reordenável pelo humano)                                            |
-| estado / motivo                   | enum / text | não / sim | `estado_item_fila_merge` · motivo em `devolvido`/`conflito`                  |
-| tentativas_conflito               | int         | não       | MVP: conflito → `precisa_humano`                                             |
-| sha_destino_antes / sha_integrado | text        | sim       | `T0` (valor "antigo" do CAS) · resultado da integração na worktree destacada |
-| patch_id_integrado                | text        | sim       | comparado com `aprovacao.patch_id`                                           |
-| arquivos_em_conflito              | json        | sim       | saída de `git merge-tree --write-tree --name-only`                           |
-| modo_avanco / push_em             | enum / text | sim       | `modo_avanco_ref`                                                            |
-| copia_local_atras                 | bool        | não       | aviso "sua branch local está atrás" (critica X-3)                            |
-| worktree_integracao_dir           | text        | sim       | removida ao concluir/devolver                                                |
+| campo                             | tipo        | nulo      | significado                                                                                                |
+| --------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| id                                | uuid        | não       | PK                                                                                                         |
+| projeto_id / branch_destino       | uuid / text | não       | chave da fila                                                                                              |
+| execucao_id / aprovacao_id        | uuid        | não       | FKs; a aprovação vigente que autoriza                                                                      |
+| ordem                             | int         | não       | posição (reordenável pelo humano)                                                                          |
+| estado / motivo                   | enum / text | não / sim | `estado_item_fila_merge` · motivo em `devolvido`/`conflito`                                                |
+| tentativas_conflito               | int         | não       | Ocorrência deste conflito na execução (1, 2, 3…; FJ-036): até 2 o agente resolve, na 3ª → `precisa_humano` |
+| sha_destino_antes / sha_integrado | text        | sim       | `T0` (valor "antigo" do CAS) · resultado da integração na worktree destacada                               |
+| patch_id_integrado                | text        | sim       | comparado com `aprovacao.patch_id`                                                                         |
+| arquivos_em_conflito              | json        | sim       | saída de `git merge-tree --write-tree --name-only`                                                         |
+| modo_avanco / push_em             | enum / text | sim       | `modo_avanco_ref`                                                                                          |
+| copia_local_atras                 | bool        | não       | aviso "sua branch local está atrás" (critica X-3)                                                          |
+| worktree_integracao_dir           | text        | sim       | removida ao concluir/devolver                                                                              |
 
 ### 4.13 `outbox_chamado`
 

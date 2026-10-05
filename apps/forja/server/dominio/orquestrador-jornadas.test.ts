@@ -196,33 +196,255 @@ describe('J4 — a Forja não roda comandos (FJ-032); retrabalho da revisão con
   });
 });
 
-describe('J5 — conflito na fila de merge', () => {
-  it('destino andou com conflito depois do G2 → precisa_humano (conflito_merge), worktree preservada', async () => {
+describe('J5 — conflito na fila de merge: o agente resolve, o humano reaprova (FJ-036)', () => {
+  /** Publica no remoto um `main` que reescreve os arquivos (conflita com a branch do chamado). */
+  function destinoAnda(a: AmbienteOrquestrador, arquivos: Record<string, string>, msg: string) {
+    sh(a.repo.repo, 'git fetch -q origin && git reset -q --hard origin/main');
+    for (const [caminho, conteudo] of Object.entries(arquivos)) {
+      mkdirSync(join(a.repo.repo, caminho, '..'), { recursive: true });
+      writeFileSync(join(a.repo.repo, caminho), conteudo);
+    }
+    sh(a.repo.repo, `git add -A && git commit -qm "${msg}" && git push -q origin main`);
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: a.repo.repo,
+      encoding: 'utf8',
+    }).trim();
+  }
+
+  const appDestino = (k: number) =>
+    `export const destino = ${k};\nexport const total = ${100 + k};\n`;
+
+  /** Turno T1 de conflito (o implementador resolve) + T2 + T3 da reaprovação. */
+  function roteiroResolucao(a: AmbienteOrquestrador, k: number) {
+    a.runner
+      .roteiro('condutor_t1', {
+        antes: (c) =>
+          // Preserva as duas intenções: a linha do destino e o total do chamado.
+          void writeFileSync(
+            join(c.cwd, 'src/app.ts'),
+            `export const destino = ${k};\nexport const total = 1;\n`,
+          ),
+        saida: {
+          ...resumoExemplo(1, ['src/app.ts']),
+          resumo_tecnico: `Mantive a linha do destino ${k} e o total do chamado.`,
+        },
+      })
+      .roteiro('condutor_t2', { saida: (c: ContextoTurno) => vereditoExemplo(c.head()) })
+      .roteiro('condutor_t3', {
+        saida: (c: ContextoTurno) =>
+          relatorioComRef(c.head(), {
+            mudou_desde_a_ultima_versao: [`O destino avançou (${k}) e o conflito foi resolvido.`],
+          }),
+      });
+  }
+
+  it('conflito → resolvendo_conflito → T1 resolve → coleta → T2 → T3 → reaprovação; limite de 2; tentar de novo resolve de novo', async () => {
     amb = await montarAmbiente();
     roteiroFeliz(amb.runner);
     const id = await criar(amb);
     await amb.orq.ocioso();
     expect((await estado(amb, id)).estado).toBe('aguardando_aprovacao');
-    // Alguém mexe na mesma linha da main e publica.
-    sh(
-      amb.repo.repo,
-      'echo "export const total = 2;" >> src/app.ts && git commit -qam conflito && git push -q origin main',
+    const sessaoCondutor = (await estado(amb, id)).session_id_condutor;
+
+    // 1ª ocorrência: alguém reescreve o mesmo arquivo na main (e cria outro).
+    const t0 = destinoAnda(
+      amb,
+      { 'src/app.ts': appDestino(1), 'docs/destino.md': '# só do destino\n' },
+      'destino 1',
     );
-    const ap = await servicos(amb).aprovacao_obter({ id });
-    expect(ap.conflito?.conflita).toBe(true);
-    expect(ap.alertas.map((x) => x.tipo)).toContain('conflito_destino');
+    const pre = await servicos(amb).aprovacao_obter({ id });
+    expect(pre.alertas.map((x) => x.tipo)).toContain('conflito_destino');
+    roteiroResolucao(amb, 1);
+    await aprovarG2(amb, id);
+    await amb.orq.ocioso();
+    let e = await estado(amb, id);
+    expect(e.estado).toBe('aguardando_aprovacao');
+    expect(await tiposEtapas(amb, id)).toEqual([
+      'planejar:concluido',
+      'implementar:concluido',
+      'verificar:concluido',
+      'revisar:concluido',
+      'relatar:concluido',
+      'integrar:comando_vermelho',
+      'resolver_conflito:concluido',
+      'verificar:concluido',
+      'revisar:concluido',
+      'relatar:concluido',
+    ]);
+    // O turno de conflito roda na sessão condutora, com o merge em curso e os arquivos.
+    const turnoConflito = amb.runner.chamadasDe('condutor_t1').at(-1)!;
+    expect(turnoConflito.sessionId).toBe(sessaoCondutor);
+    expect(turnoConflito.prompt).toContain(`git merge --no-commit ${t0}`);
+    expect(turnoConflito.prompt).toContain('`src/app.ts`');
+    // O app commitou o merge (2 pais), sem marcador, com a mensagem da decisão.
+    const dir = e.worktree_dir as string;
+    const pais = execFileSync('git', ['rev-list', '--parents', '-n1', 'HEAD'], {
+      cwd: dir,
+      encoding: 'utf8',
+    })
+      .trim()
+      .split(' ');
+    expect(pais).toHaveLength(3);
+    expect(pais).toContain(t0);
+    expect(
+      execFileSync('git', ['log', '-1', '--format=%s'], { cwd: dir, encoding: 'utf8' }).trim(),
+    ).toBe(`forja: resolve conflito com main@${t0.slice(0, 7)}`);
+    expect(readFileSync(join(dir, 'src/app.ts'), 'utf8')).not.toMatch(/<{7}|>{7}/);
+    // T2 reverifica a resolução; T3 diz o que mudou desde a aprovação.
+    expect(amb.runner.chamadasDe('condutor_t2').at(-1)!.prompt).toContain(
+      'conflito com o destino resolvido pelo agente',
+    );
+    expect(amb.runner.chamadasDe('condutor_t3').at(-1)!.prompt).toContain(
+      'Mudou desde a sua aprovação',
+    );
+    // Aprovação: reaprovação (G2') com a faixa do conflito; Interdiff só com os arquivos do chamado.
+    const s = servicos(amb);
+    const ap = await s.aprovacao_obter({ id });
+    expect(ap.reaprovacao?.conflito).toMatchObject({ destino: 'main', sha_destino: t0 });
+    expect(ap.reaprovacao?.conflito?.arquivos).toContain('src/app.ts');
+    const faixa = ap.alertas.find((x) => x.tipo === 'reaprovacao');
+    expect(faixa?.mensagem).toContain('conflito foi resolvido pelo agente');
+    expect(ap.versao).toBe(2);
+    const inter = await s.aprovacao_interdiff({ id });
+    expect(inter.arquivos.map((x) => x.caminho)).toContain('src/app.ts');
+    expect(inter.arquivos.map((x) => x.caminho)).not.toContain('docs/destino.md');
+    const diff = await s.aprovacao_diff({ id });
+    expect(diff.arquivos.map((x) => x.caminho)).not.toContain('docs/destino.md');
+    // Trilha: sub-etapa do Merge.
+    const ex = await s.execucao_obter({ id });
+    const merge = ex.trilha.find((n) => n.chave === 'merge')!;
+    expect(merge.subnos).toEqual([
+      expect.objectContaining({ chave: 'resolver_conflito', estado: 'feito' }),
+    ]);
+
+    // 2ª ocorrência: o destino anda de novo antes da reaprovação → resolve de novo.
+    destinoAnda(amb, { 'src/app.ts': appDestino(2) }, 'destino 2');
+    roteiroResolucao(amb, 2);
+    await aprovarG2(amb, id);
+    await amb.orq.ocioso();
+    expect((await estado(amb, id)).estado).toBe('aguardando_aprovacao');
+
+    // 3ª: passou do limite de 2 resoluções automáticas → precisa de você.
+    destinoAnda(amb, { 'src/app.ts': appDestino(3) }, 'destino 3');
+    await aprovarG2(amb, id);
+    await amb.orq.ocioso();
+    e = await estado(amb, id);
+    expect([e.estado, e.motivo_estado]).toEqual(['precisa_humano', 'conflito_merge']);
+    expect(e.motivo_texto).toContain('2 resoluções automáticas');
+    expect(amb.runner.pendentes('condutor_t1')).toBe(0);
+    const itemConflito = (await amb.banco.ler((r) => r.filaMerge.ativos())).find(
+      (i) => i.execucao_id === id,
+    );
+    expect([itemConflito?.estado, itemConflito?.tentativas_conflito]).toEqual(['conflito', 3]);
+
+    // "Tentar de novo" (o humano pediu) → o agente resolve; reaprovação → mergeado.
+    roteiroResolucao(amb, 3);
+    await s.execucao_tentar_novamente({ id });
+    await amb.orq.ocioso();
+    expect((await estado(amb, id)).estado).toBe('aguardando_aprovacao');
+    await aprovarG2(amb, id);
+    await amb.orq.ocioso();
+    e = await estado(amb, id);
+    expect(['mergeado', 'comunicando', 'concluido']).toContain(e.estado);
+    const mainRemota = execFileSync('git', ['rev-parse', 'main'], {
+      cwd: amb.remoto,
+      encoding: 'utf8',
+    }).trim();
+    expect(
+      execFileSync('git', ['show', `${mainRemota}:src/app.ts`], {
+        cwd: amb.remoto,
+        encoding: 'utf8',
+      }),
+    ).toBe('export const destino = 3;\nexport const total = 1;\n');
+  });
+
+  it('marcador que sobra depois de 1 correção → precisa_humano com o merge em curso; tentar de novo retoma', async () => {
+    amb = await montarAmbiente();
+    roteiroFeliz(amb.runner);
+    const id = await criar(amb);
+    await amb.orq.ocioso();
+    destinoAnda(amb, { 'src/app.ts': appDestino(1) }, 'destino 1');
+    // O agente "termina" duas vezes sem tirar os marcadores.
+    amb.runner.roteiro(
+      'condutor_t1',
+      { saida: resumoExemplo(1, ['src/app.ts']) },
+      { saida: resumoExemplo(1, ['src/app.ts']) },
+    );
+    await aprovarG2(amb, id);
+    await amb.orq.ocioso();
+    let e = await estado(amb, id);
+    expect([e.estado, e.motivo_estado]).toEqual(['precisa_humano', 'conflito_merge']);
+    expect(e.motivo_texto).toContain('marcadores de conflito restantes');
+    expect(amb.runner.chamadasDe('condutor_t1').at(-1)!.prompt).toContain(
+      'ainda há marcadores de conflito em: src/app.ts',
+    );
+    const dir = e.worktree_dir as string;
+    // Nada commitado com marcador: o merge continua em curso para a próxima tentativa.
+    expect(sh(dir, 'git rev-parse -q --verify MERGE_HEAD').toString().trim()).not.toBe('');
+    roteiroResolucao(amb, 1);
+    await servicos(amb).execucao_tentar_novamente({ id });
+    await amb.orq.ocioso();
+    e = await estado(amb, id);
+    expect(e.estado).toBe('aguardando_aprovacao');
+    expect(readFileSync(join(dir, 'src/app.ts'), 'utf8')).toBe(
+      'export const destino = 1;\nexport const total = 1;\n',
+    );
+  });
+
+  it('conflito em migration/schema (detector banco) → precisa_humano direto, worktree intocada', async () => {
+    amb = await montarAmbiente({
+      config: (c) => ({ ...c, detectores: { ...c.detectores, banco: ['**/migrations/**'] } }),
+    });
+    const migracao = 'db/migrations/001_total.sql';
+    amb.runner
+      .roteiro('planejador', { saida: planoExemplo() })
+      .roteiro('condutor_t1', {
+        antes: (c) =>
+          void sh(
+            c.cwd,
+            `mkdir -p db/migrations && echo "ALTER TABLE t ADD total int;" > ${migracao} && echo ok > ok.txt`,
+          ),
+        checkpoint: true,
+        saida: resumoExemplo(1, [migracao, 'ok.txt']),
+      })
+      .roteiro('condutor_t2', { saida: (c: ContextoTurno) => vereditoExemplo(c.head()) })
+      .roteiro('condutor_t3', {
+        saida: (c: ContextoTurno) =>
+          relatorioComRef(c.head(), {
+            alteracoes_no_schema_do_banco: {
+              houve: true,
+              itens: [
+                {
+                  em_linguagem_simples: 'O relatório guarda o total.',
+                  objeto_tecnico: 't.total',
+                  tipo: 'coluna_nova',
+                  afeta_dados_existentes: false,
+                  reversivel: true,
+                },
+              ],
+              declaracao: 'Uma coluna nova para o total.',
+              exige_migracao_no_deploy: true,
+            },
+          }),
+      });
+    const id = await criar(amb);
+    await amb.orq.ocioso();
+    expect((await estado(amb, id)).estado).toBe('aguardando_aprovacao');
+    destinoAnda(amb, { [migracao]: 'ALTER TABLE t ADD outra int;\n' }, 'migration do destino');
     await aprovarG2(amb, id);
     await amb.orq.ocioso();
     const e = await estado(amb, id);
-    expect([e.estado, e.motivo_estado]).toEqual(['precisa_humano', 'conflito_merge']);
-    expect(e.motivo_texto).toContain('src/app.ts');
+    expect([e.estado, e.motivo_estado]).toEqual(['precisa_humano', 'conflito_schema']);
+    expect(e.motivo_texto).toContain(migracao);
+    // Nada foi integrado na branch do chamado e não houve turno de conflito.
+    expect(await tiposEtapas(amb, id)).not.toContain('resolver_conflito:concluido');
+    expect(e.sha_atual).toBe(
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: e.worktree_dir!, encoding: 'utf8' }).trim(),
+    );
     const item = (await amb.banco.ler((r) => r.filaMerge.ativos())).find(
       (i) => i.execucao_id === id,
     );
     expect(item?.estado).toBe('conflito');
-    expect(
-      execFileSync('git', ['rev-parse', 'main'], { cwd: amb.remoto, encoding: 'utf8' }).trim(),
-    ).not.toBe(e.sha_atual);
   });
 });
 

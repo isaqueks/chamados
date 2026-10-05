@@ -352,6 +352,7 @@ function Aprovacao({ aprovacao: a }: { aprovacao: AprovacaoDto }) {
             <AbaRelatorio
               relatorio={a.relatorio}
               versao={a.versao}
+              desdeAprovacao={a.reaprovacao?.conflito != null}
               tecnico={tecnico.data}
               aoAbrirEvidencias={() => temEvidencias && setAba('evidencias')}
             />

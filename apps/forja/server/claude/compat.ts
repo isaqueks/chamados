@@ -171,13 +171,16 @@ export function itensDiagnosticoCli(
     {
       codigo: 'cli_versao',
       titulo: 'Versão da CLI do Claude',
-      estado: versao.ok ? 'ok' : 'erro',
+      // Versão DIFERENTE da validada é só AVISO (2026-10-03: a CLI se auto-
+      // atualizou 2.1.288 → 2.1.289 e o pipeline inteiro parou, com a fila de
+      // merge presa atrás de um "aceitar versão"). Só CLI AUSENTE bloqueia.
+      estado: versao.ok ? 'ok' : versao.encontrada ? 'aviso' : 'erro',
       detalhe: versao.ok
         ? `claude ${fixada}`
         : versao.encontrada
-          ? `Encontrada ${versao.encontrada}; a Forja foi validada com ${fixada}. Fixe a versão (claude install ${fixada}) ou aceite a nova versão para rodar o smoke de perfis.`
+          ? `claude ${versao.encontrada} (a Forja foi validada com ${fixada}; segue normalmente — se algo mudar de comportamento, rode o smoke de perfis no Diagnóstico).`
           : `CLI não encontrada (${versao.erro ?? 'erro'}).`,
-      bloqueia: versao.ok ? null : 'pipeline',
+      bloqueia: versao.ok || versao.encontrada ? null : 'pipeline',
       acao: null,
     },
     {

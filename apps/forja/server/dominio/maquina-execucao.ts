@@ -60,11 +60,10 @@ export const ESTADOS_POS_MERGE: readonly EstadoExecucao[] = [
 
 /**
  * Não terminais anteriores a `mergeado`: onde valem Descartar/Encerrar (03 §2.1,
- * "Não desenhados"). `resolvendo_conflito` fica de fora: inalcançável no MVP.
+ * "Não desenhados"). Inclui `resolvendo_conflito` desde FJ-036.
  */
 export const ESTADOS_ANTES_DE_MERGEADO: readonly EstadoExecucao[] = TODOS.filter(
-  (e) =>
-    !ESTADOS_TERMINAIS.includes(e) && !ESTADOS_POS_MERGE.includes(e) && e !== 'resolvendo_conflito',
+  (e) => !ESTADOS_TERMINAIS.includes(e) && !ESTADOS_POS_MERGE.includes(e),
 );
 
 /** Antes de existir trabalho do condutor: IA do servidor ativa → `precisa_humano` (03 §11). */
@@ -78,12 +77,16 @@ export const ESTADOS_ANTES_DE_IMPLEMENTANDO: readonly EstadoExecucao[] = [
   'aguardando_cliente_resposta',
 ];
 
-/** Estados com processo `claude` (turno de agente): pausa por cota, falha de saída (03 §2.3). */
+/**
+ * Estados com processo `claude` (turno de agente): pausa por cota, falha de saída (03 §2.3).
+ * `resolvendo_conflito` (FJ-036): turno T1 de conflito na sessão condutora.
+ */
 export const ESTADOS_COM_AGENTE: readonly EstadoExecucao[] = [
   'planejando',
   'implementando',
   'revisando',
   'relatando',
+  'resolvendo_conflito',
 ];
 
 /**
@@ -450,6 +453,14 @@ export const TRANSICOES: readonly RegraTransicao[] = [
   }),
   r({
     de: ['integrando'],
+    para: 'resolvendo_conflito',
+    atores: ['codigo'],
+    condicao:
+      'conflito textual ∧ nenhum arquivo do detector `banco` ∧ até a 2ª resolução automática da execução (FJ-036)',
+    ref: '03 §8.1, §8.4',
+  }),
+  r({
+    de: ['integrando'],
     para: 'precisa_humano',
     atores: ['codigo'],
     motivos: [
@@ -460,8 +471,8 @@ export const TRANSICOES: readonly RegraTransicao[] = [
       'sentinela_divergente',
     ],
     condicao:
-      'conflito (MVP), schema concorrente sem reverificação possível, push recusado 3×, cópia local suja além da espera',
-    ref: '03 §2.4, §7.3, §8.2',
+      'conflito depois de 2 resoluções automáticas, conflito em migration/schema, schema concorrente sem reverificação possível, push recusado 3×, cópia local suja além da espera',
+    ref: '03 §2.4, §7.3, §8.2, §8.4',
   }),
   r({
     de: ['integrando'],
@@ -470,6 +481,31 @@ export const TRANSICOES: readonly RegraTransicao[] = [
     motivos: ['setup_falhou'],
     condicao: 'reverificação do revisor não concluiu, ou base/remoto da integração falhou',
     ref: '03 §8.1 passo 5',
+  }),
+  // --- resolução automática de conflito (FJ-036) ------------------------------
+  r({
+    de: ['resolvendo_conflito'],
+    para: 'verificando',
+    atores: ['codigo'],
+    condicao:
+      'turno de conflito concluído ∧ nenhum marcador de conflito ∧ merge do destino commitado pelo app',
+    ref: '03 §8.4',
+  }),
+  r({
+    de: ['resolvendo_conflito'],
+    para: 'precisa_humano',
+    atores: ['codigo'],
+    motivos: [
+      'conflito_merge',
+      'conflito_schema',
+      'regra_conteudo_violada',
+      'timeout_etapa',
+      'orcamento_etapa',
+      'sentinela_divergente',
+    ],
+    condicao:
+      'marcadores restantes após 1 correção, impedimento sem suposição, conflito em migration/schema, timeout, orçamento',
+    ref: '03 §8.4',
   }),
   // --- pós-merge (outbox) -----------------------------------------------------
   r({
@@ -566,6 +602,14 @@ export const TRANSICOES: readonly RegraTransicao[] = [
     atores: ['humano'],
     condicao: 'tentar de novo após falha na revisão (timeout/orçamento/saída inválida)',
     ref: 'FJ-032',
+  }),
+  r({
+    de: ['precisa_humano'],
+    para: 'resolvendo_conflito',
+    atores: ['humano'],
+    condicao:
+      'tentar de novo com conflito_merge (ou parado no turno de conflito): o agente resolve',
+    ref: 'FJ-036; 03 §8.4',
   }),
   // --- genéricas (03 §2.1 "Não desenhados"; §11 polling) ----------------------
   r({
@@ -889,7 +933,9 @@ export type ResultadoIntegracao =
   | 'push_recusado_3x'
   | 'copia_suja_expirou'
   /** CAS recusado / push não-ff (< 3): volta ao passo 1 sem mudar de estado. */
-  | 'recomecar';
+  | 'recomecar'
+  /** Conflito que o agente resolve (FJ-036): → `resolvendo_conflito`. */
+  | 'resolver_conflito';
 
 export type EventoMaquina =
   // ---- código ----
@@ -935,6 +981,12 @@ export type EventoMaquina =
       fila_travada?: boolean;
     }
   | { tipo: 'integracao_concluida'; resultado: ResultadoIntegracao; texto?: string }
+  | {
+      /** Fim do turno T1 de conflito (FJ-036). */
+      tipo: 'conflito_resolvido';
+      resultado: 'resolvido' | 'conflito_merge' | 'conflito_schema' | 'impedimento';
+      texto?: string;
+    }
   | { tipo: 'outbox_iniciado' }
   | {
       tipo: 'outbox_avancou';
@@ -1154,8 +1206,25 @@ export function proximoEstado(atual: EstadoAtualExecucao, evento: EventoMaquina)
           );
         case 'recomecar':
           return permanece('ref andou: recomeça do passo 1 da integração');
+        case 'resolver_conflito':
+          return ir(atual, 'resolvendo_conflito', 'codigo');
       }
       return recusado('resultado de integração desconhecido');
+    }
+    case 'conflito_resolvido': {
+      if ((erro = exigir(atual, 'resolvendo_conflito'))) return recusado(erro);
+      const t = evento.texto ?? null;
+      switch (evento.resultado) {
+        case 'resolvido':
+          return ir(atual, 'verificando', 'codigo');
+        case 'conflito_merge':
+          return ir(atual, 'precisa_humano', 'codigo', 'conflito_merge', t);
+        case 'conflito_schema':
+          return ir(atual, 'precisa_humano', 'codigo', 'conflito_schema', t);
+        case 'impedimento':
+          return ir(atual, 'precisa_humano', 'codigo', 'regra_conteudo_violada', t);
+      }
+      return recusado('resultado de conflito desconhecido');
     }
     case 'outbox_iniciado':
       if ((erro = exigir(atual, 'mergeado'))) return recusado(erro);
@@ -1301,6 +1370,10 @@ export function proximoEstado(atual: EstadoAtualExecucao, evento: EventoMaquina)
       // que funcionar sempre — volta ao começo da etapa que parou: sem commit,
       // replaneja; com commit, mais um ciclo de implementação.
       if (atual.estado === 'precisa_humano') {
+        // FJ-036: conflito com o destino → o agente resolve (nunca "Assumir" por padrão).
+        if (atual.motivo_estado === 'conflito_merge') {
+          return ir(atual, 'resolvendo_conflito', 'humano');
+        }
         // Volta ao começo da ETAPA que parou (relatório estourado não refaz a
         // implementação); sem etapa conhecida, decide pelo commit.
         const porEtapa: Partial<Record<TipoEtapa, EstadoExecucao>> = {
@@ -1311,6 +1384,7 @@ export function proximoEstado(atual: EstadoAtualExecucao, evento: EventoMaquina)
           revisar: 'revisando',
           relatar: 'relatando',
           integrar: 'na_fila_merge',
+          resolver_conflito: 'resolvendo_conflito',
         };
         const alvo = evento.etapa_anterior ? porEtapa[evento.etapa_anterior] : undefined;
         if (alvo) return ir(atual, alvo, 'humano');

@@ -141,29 +141,29 @@ Fora de `apps/forja`, junto com M5 (**entregue antes**, 2026-10-02: `smoke:api` 
 
 ### 4.2 Fica fora do MVP (explícito)
 
-| #       | Fora do MVP                                                                                                                    | Fase alvo                                         |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| FORA-01 | `testador_e2e` Opus escrevendo roteiro Playwright, app executando, evidências (`e2e_roteiro`)                                  | Fase 2                                            |
-| FORA-02 | Banco por worktree (`template` em arquivos locais); no MVP, o agente sobe o app contra a infra compartilhada já de pé (FJ-030) | Fase 2                                            |
-| FORA-03 | Comentários ancorados por linha no diff; interdiff apresentável (no MVP: diff bruto entre SHAs)                                | Fase 2                                            |
-| FORA-04 | Grupos de conflito automáticos no lote (`arquivos_previstos` + `merge-tree` entre pares)                                       | Fase 2                                            |
-| FORA-05 | Modo de entrega `pull_request` via `gh`                                                                                        | Fase 2                                            |
-| FORA-06 | Partir da branch `ia/chamado-N-*` da IA do servidor (no MVP: detectar e avisar)                                                | Fase 2                                            |
-| FORA-07 | **Antecipado para o MVP (FJ-030):** MCP somente leitura com token                                                              | MVP (MVP-26)                                      |
-| FORA-08 | Notificações desktop (no MVP: badge e título da aba)                                                                           | Fase 2                                            |
-| FORA-09 | Modo direto Opus sem condutor para `facil`                                                                                     | Fase 2, se os dados da §3.1 mostrarem desperdício |
-| FORA-10 | Resolvedor automático de conflito textual (sempre com reaprovação)                                                             | Fase 3                                            |
-| FORA-11 | Injeção ao vivo de mensagens durante o turno (`--input-format stream-json`) [NV]                                               | Fase 3                                            |
-| FORA-12 | MCP do app (`--permission-prompt-tool`, "enfileirar chamado" a partir do chat livre)                                           | Fase 3                                            |
-| FORA-13 | "Fable de lote" consultivo; dependências entre chamados                                                                        | Fase 3                                            |
-| FORA-14 | Rollback (`revert -m 1` pelo mesmo ciclo de aprovação)                                                                         | Fase 3                                            |
-| FORA-15 | Memória do projeto (lições aprovadas via `--append-system-prompt-file`)                                                        | Fase 3                                            |
-| FORA-16 | L7: anexar PDF/prints do relatório ao chamado (ADR próprio)                                                                    | **Logo após o MVP** (FJ-026; antes Fase 3)        |
-| FORA-17 | Aprovação final em bloco                                                                                                       | Não planejado; reavaliar após 1 mês de uso        |
-| FORA-18 | Windows nativo (sem sandbox e sem ConPTY verificado)                                                                           | Fase 4 (via WSL2)                                 |
-| FORA-19 | Verificação em container por projeto; score de risco; auditoria exportável                                                     | Fase 4                                            |
-| FORA-20 | Runner pelo Agent SDK com `ANTHROPIC_API_KEY` (a interface `Runner` existe; 2ª implementação não)                              | Sob demanda                                       |
-| FORA-21 | Extração de `packages/ui` (no MVP os tokens são copiados; débito registrado)                                                   | Sob demanda                                       |
+| #       | Fora do MVP                                                                                                                    | Fase alvo                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| FORA-01 | `testador_e2e` Opus escrevendo roteiro Playwright, app executando, evidências (`e2e_roteiro`)                                  | Fase 2                                                                                    |
+| FORA-02 | Banco por worktree (`template` em arquivos locais); no MVP, o agente sobe o app contra a infra compartilhada já de pé (FJ-030) | Fase 2                                                                                    |
+| FORA-03 | Comentários ancorados por linha no diff; interdiff apresentável (no MVP: diff bruto entre SHAs)                                | Fase 2                                                                                    |
+| FORA-04 | Grupos de conflito automáticos no lote (`arquivos_previstos` + `merge-tree` entre pares)                                       | Fase 2                                                                                    |
+| FORA-05 | Modo de entrega `pull_request` via `gh`                                                                                        | Fase 2                                                                                    |
+| FORA-06 | Partir da branch `ia/chamado-N-*` da IA do servidor (no MVP: detectar e avisar)                                                | Fase 2                                                                                    |
+| FORA-07 | **Antecipado para o MVP (FJ-030):** MCP somente leitura com token                                                              | MVP (MVP-26)                                                                              |
+| FORA-08 | Notificações desktop (no MVP: badge e título da aba)                                                                           | Fase 2                                                                                    |
+| FORA-09 | Modo direto Opus sem condutor para `facil`                                                                                     | Fase 2, se os dados da §3.1 mostrarem desperdício                                         |
+| FORA-10 | Resolvedor automático de conflito textual (sempre com reaprovação)                                                             | **Antecipado** (FJ-036, 2026-10-04): 2 tentativas por execução, migration/schema → humano |
+| FORA-11 | Injeção ao vivo de mensagens durante o turno (`--input-format stream-json`) [NV]                                               | Fase 3                                                                                    |
+| FORA-12 | MCP do app (`--permission-prompt-tool`, "enfileirar chamado" a partir do chat livre)                                           | Fase 3                                                                                    |
+| FORA-13 | "Fable de lote" consultivo; dependências entre chamados                                                                        | Fase 3                                                                                    |
+| FORA-14 | Rollback (`revert -m 1` pelo mesmo ciclo de aprovação)                                                                         | Fase 3                                                                                    |
+| FORA-15 | Memória do projeto (lições aprovadas via `--append-system-prompt-file`)                                                        | Fase 3                                                                                    |
+| FORA-16 | L7: anexar PDF/prints do relatório ao chamado (ADR próprio)                                                                    | **Logo após o MVP** (FJ-026; antes Fase 3)                                                |
+| FORA-17 | Aprovação final em bloco                                                                                                       | Não planejado; reavaliar após 1 mês de uso                                                |
+| FORA-18 | Windows nativo (sem sandbox e sem ConPTY verificado)                                                                           | Fase 4 (via WSL2)                                                                         |
+| FORA-19 | Verificação em container por projeto; score de risco; auditoria exportável                                                     | Fase 4                                                                                    |
+| FORA-20 | Runner pelo Agent SDK com `ANTHROPIC_API_KEY` (a interface `Runner` existe; 2ª implementação não)                              | Sob demanda                                                                               |
+| FORA-21 | Extração de `packages/ui` (no MVP os tokens são copiados; débito registrado)                                                   | Sob demanda                                                                               |
 
 ---
 

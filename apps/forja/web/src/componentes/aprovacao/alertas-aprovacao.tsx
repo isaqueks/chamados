@@ -18,7 +18,9 @@ import { shaCurto } from './regras-aprovar';
  *   aberta, o servidor recusa e a tela recarrega. A Forja NÃO encaminha a
  *   mensagem ao agente.
  * - **Conflita com destino**: não bloqueia (a ponta pode mudar de novo); o
- *   aviso se repete acima do botão.
+ *   aviso se repete acima do botão. Na fila, o agente resolve (FJ-036).
+ * - **Reaprovação**: patch mudou depois da aprovação ou, desde FJ-036, o
+ *   destino avançou e o agente resolveu o conflito (arquivos listados).
  * - **Sem prints** (FJ-026): faixa amarela com o motivo e [Recapturar prints].
  *   Não há mais o que configurar no Projeto: os prints são do agente (FJ-030 §3).
  */
@@ -43,8 +45,17 @@ export function AlertasAprovacao({
     <div className="flex flex-col gap-2">
       {a.reaprovacao && !visiveis.some((x) => x.tipo === 'reaprovacao') && (
         <Faixa tom="aviso" titulo="Reaprovação">
-          O patch mudou de {a.reaprovacao.patch_anterior.slice(0, 6)} para{' '}
-          {a.reaprovacao.patch_atual.slice(0, 6)}: o Interdiff mostra o que mudou.
+          {a.reaprovacao.conflito ? (
+            <>
+              O destino avançou e o conflito foi resolvido pelo agente; veja o Interdiff.
+              <Detalhes itens={a.reaprovacao.conflito.arquivos} mono />
+            </>
+          ) : (
+            <>
+              O patch mudou de {a.reaprovacao.patch_anterior.slice(0, 6)} para{' '}
+              {a.reaprovacao.patch_atual.slice(0, 6)}: o Interdiff mostra o que mudou.
+            </>
+          )}
         </Faixa>
       )}
       {visiveis.map((alerta, i) => (
@@ -120,7 +131,9 @@ function Alerta({
         >
           <span>{alerta.mensagem}</span>
           <Detalhes itens={c?.arquivos ?? alerta.detalhes} mono />
-          <span className="text-xs">Na fila de merge, o conflito vira "precisa de você".</span>
+          <span className="text-xs">
+            Na fila de merge, o agente resolve o conflito e pede sua reaprovação.
+          </span>
         </Faixa>
       );
     }
