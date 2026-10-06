@@ -66,10 +66,6 @@ export async function refDoHead(dir: string): Promise<string | null> {
 }
 
 /** Pathspec literal que exclui um caminho (sem glob/magia vinda da config). */
-function pathspecExcluir(caminho: string): string {
-  return `:(exclude,literal)${caminho.replace(/^\.\//, '')}`;
-}
-
 export interface Checkpoint {
   sha: string;
   mensagem: string;
@@ -113,16 +109,12 @@ export async function commitCheckpoint(
   const mudancas = await statusPorcelain(dir);
   if (mudancas.length === 0) return null;
   const excluir = (opcoes.excluir ?? []).filter((c) => c.trim().length > 0);
-  await comRetentativa(
-    () =>
-      git(
-        excluir.length ? ['add', '-A', '--', '.', ...excluir.map(pathspecExcluir)] : ['add', '-A'],
-        {
-          cwd: dir,
-        },
-      ),
-    opcoes,
-  );
+  // Sem pathspec de exclusão: citar um arquivo IGNORADO num pathspec (mesmo
+  // como `:(exclude)`) faz o git recusar com "Use -f if you really want to add
+  // them" e exit 1 — caso real do chamado #64 (2026-10-05) com `api-backend/.env`.
+  // `add -A` nunca inclui ignorados; o que o agente tiver forçado (`git add -f
+  // .env`) sai do índice logo abaixo.
+  await comRetentativa(() => git(['add', '-A'], { cwd: dir }), opcoes);
   // Algo já preparado por fora (`git add .env` do agente): tirado do índice.
   if (excluir.length) {
     const preparados = (await git(['diff', '--cached', '--name-only', '-z'], { cwd: dir })).stdout
