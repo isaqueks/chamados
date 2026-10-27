@@ -398,11 +398,12 @@ describe('RunnerCli com processo falso', () => {
     });
     const init300 = { ...INIT_T1, claude_code_version: '2.1.300' };
 
+    // Versão diferente NÃO aborta mais (2026-10-25): só avisa o compat e segue.
     const a = runner.iniciar(comandoT1(), entrada());
-    falso.processos[0]!.escrever(jl(init300));
-    expect(sinais).toEqual([[4242, 'SIGTERM']]);
-    falso.processos[0]!.sair(143);
-    expect((await a.resultado).classificacao).toBe('perfil_divergente');
+    falso.processos[0]!.escrever(jl(init300, result()));
+    expect(sinais).toEqual([]);
+    falso.processos[0]!.sair(0);
+    expect((await a.resultado).classificacao).toBe('concluido');
     expect(divergencias).toEqual([{ encontrada: '2.1.300', esperada: '2.1.288' }]);
 
     liberada = '2.1.300'; // "Aceitar versão 2.1.300" com smoke aprovado

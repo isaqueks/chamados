@@ -278,6 +278,31 @@ export function revisaoSegurancaObrigatoria(e: {
  * confiança, schema, `dificil` e trabalho existente viram avisos (`avisosPlano`).
  * Em `por_risco`/`sempre` o comportamento anterior continua.
  */
+/** Um alerta do planejador tem cara de injeção (ordem ao agente)? */
+export function pareceInjecao(alerta: string): boolean {
+  const t = alerta
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return (
+    /\b(ignore|ignorar|desconsidere|esqueca|esqueça|override|system prompt|instrucoes anteriores|instructions)\b/.test(
+      t,
+    ) ||
+    /\b(execute|executar|rode|rodar|run)\b.*\b(comando|command|script|shell|bash|curl|wget|rm -rf)\b/.test(
+      t,
+    ) ||
+    /\b(curl|wget|nc|netcat|scp|ssh)\b/.test(t) ||
+    /\b(envie|enviar|mande|mandar|exfiltr|poste|postar|upload|transfira)\b.*\b(para|to)\b/.test(
+      t,
+    ) ||
+    (/\b(credenci|senha|password|token|api[_ -]?key|chave privada|\.ssh|\.env)\b/.test(t) &&
+      /\b(leia|ler|mostre|imprima|exponha|copie|envie|pegue|obtenha)\b/.test(t)) ||
+    (/\b(producao|production|banco de producao|deploy)\b/.test(t) &&
+      /\b(apague|apagar|delete|drop|altere|alterar|update|grave|gravar|rode|execute)\b/.test(t) &&
+      !/\b(nao foi|nao executad|nao e tocad|tratad[oa] como sugest)/.test(t))
+  );
+}
+
 export function motivosG1(plano: PlanoV1, ctx: ContextoG1): MotivoG1[] {
   const m: MotivoG1[] = [];
   if (ctx.gate_plano === 'sempre') m.push('configuracao_sempre');
@@ -286,7 +311,15 @@ export function motivosG1(plano: PlanoV1, ctx: ContextoG1): MotivoG1[] {
     if (plano.schema_banco.altera) m.push('altera_schema');
     if (ctx.complexidade === 'dificil') m.push('complexidade_dificil');
   }
-  if (plano.alertas_seguranca.length > 0) m.push('alertas_seguranca');
+  // Em `nunca`, só alerta com CARA DE INJEÇÃO para (ordem ao agente: ignorar
+  // regras, executar, exfiltrar, credencial, mexer em produção). O planejador
+  // marcava um link da ZapSign e uma sugestão da nota da IA como alerta e o
+  // chamado #73 parou à toa (2026-10-25). Em `por_risco`/`sempre`, qualquer alerta.
+  const alertasQueParam =
+    ctx.gate_plano === 'nunca'
+      ? plano.alertas_seguranca.filter(pareceInjecao)
+      : plano.alertas_seguranca;
+  if (alertasQueParam.length > 0) m.push('alertas_seguranca');
   if (ctx.gate_plano !== 'nunca') {
     if (sinaisPlano(plano).length > 0) m.push('sinais_heuristicos');
     if (ctx.trabalho_existente) m.push('trabalho_existente');

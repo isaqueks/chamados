@@ -36,10 +36,23 @@ export async function valoresDeArquivosLocais(
   for (const a of config.arquivos_locais) {
     const caminho = isAbsolute(a.destino) ? a.destino : join(worktree, a.destino);
     try {
-      for (const v of valoresDeEnv(await readFile(caminho, 'utf8'))) out.add(v);
+      for (const v of valoresDeEnv(await readFile(caminho, 'utf8'))) {
+        if (pareceSegredo(v)) out.add(v);
+      }
     } catch {
       // Arquivo ausente/binário: nada a registrar.
     }
   }
   return [...out];
+}
+
+/**
+ * Só valores de `.env` com cara de segredo entram no redator: ≥ 10 caracteres com
+ * dígito/símbolo, ou ≥ 16. Um `MODO=sistema` registrava "sistema" e o redator
+ * corrompia até nomes de ferramenta nos eventos (2026-10-25). Tokens/senhas
+ * registrados explicitamente não passam por aqui.
+ */
+export function pareceSegredo(v: string): boolean {
+  const t = v.trim();
+  return t.length >= 16 || (t.length >= 10 && /[^A-Za-zÀ-ÿ\s]/.test(t));
 }

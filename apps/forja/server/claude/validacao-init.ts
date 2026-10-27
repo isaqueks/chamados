@@ -64,9 +64,12 @@ export function validarInit(
   const alertas: string[] = [];
 
   const versao = init.claude_code_version ?? null;
+  // Versão diferente da validada é só ALERTA (2026-10-25: a CLI se auto-
+  // atualizou para 2.1.310 e TODA etapa abortava com `perfil_divergente`,
+  // derrubando os 5 chamados do lote). O que importa para a segurança do perfil
+  // é o que vem abaixo (permissionMode, ferramentas, agentes, MCP).
   const versaoDivergente = versao !== versaoFixada;
-  if (versaoDivergente)
-    divergencias.push(`versão da CLI ${versao ?? '?'} ≠ fixada ${versaoFixada}`);
+  if (versaoDivergente) alertas.push(`versão da CLI ${versao ?? '?'} ≠ fixada ${versaoFixada}`);
 
   if (init.permissionMode !== esperado.permissionMode) {
     divergencias.push(`permissionMode ${init.permissionMode ?? '?'} ≠ ${esperado.permissionMode}`);

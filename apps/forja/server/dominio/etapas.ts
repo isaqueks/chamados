@@ -884,11 +884,13 @@ export async function rodarTurno(n: Nucleo, ctx: Ctx, espec: EspecTurno): Promis
         continue;
       case 'reiniciar_perfil':
         perfilReiniciado = true;
-        // Reusar `--session-id` depois de um kill não é verificado (cli.md): sessão nova.
-        sessao = {
-          modo: sessao.modo === 'novo' ? 'novo' : 'resume',
-          sessionId: sessao.modo === 'novo' ? n.novoSessionId() : sessao.sessionId,
-        };
+        // SEMPRE sessão nova (2026-10-25): o processo abortado pode continuar vivo
+        // (a CLI 2.1.310 sobreviveu ao kill por grupo), e reusar a `session_id`
+        // batia no índice único "uma etapa executando por sessão" (I-2),
+        // derrubando a execução com `setup_falhou`. Para turnos `resume`, o
+        // prompt de sessão nova reconstrói o estado a partir do disco (01 §6.7).
+        sessao = { modo: 'novo', sessionId: n.novoSessionId() };
+        prompt = espec.promptSessaoNova ?? prompt;
         continue;
       case 'fato':
         if (desfecho.alerta === 'autenticacao') {

@@ -48,8 +48,18 @@ describe('validarInit (01 §6.4)', () => {
     expect(r.recorte.permissionMode).toBe('bypassPermissions');
   });
 
+  it('versão diferente é só alerta (2026-10-25: auto-update da CLI não pode abortar etapas)', () => {
+    const r = validarInit(
+      { ...initT1, claude_code_version: '2.1.300' } as InitCli,
+      esperadoT1,
+      '2.1.288',
+    );
+    expect(r.ok).toBe(true);
+    expect(r.versaoDivergente).toBe(true);
+    expect(r.alertas.some((a) => a.includes('2.1.300'))).toBe(true);
+  });
+
   it.each([
-    ['versão', { claude_code_version: '2.1.300' }],
     ['modo', { permissionMode: 'default' }],
     ['ferramenta a mais', { tools: [...initT1.tools!, 'WebFetch'] }],
     ['ferramenta a menos', { tools: ['Task', 'Read', 'StructuredOutput'] }],
@@ -103,7 +113,7 @@ describe('validarInit (01 §6.4)', () => {
     expect(ausente.alertas[0]).toMatch(/ausente/);
   });
 
-  it('versão divergente bloqueia o pipeline', () => {
+  it('versão divergente é sinalizada (sem bloquear)', () => {
     expect(
       validarInit({ ...initT1, claude_code_version: '2.2.0' }, esperadoT1, '2.1.288')
         .versaoDivergente,

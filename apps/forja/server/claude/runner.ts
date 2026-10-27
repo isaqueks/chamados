@@ -523,6 +523,16 @@ class ProcessoCli implements ExecucaoProcesso {
       const sinal = escada[i];
       if (!sinal) return;
       deps.sinalizar(this.pgid, sinal);
+      // Também ao pid (2026-10-25): a CLI 2.1.310 passou a abrir a própria
+      // sessão de processo, e o sinal ao grupo original não a alcançava — o
+      // planejador abortado seguiu rodando 4 min (e cobrando) depois do "kill".
+      if (this.pid !== null && this.pid !== this.pgid) {
+        try {
+          process.kill(this.pid, sinal);
+        } catch {
+          // já morreu
+        }
+      }
       if (i + 1 < escada.length)
         this.timers.push(setTimeout(() => enviar(i + 1), deps.esperaEscadaMs));
     };
