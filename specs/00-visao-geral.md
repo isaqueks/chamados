@@ -75,7 +75,7 @@ Quatro papéis, três humanos e um de serviço. Os nomes canônicos são **admin
 
 ### admin
 
-Administra um tenant. Configura branding, domínios, sistemas-alvo, categorias, canais de notificação e políticas (ex.: prazo de fechamento automático, guardrails da IA). Convida e gerencia operadores e clientes. Tem acesso a tudo dentro do seu tenant.
+Administra um tenant. Configura branding, domínios, sistemas-alvo, categorias, canais de notificação e políticas (ex.: prazo para o cliente aprovar ou contestar um chamado resolvido — D-042 —, guardrails da IA). Convida e gerencia operadores e clientes. Tem acesso a tudo dentro do seu tenant.
 
 > DECISÃO PENDENTE: existência de um papel super-admin de plataforma (cross-tenant) para operar a instalação inteira. Provisoriamente tratado como responsabilidade operacional fora do produto; ver `07-multitenancy-whitelabel.md`.
 
@@ -85,7 +85,7 @@ Atende os chamados. Vê tudo do chamado (inclusive notas internas e informaçõe
 
 ### cliente
 
-Usuário final da empresa-tenant. Abre chamados com formulário mínimo, acompanha status/prioridade/mensagens públicas, responde a solicitações de informação, reabre chamados resolvidos. **Não** vê notas internas, complexidade nem dados técnicos da IA.
+Usuário final da empresa-tenant. Abre chamados com formulário mínimo, acompanha status/prioridade/mensagens públicas, responde a solicitações de informação, **aprova ou contesta** (com motivo) a solução dos próprios chamados resolvidos (D-042) e reabre os próprios chamados fechados ou cancelados (D-038). Também **lê** (somente leitura, visão pública) os chamados abertos pelos colegas do mesmo tenant (D-037) — responder, reabrir e cancelar continuam só nos que ele solicitou. **Não** vê notas internas, complexidade nem dados técnicos da IA.
 
 ### agente_ia
 
@@ -134,7 +134,7 @@ Os nomes, entidades e valores de enums abaixo são **canônicos**: devem ser usa
 | **Usuario**                | Conta de acesso vinculada a um tenant, com um papel (`admin`, `operador`, `cliente` ou `agente_ia`).                                                                                                                 |
 | **SistemaAlvo**            | Sistema de software do tenant sobre o qual os chamados são abertos. Guarda URL do repositório git + credenciais, fontes/caminhos de logs e conexão **somente leitura** ao banco de dados. Um tenant pode ter vários. |
 | **Categoria**              | Classificação de chamado do tenant. Todo chamado referencia um sistema-alvo **ou** a categoria geral do tenant.                                                                                                      |
-| **Chamado**                | Solicitação de suporte. Tem natureza, status, prioridade, complexidade (interna), sistema-alvo/categoria e uma timeline de mensagens.                                                                                |
+| **Chamado**                | Solicitação de suporte. Tem natureza, status, prioridade, complexidade (interna), estimativa de custo e custo final (públicos — D-043), sistema-alvo/categoria e uma timeline de mensagens.                          |
 | **Mensagem**               | Entrada na timeline do chamado, com visibilidade `publica` ou `interna`.                                                                                                                                             |
 | **Anexo**                  | Arquivo/imagem associado a uma mensagem ou à descrição do chamado.                                                                                                                                                   |
 | **EventoChamado**          | Registro de auditoria/histórico de todo evento relevante (mudança de status/prioridade/atribuição, ações da IA).                                                                                                     |
@@ -164,7 +164,7 @@ erDiagram
 | ------------- | ------- | ----------------------------------------------------------- |
 | **admin**     | humano  | Administra o tenant e suas configurações.                   |
 | **operador**  | humano  | Atende chamados; aprova ações da IA.                        |
-| **cliente**   | humano  | Abre e acompanha os próprios chamados.                      |
+| **cliente**   | humano  | Abre e age nos próprios chamados; lê os do tenant (D-037).  |
 | **agente_ia** | serviço | Usuário automatizado que faz triagem e assiste a resolução. |
 
 ### 8.3 Enums
@@ -173,15 +173,15 @@ Valores **exatos**, usados em todos os documentos e no código.
 
 **status do chamado**
 
-| Valor                | Significado                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `novo`               | Recém-criado, ainda não triado.                                                                                           |
-| `em_triagem`         | Sob análise da IA (ou aguardando triagem).                                                                                |
-| `aguardando_cliente` | Aguardando informação/resposta do cliente.                                                                                |
-| `em_atendimento`     | Em tratamento por operador e/ou IA.                                                                                       |
-| `resolvido`          | Solução entregue; fecha automaticamente após N dias (configurável por tenant); reabrível pelo cliente → `em_atendimento`. |
-| `fechado`            | Terminal.                                                                                                                 |
-| `cancelado`          | Encerrado sem resolução.                                                                                                  |
+| Valor                | Significado                                                                                                                                                                                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `novo`               | Recém-criado, ainda não triado.                                                                                                                                                                                                                                                                           |
+| `em_triagem`         | Sob análise da IA (ou aguardando triagem).                                                                                                                                                                                                                                                                |
+| `aguardando_cliente` | Aguardando informação/resposta do cliente.                                                                                                                                                                                                                                                                |
+| `em_atendimento`     | Em tratamento por operador e/ou IA.                                                                                                                                                                                                                                                                       |
+| `resolvido`          | Solução entregue; abre a **janela de aprovação** (D-042): o cliente solicitante tem N dias (padrão 7, configurável por tenant) para **aprovar** (→ `fechado`) ou **contestar** com motivo (→ `em_atendimento`); sem resposta, o chamado é considerado aprovado e fechado (aprovação tácita, com webhook). |
+| `fechado`            | Terminal (encerrado): não recebe mensagens; só sai por reabertura → `em_atendimento` (D-038).                                                                                                                                                                                                             |
+| `cancelado`          | Terminal (encerrado) sem resolução; só sai por reabertura → `em_atendimento` (D-038).                                                                                                                                                                                                                     |
 
 **natureza**
 
@@ -206,6 +206,19 @@ Valores **exatos**, usados em todos os documentos e no código.
 | `facil`   |
 | `medio`   |
 | `dificil` |
+
+**estimativa de custo** (D-043; definida por operador/admin, **visível ao cliente**; `NULL` = sem estimativa)
+
+| Valor | Faixa           |
+| ----- | --------------- |
+| `A`   | R$ 50 a R$ 100  |
+| `B`   | R$ 100 a R$ 200 |
+| `C`   | R$ 200 a R$ 400 |
+| `D`   | R$ 400 a R$ 600 |
+| `E`   | acima de R$ 600 |
+| `I`   | Isento (R$ 0)   |
+
+Faixas fixas da plataforma (fonte única: `packages/shared/src/custo.ts`). O **custo final** é um valor livre em reais (≥ 0, 2 casas) informado pela equipe ao resolver o chamado — ou corrigido enquanto ele está `resolvido` — e também é visível ao cliente.
 
 **visibilidade de mensagem**
 
@@ -239,7 +252,7 @@ flowchart TD
     J --> M[status: em_atendimento -> resolvido]
     K --> M
     L --> M
-    M --> N[resolvido -> fechado após N dias<br/>ou reaberto pelo cliente]
+    M --> N[resolvido: cliente aprova -> fechado<br/>contesta -> em_atendimento<br/>ou silêncio por N dias -> fechado (aprovação tácita)]
 ```
 
 ## 10. Restrições e decisões herdadas do brief

@@ -65,13 +65,28 @@ export const EventoNotificavel = {
   fechado: 'fechado',
   reaberto: 'reaberto',
   cancelado: 'cancelado',
+  /** D-042: o cliente aprovou a resolução (explicitamente ou pelo prazo vencido). */
+  aprovado: 'aprovado',
+  /** D-042: o cliente contestou a resolução (com motivo) e o chamado voltou ao atendimento. */
+  contestado: 'contestado',
+  /** D-043: a equipe definiu, alterou ou removeu a estimativa de custo. */
+  estimativa_custo: 'estimativa_custo',
+  /** D-043: a equipe informou/corrigiu o custo final de um chamado resolvido (fora do ato de resolver). */
+  custo_final: 'custo_final',
 } as const;
 export type EventoNotificavel = (typeof EventoNotificavel)[keyof typeof EventoNotificavel];
 
 /** Papel de destinatário considerado na resolução (humanos; agente_ia nunca recebe). */
 export type PapelDestinatario = 'cliente' | 'operador';
 
-/** Categoria do webhook (os 7 tipos da D-003, specs/06 §3.2). */
+/**
+ * Categoria do webhook (specs/06 §3.2): os 7 tipos da D-003 + `aprovado` e
+ * `contestado` (D-042). `fechado` passa a significar SÓ o fechamento manual pela
+ * equipe; o encerramento pelo aceite do cliente (explícito ou tácito) sai como
+ * `aprovado` — nunca os dois para o mesmo fato. D-043: `estimativa_custo_alterada`
+ * e `custo_final_definido` (este só FORA do ato de resolver — no ato, o próprio
+ * `resolvido` leva `chamado.custo_final`).
+ */
 export type WebhookTipo =
   | 'criado'
   | 'mensagem_publica'
@@ -79,7 +94,11 @@ export type WebhookTipo =
   | 'prioridade_alterada'
   | 'atribuicao'
   | 'resolvido'
-  | 'fechado';
+  | 'fechado'
+  | 'aprovado'
+  | 'contestado'
+  | 'estimativa_custo_alterada'
+  | 'custo_final_definido';
 
 export interface EntradaCatalogo {
   /** Rótulo pt-BR exibido na UI de preferências. */
@@ -146,21 +165,23 @@ export const CATALOGO_NOTIFICACOES: Record<EventoNotificavel, EntradaCatalogo> =
   },
   resolvido: {
     rotulo: 'Chamado resolvido',
-    descricao: 'O chamado foi marcado como resolvido.',
+    descricao:
+      'O chamado foi marcado como resolvido — o cliente tem um prazo para aprovar ou contestar.',
     destinatarios: ['cliente', 'operador'],
     obrigatorio: ['cliente'],
     webhook: 'resolvido',
   },
   fechado: {
     rotulo: 'Chamado fechado',
-    descricao: 'O chamado foi fechado.',
+    // D-042: só o fechamento MANUAL pela equipe; o aceite do cliente é `aprovado`.
+    descricao: 'A equipe fechou o chamado.',
     destinatarios: ['cliente', 'operador'],
     obrigatorio: [],
     webhook: 'fechado',
   },
   reaberto: {
     rotulo: 'Chamado reaberto',
-    descricao: 'Um chamado resolvido voltou para atendimento.',
+    descricao: 'Um chamado resolvido, fechado ou cancelado voltou para atendimento.',
     destinatarios: ['cliente', 'operador'],
     obrigatorio: ['operador'],
     confirmacaoAutor: true,
@@ -173,6 +194,42 @@ export const CATALOGO_NOTIFICACOES: Record<EventoNotificavel, EntradaCatalogo> =
     destinatarios: ['cliente', 'operador'],
     obrigatorio: [],
     webhook: 'status_alterado',
+  },
+  aprovado: {
+    rotulo: 'Chamado aprovado',
+    descricao:
+      'O cliente aprovou a solução — ou o prazo para aprovar ou contestar terminou sem resposta.',
+    // O cliente que aprova explicitamente não recebe (é o autor); na aprovação
+    // tácita (ator = sistema) ele é avisado de que o chamado foi encerrado.
+    destinatarios: ['cliente', 'operador'],
+    obrigatorio: [],
+    webhook: 'aprovado',
+  },
+  contestado: {
+    rotulo: 'Solução contestada',
+    descricao: 'O cliente contestou a solução e o chamado voltou para atendimento.',
+    // Quem contesta é sempre o solicitante (o autor) — só a equipe é avisada.
+    destinatarios: ['operador'],
+    obrigatorio: ['operador'],
+    webhook: 'contestado',
+  },
+  estimativa_custo: {
+    rotulo: 'Estimativa de custo',
+    descricao: 'A equipe definiu ou alterou a faixa de custo estimada do chamado.',
+    destinatarios: ['cliente', 'operador'],
+    obrigatorio: [],
+    // Alteração de campo, como prioridade: opt-in (anti-flood — specs/06 §7).
+    padraoDesligado: true,
+    webhook: 'estimativa_custo_alterada',
+  },
+  custo_final: {
+    rotulo: 'Custo final',
+    descricao: 'O custo final de um chamado resolvido foi informado ou corrigido.',
+    // Raro e humano (só em `resolvido`, fora do ato de resolver) e muda o valor
+    // que o cliente está aprovando: ligado por padrão, mas desabilitável.
+    destinatarios: ['cliente', 'operador'],
+    obrigatorio: [],
+    webhook: 'custo_final_definido',
   },
 };
 
@@ -197,12 +254,24 @@ export function eventoNotificavelDe(tipo: TipoEvento): EventoNotificavel | null 
     case 'chamado_resolvido':
       return EventoNotificavel.resolvido;
     case 'chamado_fechado':
-    case 'chamado_fechado_auto':
       return EventoNotificavel.fechado;
+    // D-042: aprovação explícita (cliente) e TÁCITA (prazo vencido — o
+    // `chamado_fechado_auto`) são o mesmo fato para quem é notificado.
+    case 'chamado_aprovado':
+    case 'chamado_fechado_auto':
+      return EventoNotificavel.aprovado;
+    case 'chamado_contestado':
+      return EventoNotificavel.contestado;
     case 'chamado_reaberto':
       return EventoNotificavel.reaberto;
     case 'chamado_cancelado':
       return EventoNotificavel.cancelado;
+    // D-043. O `custo_final_definido` gravado NO ATO de resolver (`origem:
+    // 'resolucao'`) é descartado no dispatcher — o `resolvido` já o comunica.
+    case 'estimativa_custo_alterada':
+      return EventoNotificavel.estimativa_custo;
+    case 'custo_final_definido':
+      return EventoNotificavel.custo_final;
     // nota_interna_publicada, natureza_alterada, complexidade_alterada,
     // anexo_adicionado, ia_* → nunca notificam (conteúdo interno / ruído).
     default:
@@ -251,6 +320,10 @@ export interface ContextoNotificacao {
   /** Transições/mudanças: valor anterior e novo (status/prioridade). */
   de?: string | null;
   para?: string | null;
+  /** D-042: forma da aprovação (só no evento `aprovado`). */
+  aprovacao?: 'explicita' | 'tacita' | null;
+  /** D-043: valores anterior/novo do custo final em BRL (só no evento `custo_final`). */
+  custo?: { de: number | null; para: number | null } | null;
 }
 
 /** Um job de notificação por (destinatário × canal) OU por webhook (tenant). */
@@ -313,12 +386,35 @@ export interface PayloadWebhook {
     natureza: string;
     sistema_alvo: string | null;
     categoria: string | null;
+    /**
+     * D-043: SEMPRE presente (null = sem estimativa). Código + rótulo canônico +
+     * limites da faixa em BRL (`max: null` = sem teto, faixa E).
+     */
+    estimativa_custo: {
+      codigo: string;
+      rotulo: string;
+      min: number;
+      max: number | null;
+    } | null;
+    /** D-043: SEMPRE presente. Custo final em BRL (null = não informado). */
+    custo_final: number | null;
   };
-  /** Autor e trecho PÚBLICO da mensagem (só em `mensagem_publica`). */
+  /**
+   * Quem praticou a ação, quando é relevante ao integrador: autor da mensagem
+   * (`mensagem_publica`), o cliente que contestou (`contestado`) ou que aprovou
+   * explicitamente (`aprovado` com `forma: 'explicita'`). Só o NOME.
+   */
   autor?: { nome: string } | null;
+  /** Trecho PÚBLICO da mensagem (`mensagem_publica`; em `contestado`, o motivo). */
   mensagem?: { trecho: string } | null;
-  /** Mudança (status/prioridade), quando aplicável. */
-  mudanca?: { de: string | null; para: string | null } | null;
+  /**
+   * Mudança, quando aplicável: status/prioridade; de/para em `aprovado`/
+   * `contestado`; códigos da faixa em `estimativa_custo_alterada`; valores em
+   * BRL (número) em `custo_final_definido`.
+   */
+  mudanca?: { de: string | number | null; para: string | number | null } | null;
+  /** D-042: só em `aprovado` — `explicita` (o cliente aprovou) ou `tacita` (prazo vencido). */
+  aprovacao?: { forma: 'explicita' | 'tacita' } | null;
   linkChamado: string;
 }
 

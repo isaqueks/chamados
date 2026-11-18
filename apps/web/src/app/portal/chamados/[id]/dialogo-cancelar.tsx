@@ -27,8 +27,8 @@ export function DialogoCancelar({ chamadoId }: { chamadoId: string }) {
           <DialogHeader>
             <DialogTitle>Cancelar este chamado?</DialogTitle>
             <DialogDescription>
-              O chamado será encerrado e não poderá ser reaberto. Se precisar, você poderá abrir um
-              novo depois.
+              O chamado será encerrado. Se mudar de ideia, você poderá reabri-lo depois na página do
+              chamado.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -41,6 +41,14 @@ Não dispara triagem: mensagens em `fechado`/`cancelado` (estados terminais não
 
 **IA silenciada no chamado (D-024):** operador/admin podem silenciar a IA num chamado específico (`chamado.ia_silenciada`, painel "Assistente IA"). Silenciada, **nenhuma** triagem roda naquele chamado: o worker descarta o job no início do processamento (cobre inclusive jobs enfileirados antes do silêncio) e o reprocessamento manual é recusado na action. A reativação é manual (mesmos papéis) e vale para os **próximos** gatilhos — não há reanálise retroativa. Auditoria: eventos internos `ia_silenciada`/`ia_reativada`; o cliente não vê a flag nem os eventos. A `agente_ia` nunca silencia/reativa a si mesma (matriz de autorização, specs/03 §8).
 
+**Silenciar cancela a triagem em andamento (D-041, complementa D-024).** Silenciar (painel ou `POST /api/v1/chamados/{ref}/ia`, ambos via `definirSilencioIa`) também interrompe uma triagem que **já está rodando** — antes ela seguia até o fim e ainda publicava mensagem, mudava status e abria PR: **Robustez do sinal (revisão de 2026-11-17):** cada consulta ao Redis tem teto de 1,5 s — com o Redis fora, a consulta vale "sem sinal" em vez de travar a execução; e o sinal só aborta se `chamado.ia_silenciada` estiver `true` no banco (o sinal é gravado pós-commit e pode chegar atrasado, depois de a IA já ter sido reativada — nesse caso é apagado e ignorado).
+
+1. **Sinal pós-commit** (despachante, evento de domínio `triagem_cancelamento_solicitado`): grava a chave Redis `chamados:triagem:cancelar:<chamadoId>` (TTL 1 h, por chamado — UUID, nunca colide entre tenants) e remove da fila `triagem-ia` os jobs **pendentes** do chamado (debounce, reagendados por lock, manuais). Best-effort: falha de Redis é logada e não desfaz o silêncio.
+2. **Worker observa o sinal** por polling curto (2 s) durante a execução e aborta a chamada ao provider pelo **mesmo** `AbortController` do timeout (`AIProviderInput.sinalCancelamento`; o SDK mata o subprocesso). Pontos de checagem cobrem as etapas sem abort próprio: depois do git sync, depois do mapeamento inline (que **não** é abortado — é do sistema-alvo, serve às próximas triagens e tem timeout próprio), antes do provider, antes do commit e antes do **push** da resolução (ponto sem volta) e antes da Tx2. O worker apaga uma chave obsoleta ao iniciar cada execução, antes da Tx1 (que relê a flag) — um silêncio antigo, já reativado, não cancela a triagem seguinte.
+3. **Rede de segurança na Tx2:** a aplicação começa relendo `chamado.ia_silenciada` com `FOR UPDATE` (serializa com o `definirSilencioIa`). Silenciada → **nada** é aplicado: nenhuma mensagem, nota de diagnóstico, transição, classificação, SPEC ou registro de PR — mesmo que o sinal Redis tenha se perdido.
+4. **Desfecho:** `ExecucaoIA.status = cancelado`, `erro = 'ia_silenciada'`, com a telemetria apurada (parcial do corte, ou a da resposta descartada). Nota **interna** do `agente_ia` ("Triagem automática cancelada: a IA foi silenciada neste chamado por <nome> …", nome lido do último evento `ia_silenciada`) e, se o chamado está em `em_triagem`, a aresta do escalonamento `em_triagem → em_atendimento` (motivo `triagem_cancelada:ia_silenciada`) — **sem** mensagem ao cliente e **sem** `ia_falhou`. O job termina como concluído (sem retry do BullMQ). Se a resolução já tinha feito push/aberto PR antes do corte, a nota cita a branch/PR para a equipe avaliar ou fechar.
+5. Reativar continua **sem** reanálise retroativa. A UI avisa no toast quando havia triagem em andamento ("a triagem em andamento foi cancelada").
+
 Regras de fila:
 
 - **Deduplicação**: no máximo um job de triagem ativo por `Chamado`. Nova mensagem enquanto um job roda marca o chamado como "sujo"; ao terminar, se sujo, reenfileira uma vez.
@@ -414,7 +422,7 @@ Os motivos de encerramento (timeout, budget excedido, erro de git/provider) **n�
 
 | Guardrail                       | Default                 | Comportamento ao exceder                                                                                                                                     |
 | ------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Timeout por execução            | 10 min                  | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador                                                                             |
+| Timeout por execução            | 10 min (tenant: 1–15)   | aborta, `ExecucaoIA.status = falhou` com `erro = "timeout"`, escalona a operador. Por tenant (D-044): teto derivado do limiar de órfã                        |
 | Budget de tokens/execução       | ex.: 200k in / 50k out  | corta a execução, `status = falhou` com `erro = "budget_excedido"`, escalona                                                                                 |
 | Budget de custo/execução        | teto em USD por tenant  | idem acima                                                                                                                                                   |
 | Budget diário/tenant            | teto configurável       | novos jobs pausados; alerta admin                                                                                                                            |
@@ -423,14 +431,16 @@ Os motivos de encerramento (timeout, budget excedido, erro de git/provider) **n�
 | Tentativas de resolução (PR)    | 1                       | falhou → nota interna + escalona                                                                                                                             |
 | Chamadas de ferramenta/execução | `IA_MAX_TURNOS` (50)    | triagem: `status = falhou` com `erro = "max_turnos"`, escalona (a saída estruturada não admite "meio JSON"); mapeamento: conclui com o que tem (§3.3, D-033) |
 
+**Modelo, esforço e timeout por tenant (D-044).** O admin define em `/app/config` (card "Assistente IA", `07-` §4.1) o **modelo**, o **esforço** e o **timeout da triagem** do tenant; vazio = padrão da instalação (`IA_MODELO`/`IA_ESFORCO`/`IA_TIMEOUT_MS`). Precedência: **tenant > env > default do código**. Modelo e esforço valem para a triagem **e** para o mapeamento (§3.3); o timeout vale só para a triagem — o mapeamento mantém `IA_MAPA_*`. O **teto** do timeout por tenant é derivado da config, não fixo: a `ExecucaoIA` da triagem fica `executando` desde a Tx1, e dentro dela cabem o git sync e o mapeamento inline da primeira geração; para a varredura de órfãs (abaixo, D-016) nunca marcar uma triagem viva, `teto = MANUTENCAO_EXECUCAO_ORFA_MS − IA_MAPA_TIMEOUT_MS − 3 min (conclusão do mapa) − 2 min (folga git/PR/Tx)` = **15 min** com os defaults (mínimo 1 min). O lock por tenant não limita (é renovado por heartbeat). Valor inválido no banco (ou acima do teto, se o limiar baixar depois) **nunca derruba o worker**: inválido cai no padrão, acima do teto é rebaixado, com log. `ExecucaoIA.modelo` grava o modelo **efetivo**; `entrada` registra `parametros_modelo` e `timeout_ms`.
+
 Toda falha por limite (timeout, budget, turnos) grava a **telemetria parcial** — tokens consumidos até o corte e custo reportado pelo provider — na `ExecucaoIA` (D-033); antes essas execuções ficavam com custo nulo e o gasto sumia dos painéis.
 
 **Escalonamento a operador humano**: publica nota interna explicando o motivo (timeout/budget/baixa confiança/falha de git/erro do provider), mantém o chamado em `em_triagem` ou move para `em_atendimento` conforme o caso, e gera `EventoChamado`. O chamado nunca fica "preso" sem responsável: se a IA não resolve, o humano assume.
 
 A promessa "nunca preso" é garantida em **três camadas** (D-016):
 
-1. **Dentro do pipeline** (falha pós-Tx1: git, provider, aplicação): o próprio processador registra `ExecucaoIA.falhou` + `ia_falhou` e escalona.
-2. **No nível da fila** (erro que escapou do processador — lock além do teto, banco fora na Tx1): quando o job esgota as tentativas do BullMQ, o handler de falha final cria uma `ExecucaoIA` já `falhou` (compensação, auditável) e escalona.
+1. **Dentro do pipeline** (falha pós-Tx1: git, provider, aplicação): o próprio processador registra `ExecucaoIA.falhou` + `ia_falhou` e escalona. Exceção (D-041): se a IA está silenciada no chamado quando a execução termina (sinal de cancelamento ou a flag relida na transação final), o desfecho é **cancelamento**, não falha — `ExecucaoIA.cancelado` (`erro = 'ia_silenciada'`), nota interna própria, `em_triagem → em_atendimento`, sem `ia_falhou` (§2).
+2. **No nível da fila** (erro que escapou do processador — lock além do teto, banco fora na Tx1): quando o job esgota as tentativas do BullMQ, o handler de falha final cria uma `ExecucaoIA` já `falhou` (compensação, auditável) e escalona — **exceto** com a IA silenciada no chamado (D-041): a equipe já conduz e o job seria descartado; não há compensação nem escalonamento duplicado.
 3. **Varredura de manutenção** (rede de segurança final, cobre worker morto no meio e job perdido): a cada ciclo, `ExecucaoIA` presa em `na_fila`/`executando` além do limiar (default 30 min) vira `falhou` (`erro = "execucao_orfa"`) com escalonamento do chamado; e chamado parado em `em_triagem` sem execução ativa **e sem job pendente na fila** além do limiar é escalado (`erro = "triagem_nao_executada"`).
 
 **Tratamento de falhas**:
@@ -438,6 +448,7 @@ A promessa "nunca preso" é garantida em **três camadas** (D-016):
 - **Falha de `git pull`** (repo indisponível, credencial inválida): não analisa com código velho; escalona e alerta admin do tenant.
 - **Falha do provider** (rede, 5xx, rate limit): retry com backoff dentro do limite de tentativas; persistindo, escalona.
 - **Saída malformada/ilegível**: sem `structured_output` e sem JSON parseável na última mensagem, o provider lança `saida_estruturada_ilegivel` → `ExecucaoIA.falhou` + escalonamento, com o texto cru registrado no log (truncado) para diagnóstico. _(Revisado em 2026-07-22 — incidente: a saída ilegível era degradada silenciosamente para "não entendeu" vazio e o cliente recebia um questionário genérico. Não há retry automático de reformatação: o custo de uma reexecução completa é do operador, via "Reexecutar triagem", nunca automático — supersede o "1 retry de reformatação" anterior.)_
+- **IA silenciada durante a execução** (D-041, §2): não é falha nem limite — aborta pelo mesmo mecanismo do timeout, `ExecucaoIA.cancelado` com `erro = 'ia_silenciada'` e telemetria parcial (D-033), nada aplicado, sem retry. A execução cancelada sai de `na_fila`/`executando` e o chamado sai de `em_triagem`, então as varreduras de órfã/encalhado não a pegam.
 - **Ferramenta read-only retornando erro** (BD offline, log ausente): a IA prossegue com evidência parcial e sinaliza a lacuna; se crítica, trata como "não entendeu".
 - Toda falha registra causa em `ExecucaoIA.resultado` para diagnóstico e faturamento.
 
@@ -458,7 +469,7 @@ O texto do `Chamado`, mensagens do cliente, conteúdo de anexos, logs e dados do
 
 ## 10. Implementação fase 1 e abstração de provider
 
-Fase 1 (RF-17, D-006): **Claude Agent SDK** (programático — controle de ferramentas, structured output, telemetria) com modelo **Opus 5** em esforço de raciocínio **`high`** (D-031; `IA_MODELO`/`IA_ESFORCO`), rodando em worker isolado (infra em `01-arquitetura.md`). O pipeline não referencia diretamente o SDK: fala com uma abstração `AIProvider`, para permitir troca de engine/modelo no futuro sem reescrever a triagem.
+Fase 1 (RF-17, D-006): **Claude Agent SDK** (programático — controle de ferramentas, structured output, telemetria) com modelo **Opus 5** em esforço de raciocínio **`high`** (D-031; `IA_MODELO`/`IA_ESFORCO` como padrão da instalação, sobrescrevíveis por tenant — D-044), rodando em worker isolado (infra em `01-arquitetura.md`). O pipeline não referencia diretamente o SDK: fala com uma abstração `AIProvider`, para permitir troca de engine/modelo no futuro sem reescrever a triagem.
 
 **Fonte da verdade do contrato**: a interface `AIProvider` e seus tipos `AIProviderInput`/`AIProviderResult` são definidos canonicamente em `01-arquitetura.md` §4.1. Este documento **não redefine** o contrato — apenas descreve como o pipeline de triagem o consome. Qualquer mudança de campo (nome, tipo, semântica) é feita em `01-arquitetura.md` e vale aqui sem duplicação.
 
@@ -475,7 +486,7 @@ Requisitos da abstração (complementam as "Notas de contrato" de `01-arquitetur
 - **Determinística na interface**: o worker consome sempre `AIProviderResult`, independente do provider.
 - **Telemetria padronizada**: todo provider reporta `custoUsd`, `duracaoMs`, `tokensEntrada`, `tokensSaida` para gravar em `ExecucaoIA`.
 - **Ferramentas injetadas**: as ferramentas read-only (§4.2) são passadas/controladas pelo worker, nunca definidas dentro do provider — garante o guardrail mesmo trocando de engine.
-- **Configuração por tenant**: modelo, limites e limiares vêm de configuração do tenant, não hardcoded.
+- **Configuração por tenant**: modelo, esforço e timeout da triagem vêm da configuração do tenant quando definidos (D-044, §8), com o `.env` como padrão; o worker resolve a precedência e passa `parametrosModelo` + `limites.timeoutMs` efetivos ao provider (`01-arquitetura.md` §4.1), que leva modelo/esforço à fronteira injetável do SDK (`ParametrosQuery`/`ParametrosTransporte`). Budget e turnos seguem globais (`IA_BUDGET_USD`/`IA_MAX_TURNOS`).
 
 > DECISÃO PENDENTE: estratégia de sessão/contexto longo (uma execução stateless por job vs. sessão persistente por chamado) e uso de prompt caching do repositório para reduzir custo.
 

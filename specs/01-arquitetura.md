@@ -170,9 +170,20 @@ O contrato do `AIProvider` é definido **canonicamente aqui** (§4.1) — este �
 ```typescript
 interface AIProvider {
   nome: string; // ex.: "claude-agent-sdk"
-  modelo: string; // ex.: "claude-opus-5"
+  modelo: string; // modelo DEFAULT do provider, ex.: "claude-opus-5" (env IA_MODELO)
+  // Modelo que o provider usará com estes parâmetros (D-044) — gravado em ExecucaoIA.modelo.
+  // Opcional: provider que ignora overrides (fake) não implementa e vale `modelo`.
+  modeloEfetivo?(parametros?: ParametrosModelo): string;
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;
+  mapearSistema(input: AIMapeamentoInput): Promise<AIMapeamentoResult>; // D-013; aceita o mesmo `parametrosModelo`
+}
+
+// Override de modelo/esforço de UMA execução (D-044): config do tenant já validada
+// pelo worker. Campo ausente = default do provider (IA_MODELO/IA_ESFORCO → default do código).
+interface ParametrosModelo {
+  modelo?: string; // charset [a-z0-9.-], ≤ 64
+  esforco?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; // ESFORCOS_IA (D-031)
 }
 
 interface AIProviderInput {
@@ -241,10 +252,17 @@ interface AIProviderInput {
   };
 
   limites: {
-    timeoutMs: number;
+    timeoutMs: number; // EFETIVO: o do tenant (D-044, com teto) ou IA_TIMEOUT_MS
     budgetUsd: number;
     maxTurnos: number;
   };
+
+  parametrosModelo?: ParametrosModelo; // override de modelo/esforço do tenant (D-044)
+
+  // D-041: abortado pelo worker quando a IA é silenciada durante a execução; o
+  // provider o encadeia ao abort do timeout e lança o erro de cancelamento
+  // (`ia_silenciada`), não `timeout`. Opcional (sem suporte, a Tx2 descarta).
+  sinalCancelamento?: AbortSignal;
 }
 
 interface AIProviderResult {
@@ -302,7 +320,7 @@ function resolverProvider(cfg: TenantAIConfig): AIProvider {
 }
 ```
 
-> DECISÃO PENDENTE: a seleção de engine/modelo será global, por tenant ou por sistema-alvo? A recomendação é configurável por tenant, com default global.
+> DECIDIDO (D-044): o **engine** (`IA_PROVIDER`) segue global, por instalação; **modelo, esforço e timeout da triagem** são configuráveis **por tenant** (`/app/config`), com default global no `.env`. A sobreposição chega ao provider por `AIProviderInput.parametrosModelo`/`limites.timeoutMs` — o provider é um só por worker. Por sistema-alvo fica de fora até haver demanda.
 
 ---
 

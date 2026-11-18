@@ -7,6 +7,10 @@ import {
   criarChamado,
   transicionarStatus,
   criarMensagem,
+  aprovarResolucao,
+  contestarResolucao,
+  type MotivoAprovacao,
+  type MotivoContestacao,
   type MotivoCriar,
   type MotivoMensagem,
   type ArquivoUpload,
@@ -37,6 +41,7 @@ const MOTIVOS_CRIAR: Record<MotivoCriar, string> = {
   sistema_alvo_obrigatorio: 'Selecione o sistema.',
   sistema_alvo_invalido: 'Sistema inválido.',
   categoria_invalida: 'Categoria inválida.',
+  estimativa_invalida: 'Estimativa de custo inválida.',
 };
 
 const MOTIVOS_MENSAGEM: Record<MotivoMensagem, string> = {
@@ -190,4 +195,78 @@ export async function acaoTransicionarCliente(formData: FormData): Promise<void>
   );
   revalidatePath('/portal');
   revalidatePath(`/portal/chamados/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Janela de aprovação (D-042): o solicitante aprova ou contesta um `resolvido`
+// ---------------------------------------------------------------------------
+
+/** Limite do motivo da contestação (texto simples → doc mínimo no serviço). */
+const LIMITE_MOTIVO_CONTESTACAO = 5000;
+
+const MOTIVOS_APROVACAO: Record<MotivoAprovacao, string> = {
+  inexistente: 'Chamado não encontrado.',
+  sem_permissao: 'Só quem abriu o chamado pode aprovar ou contestar a solução.',
+  fora_da_janela: 'Este chamado não está mais aguardando a sua aprovação.',
+  motivo_obrigatorio: 'Conte o que ainda não está resolvido.',
+  mesmo_status: 'Este chamado não está mais aguardando a sua aprovação.',
+  estado_terminal: 'Este chamado já foi encerrado.',
+  transicao_inexistente: 'Este chamado não está mais aguardando a sua aprovação.',
+  papel_nao_autorizado: 'Só quem abriu o chamado pode aprovar ou contestar a solução.',
+  // D-043: só a equipe informa custo ao resolver — nunca ocorre na aprovação.
+  valor_invalido: 'Não foi possível concluir a ação.',
+};
+
+function mensagemContestacao(m: MotivoContestacao): string {
+  if (m in MOTIVOS_APROVACAO) return MOTIVOS_APROVACAO[m as MotivoAprovacao];
+  return MOTIVOS_MENSAGEM[m as MotivoMensagem] ?? 'Não foi possível contestar.';
+}
+
+/** O solicitante APROVA a solução: `resolvido → fechado` (evento `chamado_aprovado`). */
+export async function acaoAprovar(
+  _prev: EstadoChamado,
+  formData: FormData,
+): Promise<EstadoChamado> {
+  const { tenant, usuario } = await exigirUsuario();
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { erro: 'Chamado inválido.' };
+
+  const ds = await obterAppDataSource();
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    aprovarResolucao(em, usuario, id, hooks),
+  );
+  if (!r.ok) return { erro: MOTIVOS_APROVACAO[r.motivo] };
+
+  revalidatePath('/portal');
+  revalidatePath(`/portal/chamados/${id}`);
+  return { sucesso: 'Obrigado! Solução aprovada e chamado encerrado.' };
+}
+
+/**
+ * O solicitante CONTESTA a solução: o motivo (obrigatório) vira mensagem pública
+ * e o chamado volta a `em_atendimento` (evento `chamado_contestado`); a triagem
+ * é re-disparada como em qualquer resposta do cliente.
+ */
+export async function acaoContestar(
+  _prev: EstadoChamado,
+  formData: FormData,
+): Promise<EstadoChamado> {
+  const { tenant, usuario } = await exigirUsuario();
+  const id = String(formData.get('id') ?? '');
+  const motivo = String(formData.get('motivo') ?? '').trim();
+  if (!id) return { erro: 'Chamado inválido.' };
+  if (!motivo) return { erro: MOTIVOS_APROVACAO.motivo_obrigatorio };
+  if (motivo.length > LIMITE_MOTIVO_CONTESTACAO) {
+    return { erro: `O motivo deve ter no máximo ${LIMITE_MOTIVO_CONTESTACAO} caracteres.` };
+  }
+
+  const ds = await obterAppDataSource();
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    contestarResolucao(em, usuario, id, motivo, hooks),
+  );
+  if (!r.ok) return { erro: mensagemContestacao(r.motivo) };
+
+  revalidatePath('/portal');
+  revalidatePath(`/portal/chamados/${id}`);
+  return { sucesso: 'Contestação enviada. O chamado voltou para atendimento.' };
 }

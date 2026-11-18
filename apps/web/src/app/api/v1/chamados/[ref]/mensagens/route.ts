@@ -33,6 +33,8 @@ export const dynamic = 'force-dynamic';
  *  - **Efeitos**: `comDespacho` liga a mutação aos MESMOS pipelines da UI —
  *    notificações e, quando é resposta pública de cliente, re-enfileiramento da
  *    triagem (specs/05 §2). Uma mensagem publicada pela API não é de segunda classe.
+ *    Inclui a auto-atribuição (D-039): resposta `publica` de operador/admin torna
+ *    o usuário do token o responsável — regra de `criarMensagem`, não desta rota.
  */
 export async function POST(req: Request, ctxRota: { params: Promise<{ ref: string }> }) {
   const ctx = await exigirContexto(req);

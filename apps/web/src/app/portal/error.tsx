@@ -34,7 +34,7 @@ export default function ErroPortal({
           Tentar novamente
         </Button>
         <Link href="/portal" className={cn(buttonVariants({ variant: 'ghost' }))}>
-          Meus chamados
+          Chamados
         </Link>
       </div>
     </div>

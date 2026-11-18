@@ -3,6 +3,7 @@ import {
   montarQueryListar,
   caminhoChamado,
   montarCorpoCriar,
+  montarCorpoStatus,
   classificarAnexo,
   nomeArquivoSeguro,
   montarResultadoAnexo,
@@ -26,6 +27,11 @@ describe('ferramentas do MCP', () => {
 
   it('omite `status` quando a lista vem vazia', () => {
     expect(montarQueryListar({ status: [] }).status).toBeUndefined();
+  });
+
+  it('meus (D-037): só viaja quando true', () => {
+    expect(montarQueryListar({ meus: true }).meus).toBe('true');
+    expect(montarQueryListar({ meus: false }).meus).toBeUndefined();
   });
 
   it('converte limite numérico para string', () => {
@@ -150,5 +156,29 @@ describe('anexo_obter', () => {
     );
     expect(r.content[0]?.type).toBe('text');
     expect((r.content[0] as { text: string }).text).toContain('limite inline');
+  });
+});
+
+describe('montarCorpoStatus (D-043)', () => {
+  it('sem custo: só status e motivo', () => {
+    expect(montarCorpoStatus({ status: 'em_atendimento' })).toEqual({
+      ok: true,
+      corpo: { status: 'em_atendimento' },
+    });
+  });
+
+  it('custo_final viaja junto de "resolvido" (inclusive 0)', () => {
+    expect(montarCorpoStatus({ status: 'resolvido', custo_final: 150.5, motivo: 'ok' })).toEqual({
+      ok: true,
+      corpo: { status: 'resolvido', motivo: 'ok', custo_final: 150.5 },
+    });
+    expect(montarCorpoStatus({ status: 'resolvido', custo_final: 0 })).toEqual({
+      ok: true,
+      corpo: { status: 'resolvido', custo_final: 0 },
+    });
+  });
+
+  it('custo_final em outra transição é recusado antes da API', () => {
+    expect(montarCorpoStatus({ status: 'fechado', custo_final: 10 }).ok).toBe(false);
   });
 });

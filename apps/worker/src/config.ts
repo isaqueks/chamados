@@ -1,8 +1,10 @@
 import {
-  MODELO_PADRAO,
-  ESFORCO_PADRAO,
+  ESFORCO_IA_PADRAO,
+  IA_MAPA_TIMEOUT_PADRAO_MS,
+  lerPadroesIaAmbiente,
+  normalizarEsforcoIa,
   type EsforcoIA,
-} from './ia/providers/claude-agent-provider';
+} from '@chamados/shared';
 
 /** Conexão Redis do worker (defaults batem com o docker-compose). */
 export const redisConnection = {
@@ -10,12 +12,16 @@ export const redisConnection = {
   port: Number(process.env.REDIS_PORT ?? '6379'),
 };
 
-const ESFORCOS: readonly EsforcoIA[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-
+/** Esforço válido ou o default (D-031). Lista canônica em @chamados/shared (D-044). */
 export function esforcoValido(v: string | undefined): EsforcoIA {
-  const n = v?.trim().toLowerCase();
-  return (ESFORCOS as readonly string[]).includes(n ?? '') ? (n as EsforcoIA) : ESFORCO_PADRAO;
+  return normalizarEsforcoIa(v) ?? ESFORCO_IA_PADRAO;
 }
+
+/**
+ * Defaults de IA da INSTALAÇÃO lidos do `.env` (D-031/D-044) — a mesma função
+ * que o web usa para rotular "Padrão da instalação" e validar o teto do timeout.
+ */
+const padroesIa = lerPadroesIaAmbiente(process.env);
 
 function num(nome: string, padrao: number): number {
   const v = Number(process.env[nome]);
@@ -30,13 +36,17 @@ function num(nome: string, padrao: number): number {
 export const iaConfig = {
   /** 'fake' (default, determinístico) | 'claude' (Claude Agent SDK). */
   provider: (process.env.IA_PROVIDER ?? 'fake') as 'fake' | 'claude',
-  /** Modelo do provider real (specs/05 §10 — Opus 5, D-031). */
-  modelo: process.env.IA_MODELO ?? MODELO_PADRAO,
   /**
-   * Esforço de raciocínio (D-031). Valor inválido cai no default em vez de
-   * derrubar o worker: um typo no `.env` não pode parar a fila de triagem.
+   * Modelo DEFAULT do provider real (specs/05 §10 — Opus 5, D-031). O tenant pode
+   * sobrescrever em /app/config (D-044); vazio no `.env` → `MODELO_IA_PADRAO`.
    */
-  esforco: esforcoValido(process.env.IA_ESFORCO),
+  modelo: padroesIa.modelo,
+  /**
+   * Esforço de raciocínio DEFAULT (D-031). Valor inválido cai no default em vez
+   * de derrubar o worker: um typo no `.env` não pode parar a fila de triagem. O
+   * tenant pode sobrescrever (D-044).
+   */
+  esforco: padroesIa.esforco,
   apiKey: process.env.ANTHROPIC_API_KEY,
   /**
    * Token de assinatura (D-012): `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -45,7 +55,8 @@ export const iaConfig = {
    */
   oauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
   limites: {
-    timeoutMs: num('IA_TIMEOUT_MS', 600_000),
+    /** Timeout DEFAULT da triagem; o tenant pode sobrescrever até `tetoTimeoutTenantMs` (D-044). */
+    timeoutMs: padroesIa.timeoutMs,
     budgetUsd: num('IA_BUDGET_USD', 5),
     // D-014: exploração nível Claude Code (Read/Grep/Glob) usa mais turnos —
     // default elevado de 20 → 50 (o usuário aceitou o custo maior por triagem).
@@ -57,13 +68,20 @@ export const iaConfig = {
    * próprios; teto de caracteres do resumo injetado nas triagens.
    */
   mapa: {
-    timeoutMs: num('IA_MAPA_TIMEOUT_MS', 600_000),
+    timeoutMs: num('IA_MAPA_TIMEOUT_MS', IA_MAPA_TIMEOUT_PADRAO_MS),
     budgetUsd: num('IA_MAPA_BUDGET_USD', 10),
     // D-033: 40 cabia para Opus 4.8; Opus 5 em esforço `high` explora mais e
     // estourava o teto em 100% dos mapeamentos (20 falhas seguidas em produção).
     maxTurnos: num('IA_MAPA_MAX_TURNOS', 100),
     maxChars: num('IA_MAPA_MAX_CHARS', 12_000),
   },
+  /**
+   * TETO do timeout da triagem configurável por tenant (D-044), derivado do
+   * limiar de execução órfã (`MANUTENCAO_EXECUCAO_ORFA_MS`) menos a janela do
+   * mapeamento inline (`IA_MAPA_TIMEOUT_MS` + conclusão) e uma folga — ver
+   * `calcularTetoTimeoutTriagemMs`. Valor de tenant acima disto é rebaixado.
+   */
+  tetoTimeoutTenantMs: padroesIa.tetoTimeoutTenantMs,
   /** Resolução automática (specs/05 §6): PR e link do chamado. */
   resolucao: {
     /** Timeout do POST de abertura de PR no GitHub (ms). */

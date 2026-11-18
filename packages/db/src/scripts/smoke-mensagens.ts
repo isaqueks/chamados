@@ -10,8 +10,14 @@
  *  5. XSS (script/handler/`javascript:`) é removido pela sanitização;
  *  6. resposta do cliente em `aguardando_cliente` dispara `→ em_triagem` (evento);
  *  7. eventos gerados em todas as mutações; visibilidade por papel;
+ *  7b. D-037 — outro cliente do MESMO tenant lê a timeline pública, os eventos
+ *      públicos e os anexos públicos do chamado alheio, mas NÃO vê nota interna,
+ *      não baixa anexo interno e NÃO escreve/transiciona (ler ≠ agir);
  *  8. isolamento RLS entre tenants (mensagens/anexos);
- *  9. imutabilidade de mensagem (sem API de edição/exclusão).
+ *  9. imutabilidade de mensagem (sem API de edição/exclusão);
+ * 10. D-039 — resposta PÚBLICA de operador/admin torna o autor o responsável
+ *     (substitui o anterior; sem evento duplicado; sem e-mail ao próprio autor);
+ *     nota interna, `agente_ia` e `cliente` não atribuem; cross-tenant intacto.
  *
  * Requer MinIO de pé (upload de anexos). Sai com 0 se passa; 1 caso contrário.
  */
@@ -24,7 +30,7 @@ const { criarAppDataSource, criarAdminDataSource } = await import('../data-sourc
 const { runInTenantContext } = await import('../rls');
 const { provisionarTenant, criarUsuarioAtivoComSenha } = await import('../auth');
 const { ChamadoSchema } = await import('../entities/chamado');
-const { criarChamado, transicionarStatus, definirComplexidade, atorSistema } =
+const { criarChamado, transicionarStatus, definirComplexidade, atribuirOperador, atorSistema } =
   await import('../chamados/chamado-service');
 const mensagemMod = await import('../chamados/mensagem-service');
 const { criarMensagem, listarMensagens } = mensagemMod;
@@ -69,7 +75,7 @@ async function main(): Promise<void> {
     });
     tenantB = provB.tenant_id;
 
-    const { cliente, operador } = await runInTenantContext(ds, tenantA, async (em) => {
+    const { cliente, operador, cliente2 } = await runInTenantContext(ds, tenantA, async (em) => {
       const cliente = await criarUsuarioAtivoComSenha(em, {
         tenant_id: tenantA,
         email: `cli.${sufixo}@a.dev`,
@@ -84,7 +90,15 @@ async function main(): Promise<void> {
         papel: Papel.operador,
         senha: 'Dev@12345',
       });
-      return { cliente, operador };
+      // D-037: segundo cliente do MESMO tenant (lê o chamado alheio, não age).
+      const cliente2 = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantA,
+        email: `cli2.${sufixo}@a.dev`,
+        nome: 'Cliente A2',
+        papel: Papel.cliente,
+        senha: 'Dev@12345',
+      });
+      return { cliente, operador, cliente2 };
     });
     const clienteB = await runInTenantContext(ds, tenantB, (em) =>
       criarUsuarioAtivoComSenha(em, {
@@ -99,6 +113,7 @@ async function main(): Promise<void> {
     const atorCli = { id: cliente, tenant_id: tenantA, papel: Papel.cliente };
     const atorOp = { id: operador, tenant_id: tenantA, papel: Papel.operador };
     const atorCliB = { id: clienteB, tenant_id: tenantB, papel: Papel.cliente };
+    const atorCli2 = { id: cliente2, tenant_id: tenantA, papel: Papel.cliente };
 
     // Chamado base.
     const ch = await runInTenantContext(ds, tenantA, (em) =>
@@ -328,9 +343,10 @@ async function main(): Promise<void> {
           'mensagem do cliente em resolvido REABRE (→ em_atendimento)',
         );
         const evs = await listarEventos(em, atorOp, chamadoId);
+        // D-042: mensagem do cliente em resolvido = CONTESTAÇÃO (substitui reaberto).
         ok(
-          evs.some((e) => e.tipo === 'chamado_reaberto'),
-          'evento chamado_reaberto registrado na reabertura por mensagem',
+          evs.some((e) => e.tipo === 'chamado_contestado'),
+          'evento chamado_contestado registrado na reabertura por mensagem (D-042)',
         );
       });
       ok(
@@ -365,6 +381,76 @@ async function main(): Promise<void> {
       ok(tiposCliente.has('mensagem_publicada'), 'cliente vê mensagem_publicada');
     });
 
+    // 7b) D-037: outro cliente do mesmo tenant LÊ (visão pública), não AGE ---
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const doOperador = await listarMensagens(em, atorOp, chamadoId);
+      const publicas = doOperador.filter(
+        (m) => 'visibilidade' in m && m.visibilidade === VisibilidadeMensagem.publica,
+      );
+      const msgs = await listarMensagens(em, atorCli2, chamadoId);
+      ok(
+        msgs.length > 0 && msgs.length === publicas.length,
+        'cliente2 lê a timeline PÚBLICA do chamado do cliente1 (mesmo tenant — D-037)',
+      );
+      ok(
+        msgs.every((m) => !('visibilidade' in m) && !('execucao_ia_id' in m)),
+        'timeline do chamado alheio vem pelo serializer do cliente (sem visibilidade/execucao_ia_id)',
+      );
+      const idsInternos = new Set(
+        doOperador
+          .filter((m) => 'visibilidade' in m && m.visibilidade === VisibilidadeMensagem.interna)
+          .map((m) => m.id),
+      );
+      ok(
+        !msgs.some((m) => idsInternos.has(m.id)),
+        'cliente2 NÃO vê nenhuma nota interna do chamado alheio',
+      );
+
+      const eventos = new Set((await listarEventos(em, atorCli2, chamadoId)).map((e) => e.tipo));
+      ok(eventos.has('chamado_criado'), 'cliente2 vê eventos públicos do chamado alheio');
+      ok(
+        !eventos.has('nota_interna_publicada') &&
+          !eventos.has('complexidade_alterada') &&
+          !eventos.has('anexo_adicionado'),
+        'cliente2 NÃO vê eventos internos do chamado alheio',
+      );
+
+      const [inline] = (await em.query(
+        `SELECT id FROM anexo WHERE mensagem_id = $1 AND inline = true`,
+        [msgImagemId],
+      )) as Array<{ id: string }>;
+      const dlPub = await autorizarDownloadAnexo(em, atorCli2, inline!.id);
+      ok(dlPub.ok, 'cliente2 baixa anexo de mensagem PÚBLICA do chamado alheio');
+      const dlInt = await autorizarDownloadAnexo(em, atorCli2, anexoInternoId);
+      ok(!dlInt.ok, 'cliente2 NÃO baixa anexo de nota interna do chamado alheio');
+    });
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const escreve = await criarMensagem(em, atorCli2, {
+        chamado_id: chamadoId,
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: 'Também tenho esse problema.',
+      });
+      ok(
+        !escreve.ok && escreve.motivo === 'sem_permissao',
+        'cliente2 NÃO publica mensagem no chamado alheio (ler ≠ agir)',
+      );
+      const anexa = await criarMensagem(em, atorCli2, {
+        chamado_id: chamadoId,
+        visibilidade: VisibilidadeMensagem.publica,
+        corpo: 'Anexo meu.',
+        anexos: [{ nome_arquivo: 'nota.txt', buffer: Buffer.from('oi\n', 'utf8') }],
+      });
+      ok(
+        !anexa.ok && anexa.motivo === 'sem_permissao',
+        'cliente2 NÃO envia anexo no chamado alheio',
+      );
+      const cancela = await transicionarStatus(em, atorCli2, chamadoId, StatusChamado.cancelado);
+      ok(
+        !cancela.ok && cancela.motivo === 'sem_permissao',
+        'cliente2 NÃO transiciona (cancela/reabre) o chamado alheio',
+      );
+    });
+
     // 8) Isolamento RLS entre tenants ----------------------------------------
     await runInTenantContext(ds, tenantB, async (em) => {
       const msgs = await listarMensagens(em, atorCliB, chamadoId);
@@ -380,6 +466,236 @@ async function main(): Promise<void> {
         !('atualizarMensagem' in mensagemMod),
       'mensagem-service não expõe edição/exclusão (imutável no MVP)',
     );
+
+    // 10) D-039 — "quem responde fica responsável" ----------------------------
+    //     Chamado NOVO (o base já foi assumido pelo operador nas seções 4/5).
+    {
+      const { operador2, admin } = await runInTenantContext(ds, tenantA, async (em) => ({
+        operador2: await criarUsuarioAtivoComSenha(em, {
+          tenant_id: tenantA,
+          email: `op2.${sufixo}@a.dev`,
+          nome: 'Operador A2',
+          papel: Papel.operador,
+          senha: 'Dev@12345',
+        }),
+        admin: await criarUsuarioAtivoComSenha(em, {
+          tenant_id: tenantA,
+          email: `adm.${sufixo}@a.dev`,
+          nome: 'Admin A',
+          papel: Papel.admin,
+          senha: 'Dev@12345',
+        }),
+      }));
+      const atorOp2 = { id: operador2, tenant_id: tenantA, papel: Papel.operador };
+      const atorAdm = { id: admin, tenant_id: tenantA, papel: Papel.admin };
+      const atorIa = { id: provA.agente_ia_id, tenant_id: tenantA, papel: Papel.agente_ia };
+
+      const ch10 = await runInTenantContext(ds, tenantA, (em) =>
+        criarChamado(em, atorCli, {
+          titulo: 'D-039: quem responde assume',
+          descricao: 'Chamado para provar a auto-atribuição por resposta.',
+          natureza: Natureza.duvida,
+        }),
+      );
+      if (!ch10.ok) throw new Error('falha ao criar chamado da seção 10');
+      const id10 = ch10.id;
+
+      const responsavel = (em: import('typeorm').EntityManager) =>
+        em.findOne(ChamadoSchema, { where: { id: id10 } }).then((c) => c?.operador_id ?? null);
+      const atribuicoes = async (em: import('typeorm').EntityManager) =>
+        (await listarEventos(em, atorOp, id10)).filter((e) => e.tipo === 'operador_atribuido');
+
+      // a) nota interna NÃO atribui.
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorOp, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.interna,
+          corpo: 'Nota interna: vou olhar isto.',
+        });
+        ok(r.ok && !('assumiu' in r && r.assumiu), 'nota interna de operador — ok, sem assumir');
+        ok((await responsavel(em)) === null, 'nota interna NÃO atribui o chamado (D-039)');
+      });
+
+      // b) mensagem pública do agente_ia NÃO atribui.
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorIa, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Olá! Recebemos sua dúvida e já estamos analisando.',
+        });
+        ok(r.ok, 'agente_ia publica mensagem pública — ok');
+        ok((await responsavel(em)) === null, 'resposta pública da IA NÃO atribui (D-039)');
+        ok((await atribuicoes(em)).length === 0, 'nenhum operador_atribuido até aqui');
+      });
+
+      // c) resposta pública do operador ATRIBUI a ele (evento com ator = autor,
+      //    motivo resposta_publica; o autor não recebe e-mail da própria atribuição).
+      {
+        type Pub = {
+          tipo: string;
+          job?: { evento: string; canal: string; destinatarioId?: string | null };
+        };
+        const capt: Pub[] = [];
+        const desp = {
+          capturaNotificacoes: true as const,
+          publicar: (e: Pub) => void capt.push(e),
+        };
+        await runInTenantContext(ds, tenantA, async (em) => {
+          const r = await criarMensagem(
+            em,
+            atorOp,
+            {
+              chamado_id: id10,
+              visibilidade: VisibilidadeMensagem.publica,
+              corpo: 'Oi! Vou te ajudar com isso.',
+            },
+            { despachante: desp },
+          );
+          ok(r.ok && r.assumiu === true, 'resposta pública do operador → assumiu = true');
+          ok((await responsavel(em)) === operador, 'operador que respondeu virou o responsável');
+          const evs = await atribuicoes(em);
+          ok(evs.length === 1, 'exatamente 1 evento operador_atribuido');
+          const ev = evs[0]!;
+          ok(ev.ator_id === operador, 'ator do evento = o próprio autor da resposta');
+          ok(
+            ev.dados.operador_novo === operador &&
+              ev.dados.operador_anterior === null &&
+              ev.dados.motivo === 'resposta_publica',
+            'dados do evento: anterior null → novo = autor, motivo resposta_publica',
+          );
+          const tudo = await listarEventos(em, atorOp, id10);
+          const iMsg = tudo.findIndex((e) => e.tipo === 'mensagem_publicada');
+          ok(iMsg >= 0, 'evento mensagem_publicada registrado junto');
+
+          const doCliente = new Set((await listarEventos(em, atorCli, id10)).map((e) => e.tipo));
+          ok(!doCliente.has('operador_atribuido'), 'cliente NÃO vê operador_atribuido');
+        });
+        ok(
+          !capt.some(
+            (e) =>
+              e.tipo === 'notificacao' &&
+              e.job?.evento === 'atribuicao' &&
+              e.job.canal === 'email' &&
+              e.job.destinatarioId === operador,
+          ),
+          'autor NÃO recebe e-mail da própria auto-atribuição',
+        );
+      }
+
+      // d) o MESMO operador responde de novo: nada muda (sem evento duplicado).
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorOp, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Complementando a resposta anterior.',
+        });
+        ok(r.ok && !('assumiu' in r && r.assumiu), 'segunda resposta do responsável — sem assumir');
+        ok((await atribuicoes(em)).length === 1, 'nenhum operador_atribuido duplicado');
+      });
+
+      // e) segundo operador responde em público: ASSUME (substitui o anterior).
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorOp2, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Assumindo daqui: segue a orientação.',
+        });
+        ok(r.ok && r.assumiu === true, 'resposta pública do operador2 → assumiu');
+        ok((await responsavel(em)) === operador2, 'operador2 substituiu o responsável anterior');
+        const evs = await atribuicoes(em);
+        const ult = evs[evs.length - 1]!;
+        ok(
+          evs.length === 2 &&
+            ult.dados.operador_anterior === operador &&
+            ult.dados.operador_novo === operador2,
+          'evento registra anterior = operador → novo = operador2',
+        );
+      });
+
+      // f) nota interna do operador original NÃO tira o chamado do operador2.
+      await runInTenantContext(ds, tenantA, async (em) => {
+        await criarMensagem(em, atorOp, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.interna,
+          corpo: 'Nota: passei o caso para o colega.',
+        });
+        ok((await responsavel(em)) === operador2, 'nota interna não reatribui (segue operador2)');
+      });
+
+      // g) admin também assume ao responder em público; cliente responder não muda.
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorAdm, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Admin aqui: confirmando a orientação.',
+        });
+        ok(r.ok && r.assumiu === true, 'resposta pública do admin → assumiu');
+        ok((await responsavel(em)) === admin, 'admin virou o responsável');
+      });
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarMensagem(em, atorCli, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Obrigado, deu certo.',
+        });
+        ok(r.ok, 'cliente responde — ok');
+        ok((await responsavel(em)) === admin, 'resposta do cliente NÃO muda o responsável');
+      });
+
+      // h) atribuição manual explícita continua valendo e é respeitada até a
+      //    próxima resposta pública de OUTRO membro da equipe.
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const a = await atribuirOperador(em, atorAdm, id10, operador);
+        ok(a.ok, 'admin atribui manualmente ao operador — ok');
+        ok((await responsavel(em)) === operador, 'atribuição manual aplicada');
+      });
+
+      // i) cross-tenant (regra 6): operador do tenant B não alcança o chamado de A
+      //    — nem mensagem, nem atribuição; o responsável não muda.
+      const opB = await runInTenantContext(ds, tenantB, (em) =>
+        criarUsuarioAtivoComSenha(em, {
+          tenant_id: tenantB,
+          email: `op.${sufixo}@b.dev`,
+          nome: 'Operador B',
+          papel: Papel.operador,
+          senha: 'Dev@12345',
+        }),
+      );
+      const atorOpB = { id: opB, tenant_id: tenantB, papel: Papel.operador };
+      await runInTenantContext(ds, tenantB, async (em) => {
+        const r = await criarMensagem(em, atorOpB, {
+          chamado_id: id10,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Tentativa cross-tenant.',
+        });
+        ok(
+          !r.ok && r.motivo === 'chamado_inexistente',
+          'operador do tenant B não responde chamado do A (RLS → chamado_inexistente)',
+        );
+      });
+      await runInTenantContext(ds, tenantB, async (em) => {
+        // Ator forjado com tenant_id de A, mas a transação é do B: RLS esconde.
+        const r = await criarMensagem(
+          em,
+          { ...atorOpB, tenant_id: tenantA },
+          {
+            chamado_id: id10,
+            visibilidade: VisibilidadeMensagem.publica,
+            corpo: 'Tentativa cross-tenant com tenant_id forjado.',
+          },
+        );
+        ok(!r.ok, 'tenant_id forjado no ator não fura o RLS');
+      });
+      await runInTenantContext(ds, tenantA, async (em) => {
+        ok(
+          (await responsavel(em)) === operador,
+          'responsável do chamado de A intacto após as tentativas do tenant B',
+        );
+        // O operador de B também não é alvo válido de atribuição em A.
+        const a = await atribuirOperador(em, atorAdm, id10, opB);
+        ok(!a.ok && a.motivo === 'operador_invalido', 'operador de B não é alvo em A');
+      });
+    }
 
     console.log('\n[smoke-mensagens] RESULTADO: PASSOU — mensagens/anexos/eventos confirmados.');
   } finally {

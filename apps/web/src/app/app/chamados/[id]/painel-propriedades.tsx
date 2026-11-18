@@ -1,9 +1,23 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { StatusChamado, Natureza, Prioridade, Complexidade } from '@chamados/shared';
+import {
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  ehReabertura,
+  ORDEM_ESTIMATIVA_CUSTO,
+  rotuloEstimativaCusto,
+  formatarBrl,
+  parsearValorBrl,
+  valorParaCampo,
+  MENSAGEM_VALOR_BRL,
+  type EstimativaCusto,
+} from '@chamados/shared';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   ROTULO_STATUS_CHAMADO,
   ROTULO_NATUREZA,
@@ -19,8 +33,11 @@ import {
   acaoAlterarPrioridade,
   acaoAlterarNatureza,
   acaoDefinirComplexidade,
+  acaoDefinirEstimativaCusto,
+  acaoDefinirCustoFinal,
   type ResultadoAcao,
 } from '../actions';
+import { DialogoResolver } from './dialogo-resolver';
 
 const SELECT_CLS =
   'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60';
@@ -37,7 +54,8 @@ const ACAO_STATUS: Record<StatusChamado, string> = {
 };
 
 function verbo(de: StatusChamado, para: StatusChamado): string {
-  if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido) return 'Reabrir';
+  // Reabertura de resolvido/fechado/cancelado (specs/04 §8.2, D-038).
+  if (ehReabertura(de, para)) return 'Reabrir';
   return ACAO_STATUS[para];
 }
 
@@ -47,6 +65,9 @@ interface Props {
   natureza: Natureza;
   prioridade: Prioridade;
   complexidade: Complexidade | null;
+  /** D-043: faixa estimada (pública) e custo final em BRL. */
+  estimativaCusto: EstimativaCusto | null;
+  custoFinal: number | null;
   alvosStatus: StatusChamado[];
   operadores: OperadorResumo[];
   operadorAtualId: string | null;
@@ -60,6 +81,8 @@ export function PainelPropriedades({
   natureza,
   prioridade,
   complexidade,
+  estimativaCusto,
+  custoFinal,
   alvosStatus,
   operadores,
   operadorAtualId,
@@ -67,12 +90,15 @@ export function PainelPropriedades({
   encerrado,
 }: Props) {
   const [pendente, startTransition] = useTransition();
+  const [resolverAberto, setResolverAberto] = useState(false);
 
-  function executar(fn: () => Promise<ResultadoAcao>) {
+  function executar(fn: () => Promise<ResultadoAcao>, aoConcluir?: () => void) {
     startTransition(async () => {
       const r = await fn();
-      if (r.ok) toast.success(r.msg);
-      else toast.error(r.msg);
+      if (r.ok) {
+        toast.success(r.msg);
+        aoConcluir?.();
+      } else toast.error(r.msg);
     });
   }
 
@@ -91,7 +117,12 @@ export function PainelPropriedades({
                 size="sm"
                 disabled={pendente}
                 className="justify-start"
-                onClick={() => executar(() => acaoTransicionar(chamadoId, para))}
+                onClick={() =>
+                  // D-043: resolver passa pela confirmação com custo final opcional.
+                  para === StatusChamado.resolvido
+                    ? setResolverAberto(true)
+                    : executar(() => acaoTransicionar(chamadoId, para))
+                }
               >
                 {verbo(status, para)}
                 <span className="ml-auto text-xs text-muted-foreground">
@@ -104,6 +135,21 @@ export function PainelPropriedades({
           <p className="text-sm text-muted-foreground">
             Nenhuma transição disponível a partir de “{ROTULO_STATUS_CHAMADO[status]}”.
           </p>
+        )}
+        {alvosStatus.includes(StatusChamado.resolvido) && (
+          <DialogoResolver
+            key={String(custoFinal)}
+            aberto={resolverAberto}
+            aoMudarAberto={setResolverAberto}
+            custoAtual={custoFinal}
+            pendente={pendente}
+            aoConfirmar={(custo) =>
+              executar(
+                () => acaoTransicionar(chamadoId, StatusChamado.resolvido, custo),
+                () => setResolverAberto(false),
+              )
+            }
+          />
         )}
       </Secao>
 
@@ -193,7 +239,118 @@ export function PainelPropriedades({
           </Campo>
         </div>
       </Secao>
+
+      {/* Custo (D-043) — visível ao cliente no portal. */}
+      <Secao titulo="Custo">
+        <div className="flex flex-col gap-3">
+          <Campo rotulo="Estimativa de custo">
+            <select
+              aria-label="Estimativa de custo"
+              className={SELECT_CLS}
+              value={estimativaCusto ?? ''}
+              disabled={pendente || encerrado}
+              onChange={(e) =>
+                executar(() => acaoDefinirEstimativaCusto(chamadoId, e.target.value))
+              }
+            >
+              <option value="">Sem estimativa</option>
+              {ORDEM_ESTIMATIVA_CUSTO.map((est) => (
+                <option key={est} value={est}>
+                  {rotuloEstimativaCusto(est)}
+                </option>
+              ))}
+            </select>
+          </Campo>
+
+          {status === StatusChamado.resolvido ? (
+            <CampoCustoFinal
+              key={String(custoFinal)}
+              custoFinal={custoFinal}
+              pendente={pendente}
+              aoSalvar={(valor) => executar(() => acaoDefinirCustoFinal(chamadoId, valor))}
+            />
+          ) : (
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">Custo final</span>
+              <p className="text-sm">
+                {custoFinal !== null ? (
+                  <span className="font-medium tabular-nums">{formatarBrl(custoFinal)}</span>
+                ) : (
+                  <span className="text-muted-foreground">
+                    {encerrado ? 'Não informado.' : 'Informado ao marcar como resolvido.'}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            O cliente vê a estimativa e o custo final.
+          </p>
+        </div>
+      </Secao>
     </div>
+  );
+}
+
+/**
+ * Custo final editável (só em `resolvido` — D-043): texto pt-BR com vírgula
+ * decimal, validado no cliente com a MESMA regra do servidor
+ * (`parsearValorBrl`). Em branco + salvar = remover o custo.
+ */
+function CampoCustoFinal({
+  custoFinal,
+  pendente,
+  aoSalvar,
+}: {
+  custoFinal: number | null;
+  pendente: boolean;
+  aoSalvar: (valor: string) => void;
+}) {
+  const inicial = valorParaCampo(custoFinal);
+  const [valor, setValor] = useState(inicial);
+  const lido = valor.trim() === '' ? null : parsearValorBrl(valor);
+  const erro = lido && !lido.ok ? MENSAGEM_VALOR_BRL[lido.motivo] : null;
+  const mudou = valor.trim() !== inicial;
+
+  return (
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!erro && mudou) aoSalvar(valor);
+      }}
+    >
+      <label htmlFor="custo-final" className="text-sm text-muted-foreground">
+        Custo final (R$)
+      </label>
+      <div className="flex gap-2">
+        <Input
+          id="custo-final"
+          inputMode="decimal"
+          autoComplete="off"
+          placeholder="0,00"
+          value={valor}
+          disabled={pendente}
+          aria-invalid={erro ? true : undefined}
+          aria-describedby={erro ? 'custo-final-erro' : undefined}
+          onChange={(e) => setValor(e.target.value)}
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          size="sm"
+          className="h-9"
+          disabled={pendente || !mudou || erro !== null}
+        >
+          Salvar
+        </Button>
+      </div>
+      {erro && (
+        <p id="custo-final-erro" className="text-xs text-destructive">
+          {erro}
+        </p>
+      )}
+    </form>
   );
 }
 

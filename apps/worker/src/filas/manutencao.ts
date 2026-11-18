@@ -1,5 +1,6 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import { NOME_FILA_TRIAGEM } from '@chamados/db';
+import { IA_EXECUCAO_ORFA_PADRAO_MS } from '@chamados/shared';
 import { executarManutencao, type DepsManutencao } from '../manutencao/processador';
 
 /**
@@ -88,7 +89,9 @@ export function manutencaoConfigEnv(): {
     lockTtlMs: num('MANUTENCAO_LOCK_TTL_MS', 240_000),
     // D-016: limiares das redes de segurança. 30 min > pior execução legítima
     // (mapa 10 min + triagem 10 min + git/PR) e > janela de reagendamento por lock.
-    execucaoOrfaMs: num('MANUTENCAO_EXECUCAO_ORFA_MS', 1_800_000),
+    // D-044: o teto do timeout da triagem por tenant é DERIVADO deste limiar
+    // (`calcularTetoTimeoutTriagemMs`) — mexer aqui move o teto junto.
+    execucaoOrfaMs: num('MANUTENCAO_EXECUCAO_ORFA_MS', IA_EXECUCAO_ORFA_PADRAO_MS),
     triagemEncalhadaMs: num('MANUTENCAO_TRIAGEM_ENCALHADA_MS', 1_800_000),
   };
 }

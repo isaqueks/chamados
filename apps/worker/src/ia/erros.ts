@@ -60,8 +60,25 @@ export class ErroProviderMaxTurnos extends ErroProviderLimite {
   }
 }
 
+/**
+ * Triagem CANCELADA porque a IA foi silenciada no chamado durante a execução
+ * (D-041). NÃO é falha nem limite: o pipeline encerra a `ExecucaoIA` como
+ * `cancelado` (erro = 'ia_silenciada'), sem aplicar efeitos nem consumir retry.
+ * Carrega a telemetria parcial (D-033) — o gasto até o corte não some.
+ */
+export class ErroTriagemCancelada extends Error {
+  readonly codigo = 'ia_silenciada';
+  readonly telemetriaParcial: TelemetriaParcial | undefined;
+  constructor(telemetriaParcial?: TelemetriaParcial, msg = 'ia_silenciada') {
+    super(msg);
+    this.name = 'ErroTriagemCancelada';
+    this.telemetriaParcial = telemetriaParcial;
+  }
+}
+
 /** Traduz um erro qualquer no `erro` textual gravado em `ExecucaoIA` (specs/05 §8). */
 export function motivoErro(err: unknown): string {
+  if (err instanceof ErroTriagemCancelada) return 'ia_silenciada';
   if (err instanceof ErroProviderTimeout) return 'timeout';
   if (err instanceof ErroProviderBudget) return 'budget_excedido';
   if (err instanceof ErroProviderMaxTurnos) return 'max_turnos';
@@ -69,7 +86,9 @@ export function motivoErro(err: unknown): string {
   return 'erro_desconhecido';
 }
 
-/** Telemetria parcial carregada por um erro de limite (ou `undefined`). */
+/** Telemetria parcial carregada por um erro de limite/cancelamento (ou `undefined`). */
 export function telemetriaDoErro(err: unknown): TelemetriaParcial | undefined {
-  return err instanceof ErroProviderLimite ? err.telemetriaParcial : undefined;
+  return err instanceof ErroProviderLimite || err instanceof ErroTriagemCancelada
+    ? err.telemetriaParcial
+    : undefined;
 }

@@ -13,7 +13,18 @@
  *      e ALERTAM o admin por e-mail;
  *   7. preferência desabilitada é respeitada; evento obrigatório não desabilitável;
  *   8. payload do webhook NUNCA inclui conteúdo interno;
- *   9. RLS das 3 tabelas novas (tenant B não enxerga dados do tenant A).
+ *   9. RLS das 3 tabelas novas (tenant B não enxerga dados do tenant A);
+ *  10. janela de aprovação (D-042): e-mail de resolvido com prazo; aprovação
+ *      explícita → webhook `aprovado` (forma explicita + autor), sem `fechado`;
+ *      aprovação TÁCITA → webhook `aprovado` (forma tacita) entregue UMA vez
+ *      (reprocesso e reconciliação não duplicam); contestação → webhook
+ *      `contestado` com o trecho do motivo.
+ *  11. custo (D-043): estimativa → webhook `estimativa_custo_alterada` (mudanca
+ *      com códigos; `chamado.estimativa_custo` com rótulo/faixa); e-mail opt-in
+ *      (nenhum sem preferência); resolver COM custo → webhook `resolvido` com
+ *      `chamado.custo_final` e e-mail de resolvido mostrando o valor, sem webhook
+ *      `custo_final_definido` duplicado; correção depois → webhook
+ *      `custo_final_definido` com mudanca numérica e e-mail ao cliente.
  *
  * Requer Postgres + Redis de pé. Sai 0 se passa; 1 caso contrário.
  */
@@ -39,6 +50,14 @@ const {
   criarChamado,
   criarMensagem,
   atribuirOperador,
+  transicionarStatus,
+  atorSistema,
+  definirEstimativaCusto,
+  definirCustoFinal,
+  aprovarResolucao,
+  contestarResolucao,
+  fecharChamadosResolvidosVencidos,
+  reconciliarWebhooksAprovacaoTacita,
   alterarPrioridade,
   salvarWebhook,
   buscarCanal,
@@ -57,8 +76,15 @@ type JobFila = import('@chamados/db').JobFila;
 // Shape estrutural do despachante coletor (capturaNotificacoes + publicar).
 type Despachante = import('@chamados/db').DespachanteNotificacoes;
 
-const { Papel, StatusTenant, Natureza, Prioridade, VisibilidadeMensagem } =
-  await import('@chamados/shared');
+const {
+  Papel,
+  StatusTenant,
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  VisibilidadeMensagem,
+  EstimativaCusto,
+} = await import('@chamados/shared');
 const { GatewayRegistry } = await import('../notificacoes/registry');
 const { SmtpAdapter } = await import('../notificacoes/smtp-adapter');
 const { WebhookAdapter } = await import('../notificacoes/webhook-adapter');
@@ -408,6 +434,302 @@ async function main(): Promise<void> {
     ok(
       !rObrig.ok && rObrig.motivo === 'obrigatorio',
       'evento obrigatório (chamado_criado) NÃO é desabilitável',
+    );
+
+    // 10) Janela de aprovação do cliente (D-042) ------------------------------
+    type PayloadAprov = {
+      evento: { tipo: string; id: string };
+      chamado: { status: string };
+      aprovacao: { forma: string } | null;
+      autor: { nome: string } | null;
+      mensagem: { trecho: string } | null;
+      mudanca: { de: string | null; para: string | null } | null;
+    };
+    const ultimoWebhook = (): { evento: string; payload: PayloadAprov; body: string } => {
+      const r = recebidos[recebidos.length - 1]!;
+      return { evento: r.evento, payload: JSON.parse(r.body) as PayloadAprov, body: r.body };
+    };
+    /** Cria um chamado do cliente, atribui ao operador e leva a `resolvido`. */
+    async function resolvidoAtribuido(
+      titulo: string,
+    ): Promise<{ id: string; jobs: JobNotificacao[] }> {
+      let id = '';
+      await runInTenantContext(ds, tenantA, async (em) => {
+        const r = await criarChamado(em, atorCliente, {
+          titulo,
+          descricao: 'Janela de aprovação (D-042).',
+          natureza: Natureza.problema,
+        });
+        if (!r.ok) throw new Error('criarChamado falhou');
+        id = r.id;
+        await transicionarStatus(em, atorSistema(tenantA), id, StatusChamado.em_triagem);
+        await transicionarStatus(em, atorOperador, id, StatusChamado.em_atendimento);
+        await atribuirOperador(em, atorOperador, id, usuarios.operador);
+      });
+      const jobs = await coletar((em, hooks) =>
+        transicionarStatus(em, atorOperador, id, StatusChamado.resolvido, {}, hooks as never),
+      );
+      return { id, jobs };
+    }
+
+    // 10a) E-mail de resolvido ao cliente informa o prazo e a aprovação tácita.
+    const ap = await resolvidoAtribuido('Aprovação explícita');
+    const emailResolvido = ap.jobs.find(
+      (j) => j.canal === 'email' && j.destinatarioId === usuarios.cliente,
+    );
+    ok(
+      !!emailResolvido && emailResolvido.evento === 'resolvido',
+      'D-042: job de e-mail de resolvido ao cliente',
+    );
+    await processar(emailResolvido!);
+    const mailResolvido = enviados[enviados.length - 1]!;
+    ok(
+      mailResolvido.to === emailCliente &&
+        /aprove ou conteste/i.test(mailResolvido.subject) &&
+        /Você tem até .+ para aprovar ou contestar/.test(mailResolvido.text ?? '') &&
+        /considerado aprovado/.test(mailResolvido.text ?? ''),
+      'D-042: e-mail de resolvido traz o prazo e avisa da aprovação tácita',
+    );
+
+    // 10b) Aprovação EXPLÍCITA → webhook `aprovado` (explicita + autor); sem `fechado`.
+    const jobsAp = await coletar((em, hooks) =>
+      aprovarResolucao(em, atorCliente, ap.id, hooks as never),
+    );
+    const whAp = jobsAp.filter((j) => j.canal === 'webhook');
+    ok(
+      whAp.length === 1 && whAp[0]!.evento === 'aprovado',
+      'D-042: aprovação explícita gera UM webhook `aprovado` (nenhum `fechado`)',
+    );
+    ok(
+      jobsAp.some((j) => j.canal === 'email' && j.destinatarioId === usuarios.operador) &&
+        !jobsAp.some((j) => j.canal === 'email' && j.destinatarioId === usuarios.cliente),
+      'D-042: e-mail de aprovação vai ao responsável; o cliente autor não se auto-notifica',
+    );
+    await processar(whAp[0]!);
+    const wAp = ultimoWebhook();
+    ok(wAp.evento === 'aprovado', 'D-042: header X-Chamados-Event = aprovado');
+    ok(
+      wAp.payload.aprovacao?.forma === 'explicita' && wAp.payload.autor?.nome === 'Carla Cliente',
+      'D-042: payload aprovado traz forma explicita e o autor',
+    );
+    ok(
+      wAp.payload.mudanca?.de === 'resolvido' &&
+        wAp.payload.mudanca?.para === 'fechado' &&
+        wAp.payload.chamado.status === 'fechado',
+      'D-042: payload aprovado traz a mudança resolvido → fechado',
+    );
+    ok(!/complexidade|interna/i.test(wAp.body), 'D-042: payload aprovado sem conteúdo interno');
+
+    // 10c) Aprovação TÁCITA → webhook `aprovado` tácito, entregue UMA única vez.
+    const tac = await resolvidoAtribuido('Aprovação tácita');
+    const daqui8Dias = new Date(Date.now() + 8 * 86_400_000);
+    const jobsTac = await coletar((em, hooks) =>
+      fecharChamadosResolvidosVencidos(em, tenantA, hooks as never, daqui8Dias),
+    );
+    const whTac = jobsTac.filter((j) => j.canal === 'webhook' && j.chamadoId === tac.id);
+    ok(
+      whTac.length === 1 &&
+        whTac[0]!.evento === 'aprovado' &&
+        whTac[0]!.contexto.aprovacao === 'tacita',
+      'D-042: aprovação tácita gera UM webhook `aprovado` (forma tacita)',
+    );
+    const antesTac = recebidos.length;
+    await processar(whTac[0]!);
+    const wTac = ultimoWebhook();
+    ok(
+      recebidos.length === antesTac + 1 &&
+        wTac.evento === 'aprovado' &&
+        wTac.payload.aprovacao?.forma === 'tacita' &&
+        wTac.payload.autor === null,
+      'D-042: webhook tácito entregue (forma tacita, sem autor)',
+    );
+    const reproc = await processar(whTac[0]!);
+    ok(
+      'desfecho' in reproc && reproc.desfecho === 'ignorado' && recebidos.length === antesTac + 1,
+      'D-042: reprocessar o webhook tácito NÃO reenvia',
+    );
+    const jobsRec = await coletar((em, hooks) =>
+      reconciliarWebhooksAprovacaoTacita(em, tenantA, hooks as never),
+    );
+    ok(
+      !jobsRec.some((j) => j.chamadoId === tac.id),
+      'D-042: reconciliação não republica o webhook já entregue (chave do evento)',
+    );
+
+    // 10d) CONTESTAÇÃO → webhook `contestado` com o motivo (trecho público).
+    const ct = await resolvidoAtribuido('Contestação');
+    const jobsCt = await coletar((em, hooks) =>
+      contestarResolucao(
+        em,
+        atorCliente,
+        ct.id,
+        'O boleto continua saindo sem código.',
+        hooks as never,
+      ),
+    );
+    const whCt = jobsCt.find((j) => j.canal === 'webhook' && j.evento === 'contestado');
+    ok(!!whCt, 'D-042: contestação gera webhook `contestado`');
+    ok(
+      jobsCt.some(
+        (j) =>
+          j.canal === 'email' &&
+          j.evento === 'contestado' &&
+          j.destinatarioId === usuarios.operador,
+      ),
+      'D-042: contestação avisa o operador responsável',
+    );
+    await processar(whCt!);
+    const wCt = ultimoWebhook();
+    ok(
+      wCt.evento === 'contestado' &&
+        /boleto continua/.test(wCt.payload.mensagem?.trecho ?? '') &&
+        wCt.payload.autor?.nome === 'Carla Cliente' &&
+        wCt.payload.mudanca?.para === 'em_atendimento' &&
+        wCt.payload.aprovacao === null,
+      'D-042: payload contestado traz motivo, autor e mudança (sem `aprovacao`)',
+    );
+
+    // 11) Custo do chamado (D-043) — ANTES do teste de circuito (que desativa o webhook).
+    type PayloadCusto = {
+      evento: { tipo: string };
+      chamado: {
+        status: string;
+        estimativa_custo: {
+          codigo: string;
+          rotulo: string;
+          min: number;
+          max: number | null;
+        } | null;
+        custo_final: number | null;
+      };
+      mudanca: { de: string | number | null; para: string | number | null } | null;
+    };
+    const ultimoCusto = (): { evento: string; payload: PayloadCusto } => {
+      const r = recebidos[recebidos.length - 1]!;
+      return { evento: r.evento, payload: JSON.parse(r.body) as PayloadCusto };
+    };
+    let chCusto = '';
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const r = await criarChamado(em, atorCliente, {
+        titulo: 'Custo do chamado',
+        descricao: 'Estimativa e custo final (D-043).',
+        natureza: Natureza.alteracao,
+      });
+      if (!r.ok) throw new Error('criarChamado (custo) falhou');
+      chCusto = r.id;
+      await transicionarStatus(em, atorSistema(tenantA), chCusto, StatusChamado.em_triagem);
+      await transicionarStatus(em, atorOperador, chCusto, StatusChamado.em_atendimento);
+    });
+
+    // 11a) Estimativa → webhook com mudanca de códigos; e-mail só com opt-in.
+    const jobsEst = await coletar((em, hooks) =>
+      definirEstimativaCusto(em, atorOperador, chCusto, EstimativaCusto.C, hooks as never),
+    );
+    const whEst = jobsEst.find((j) => j.canal === 'webhook');
+    ok(!!whEst && whEst.evento === 'estimativa_custo', 'D-043: estimativa gera job de webhook');
+    ok(
+      !jobsEst.some((j) => j.canal === 'email'),
+      'D-043: estimativa é opt-in — nenhum e-mail sem preferência ligada',
+    );
+    await processar(whEst!);
+    const wEst = ultimoCusto();
+    ok(
+      wEst.evento === 'estimativa_custo_alterada' &&
+        wEst.payload.evento.tipo === 'estimativa_custo_alterada' &&
+        wEst.payload.mudanca?.de === null &&
+        wEst.payload.mudanca?.para === 'C',
+      'D-043: webhook estimativa_custo_alterada com mudanca { de: null, para: "C" }',
+    );
+    ok(
+      wEst.payload.chamado.estimativa_custo?.codigo === 'C' &&
+        wEst.payload.chamado.estimativa_custo.rotulo === 'C · R$ 200 a R$ 400' &&
+        wEst.payload.chamado.estimativa_custo.min === 200 &&
+        wEst.payload.chamado.custo_final === null,
+      'D-043: payload traz estimativa (código, rótulo, faixa) e custo_final null',
+    );
+    const jobsEstIgual = await coletar((em, hooks) =>
+      definirEstimativaCusto(em, atorOperador, chCusto, EstimativaCusto.C, hooks as never),
+    );
+    ok(jobsEstIgual.length === 0, 'D-043: mesma estimativa → nenhum webhook (idempotente)');
+    // Com a preferência LIGADA, o cliente recebe o e-mail da estimativa.
+    const rOptIn = await runInTenantContext(ds, tenantA, async (em) => {
+      const canalEmail = await idCanalEmail(em);
+      return definirPreferencia(
+        em,
+        tenantA,
+        usuarios.cliente,
+        'estimativa_custo',
+        canalEmail!,
+        true,
+        'cliente',
+      );
+    });
+    ok(rOptIn.ok, 'D-043: cliente liga a preferência de estimativa de custo');
+    const jobsEstOptIn = await coletar((em, hooks) =>
+      definirEstimativaCusto(em, atorOperador, chCusto, EstimativaCusto.D, hooks as never),
+    );
+    const mailEst = jobsEstOptIn.find(
+      (j) => j.canal === 'email' && j.destinatarioId === usuarios.cliente,
+    );
+    ok(!!mailEst, 'D-043: com opt-in, e-mail de estimativa ao cliente');
+    await processar(mailEst!);
+    ok(
+      /estimativa de custo D · R\$ 400 a R\$ 600/.test(enviados[enviados.length - 1]!.subject),
+      'D-043: assunto do e-mail traz a faixa nova',
+    );
+
+    // 11b) Resolver COM custo → `resolvido` carrega o valor; nada de custo duplicado.
+    const jobsRes = await coletar((em, hooks) =>
+      transicionarStatus(
+        em,
+        atorOperador,
+        chCusto,
+        StatusChamado.resolvido,
+        { custo_final: 250 },
+        hooks as never,
+      ),
+    );
+    ok(
+      !jobsRes.some((j) => j.evento === 'custo_final'),
+      'D-043: custo no ato de resolver NÃO gera notificação/webhook custo_final_definido',
+    );
+    const whRes = jobsRes.find((j) => j.canal === 'webhook' && j.evento === 'resolvido');
+    const mailRes = jobsRes.find(
+      (j) => j.canal === 'email' && j.destinatarioId === usuarios.cliente,
+    );
+    ok(!!whRes && !!mailRes, 'D-043: resolvido gera webhook e e-mail ao cliente');
+    await processar(whRes!);
+    const wRes = ultimoCusto();
+    ok(
+      wRes.evento === 'resolvido' &&
+        wRes.payload.chamado.custo_final === 250 &&
+        wRes.payload.chamado.estimativa_custo?.codigo === 'D',
+      'D-043: webhook resolvido traz chamado.custo_final = 250 e a estimativa',
+    );
+    await processar(mailRes!);
+    ok(
+      /Custo final: R\$ 250,00/.test(enviados[enviados.length - 1]!.text ?? ''),
+      'D-043: e-mail de resolvido mostra o custo final',
+    );
+
+    // 11c) Correção depois → webhook custo_final_definido com mudanca numérica.
+    const jobsCorr = await coletar((em, hooks) =>
+      definirCustoFinal(em, atorOperador, chCusto, 275.5, hooks as never),
+    );
+    const whCorr = jobsCorr.find((j) => j.canal === 'webhook');
+    ok(!!whCorr && whCorr.evento === 'custo_final', 'D-043: correção do custo gera webhook');
+    ok(
+      jobsCorr.some((j) => j.canal === 'email' && j.destinatarioId === usuarios.cliente),
+      'D-043: correção do custo avisa o cliente (ligado por padrão)',
+    );
+    await processar(whCorr!);
+    const wCorr = ultimoCusto();
+    ok(
+      wCorr.evento === 'custo_final_definido' &&
+        wCorr.payload.mudanca?.de === 250 &&
+        wCorr.payload.mudanca?.para === 275.5 &&
+        wCorr.payload.chamado.custo_final === 275.5,
+      'D-043: payload custo_final_definido com mudanca { de: 250, para: 275.5 }',
     );
 
     // 9) Webhook: sucesso zera contador; N falhas desativam + alerta admin -----

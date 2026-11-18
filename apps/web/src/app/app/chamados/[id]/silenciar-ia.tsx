@@ -8,7 +8,8 @@ import { acaoSilenciarIa } from '../actions';
 
 /**
  * Botão "Silenciar IA"/"Reativar IA" (operador/admin — D-024, specs/05 §2).
- * Silenciada, nenhuma triagem roda no chamado até um humano reativar.
+ * Silenciada, nenhuma triagem roda no chamado até um humano reativar; uma
+ * triagem em andamento é cancelada sem aplicar nada (D-041).
  */
 export function SilenciarIa({ chamadoId, silenciada }: { chamadoId: string; silenciada: boolean }) {
   const [pendente, startTransition] = useTransition();
@@ -18,6 +19,11 @@ export function SilenciarIa({ chamadoId, silenciada }: { chamadoId: string; sile
       variant="outline"
       size="sm"
       disabled={pendente}
+      title={
+        silenciada
+          ? 'Volta a analisar nos próximos gatilhos (sem reanálise retroativa).'
+          : 'Para a IA neste chamado — triagens em andamento são canceladas.'
+      }
       onClick={() =>
         startTransition(async () => {
           const r = await acaoSilenciarIa(chamadoId, !silenciada);

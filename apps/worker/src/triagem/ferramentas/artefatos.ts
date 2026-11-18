@@ -10,7 +10,7 @@ import type {
 import { detectarTipo, type ArquivoUpload } from '@chamados/db';
 import { ferramentasConfig, type Registrar } from './config';
 import { gerarPdfDeMarkdown } from './pdf';
-import { formatarDataPlanilha, gerarXlsx } from './xlsx';
+import { formatarDataPlanilha, gerarXlsx } from '@chamados/db/planilha';
 
 /**
  * Ferramenta `artefato_gerar` (D-026): a IA produz um ARQUIVO entregável ao

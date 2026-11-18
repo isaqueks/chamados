@@ -167,6 +167,14 @@ Variáveis de ambiente da triagem (ver `.env.example` para os defaults reais):
 | `IA_MAX_TURNOS`      | `50`            | limite de turnos/chamadas de ferramenta por execução (D-014: exploração nível Claude Code com Read/Grep/Glob nativas, restritas ao checkout)                               |
 | `TRIAGEM_DEBOUNCE_S` | `45`            | debounce antes de processar: agrupa mensagens em rajada e permite nova mensagem substituir a triagem pendente                                                              |
 
+`IA_MODELO`, `IA_ESFORCO` e `IA_TIMEOUT_MS` são o **padrão da instalação**: o admin
+de cada tenant pode sobrescrever modelo, esforço e timeout da triagem em
+`/app/config` → "Assistente IA" (D-044; precedência tenant > env > default). O
+timeout por tenant vai de 1 min até um teto **derivado** de
+`MANUTENCAO_EXECUCAO_ORFA_MS − IA_MAPA_TIMEOUT_MS − 3 min − 2 min` (15 min com os
+defaults), para a varredura de órfãs nunca matar uma triagem viva. O web lê o mesmo
+`.env` da raiz para mostrar o padrão e validar o teto.
+
 Timeout, budget ou turnos excedidos não são status próprios: a `ExecucaoIA` fica
 com `status='falhou'` e `erro='timeout'` / `erro='budget_excedido'` /
 `erro='max_turnos'`, guardando a telemetria parcial apurada até o corte

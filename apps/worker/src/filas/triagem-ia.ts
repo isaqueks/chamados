@@ -4,11 +4,17 @@ import {
   runInTenantContext,
   criarExecucao,
   falharExecucao,
+  carregarTenant,
   type JobTriagem,
 } from '@chamados/db';
-import { processarTriagem, type DepsProcessador } from '../triagem/processador';
+import {
+  processarTriagem,
+  chamadoSilenciadoComLock,
+  type DepsProcessador,
+} from '../triagem/processador';
 import { escalarParaHumano } from '../triagem/aplicador';
 import { ERRO_LOCK_TENANT, reagendarPorLockOcupado } from './espera-lock';
+import { modeloEfetivoDe, resolverParametrosModeloTenant } from '../ia/parametros-tenant';
 
 /**
  * Registro MODULAR da fila `triagem-ia` (specs/01 §3.5). O `index` chama
@@ -20,6 +26,10 @@ import { ERRO_LOCK_TENANT, reagendarPorLockOcupado } from './espera-lock';
  * (specs/05 §2). Lock ocupado NÃO consome tentativa (reagendamento via
  * `DelayedError` — D-016); o esgotamento REAL das tentativas dispara a
  * compensação (`ExecucaoIA.falhou` + escalonamento — specs/05 §8).
+ *
+ * Triagem CANCELADA pelo silêncio da IA (D-041) não é erro: o processador
+ * devolve `{ status: 'cancelado' }` (job concluído) — não há retry nem
+ * compensação.
  */
 export interface DepsRegistrar extends DepsProcessador {
   connection: { host: string; port: number };
@@ -78,6 +88,17 @@ export async function compensarFalhaFinal(
 ): Promise<void> {
   try {
     await runInTenantContext(deps.ds, job.tenantId, async (em) => {
+      // D-041: IA silenciada no chamado → a equipe já conduz; o job seria
+      // descartado de qualquer forma. Nada de ExecucaoIA falha nem escalonamento
+      // (evita nota/`ia_falhou` duplicados sobre um cancelamento).
+      if (await chamadoSilenciadoComLock(em, job.chamadoId)) {
+        deps.log('falha final ignorada: IA silenciada no chamado', { chamadoId: job.chamadoId });
+        return;
+      }
+      // D-044: mesmo nesta compensação, o modelo registrado é o que a triagem
+      // usaria (override do tenant ou default do provider).
+      const tenant = await carregarTenant(em, job.tenantId);
+      const { parametrosModelo } = resolverParametrosModeloTenant(tenant);
       const execucaoId = await criarExecucao(
         em,
         { tenant_id: job.tenantId },
@@ -85,7 +106,7 @@ export async function compensarFalhaFinal(
           chamado_id: job.chamadoId,
           gatilho: job.gatilho,
           provider: deps.provider.nome,
-          modelo: deps.provider.modelo,
+          modelo: modeloEfetivoDe(deps.provider, parametrosModelo),
           entrada: {
             ultima_mensagem_id: job.ultimaMensagemId,
             gatilho: job.gatilho,

@@ -11,7 +11,12 @@
  *   4. falha do provider ([[falhar]]) → ExecucaoIA `falhou` + evento `ia_falhou`;
  *   5. LOCK por tenant: 2º acquire falha; processador sem lock devolve à fila;
  *   6. RLS de `execucao_ia`: tenant B não enxerga execução do tenant A;
- *   7. CLIENTE não vê execuções (autorização nega — lista vazia).
+ *   7. CLIENTE não vê execuções (autorização nega — lista vazia);
+ *   8. D-041: silenciar a IA DURANTE a execução cancela a triagem (ExecucaoIA
+ *      `cancelado`/`ia_silenciada`), remove os jobs pendentes do chamado e NÃO
+ *      publica nada (sem mensagem pública, sem classificação, sem `ia_falhou`);
+ *      o chamado vai a `em_atendimento` com nota interna; e um operador de OUTRO
+ *      tenant não consegue silenciar (RLS → inexistente, sem sinal gravado).
  *
  * Requer Postgres + Redis de pé. Sai 0 se passa; 1 caso contrário.
  */
@@ -41,6 +46,8 @@ const {
   prefixoJobChamado,
   listarExecucoesDoChamado,
   existeConcluidaParaMensagem,
+  definirSilencioIa,
+  chaveCancelamentoTriagem,
   ExecucaoIASchema,
   ChamadoSchema,
 } = await import('@chamados/db');
@@ -147,6 +154,16 @@ async function main(): Promise<void> {
     const atorCli = { id: cliente, tenant_id: tenantA, papel: Papel.cliente };
     const atorOp = { id: operador, tenant_id: tenantA, papel: Papel.operador };
     const atorCliB = { id: clienteB, tenant_id: tenantB, papel: Papel.cliente };
+    const operadorB = await runInTenantContext(ds, tenantB, (em) =>
+      criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantB,
+        email: `op.${sufixo}@b.dev`,
+        nome: 'Operador B',
+        papel: Papel.operador,
+        senha: 'Dev@12345',
+      }),
+    );
+    const atorOpB = { id: operadorB, tenant_id: tenantB, papel: Papel.operador };
 
     // 1) Criar chamado → gatilho enfileira → ExecucaoIA concluída ------------
     const chamadoId = await runInTenantContext(ds, tenantA, async (em) => {
@@ -450,6 +467,138 @@ async function main(): Promise<void> {
       ok(r.status === 'concluido', 'triagem da resposta do cliente processou → concluido');
       await j.remove().catch(() => {});
     }
+
+    // 8) D-041: silenciar DURANTE a execução cancela e não publica nada -------
+    process.env.FAKE_LENTO_MS = '20000'; // [[lento]] "pensa" até ser cancelado
+    const chamadoSil = await runInTenantContext(ds, tenantA, async (em) => {
+      const r = await criarChamado(em, atorCli, {
+        titulo: 'Análise demorada [[lento]] [[responder-cliente]] [[complexidade:facil]]',
+        descricao: 'A triagem desta vai ser cancelada no meio.',
+        natureza: Natureza.problema,
+      });
+      if (!r.ok) throw new Error('falha ao criar chamado do silêncio');
+      return r.id;
+    });
+    await fila.obliterate({ force: true }).catch(() => {});
+    const execEmCurso = processarTriagem(
+      {
+        tenantId: tenantA,
+        chamadoId: chamadoSil,
+        ultimaMensagemId: null,
+        gatilho: 'chamado_criado',
+      },
+      { ...deps, cancelamentoPollMs: 100 },
+    );
+    // Espera a execução estar VIVA (ExecucaoIA executando) antes de silenciar.
+    let viva = false;
+    for (let i = 0; i < 50 && !viva; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      viva = await runInTenantContext(ds, tenantA, async (em) => {
+        const l: Array<{ status: string }> = await em.query(
+          `SELECT status FROM execucao_ia WHERE chamado_id = $1`,
+          [chamadoSil],
+        );
+        return l.some((x) => x.status === StatusExecucaoIA.executando);
+      });
+    }
+    ok(viva, 'D-041: triagem [[lento]] está em execução (ExecucaoIA executando)');
+    // Um job pendente do mesmo chamado (ex.: nova mensagem em debounce).
+    await enfileirarTriagem(
+      {
+        tenantId: tenantA,
+        chamadoId: chamadoSil,
+        ultimaMensagemId: 'msg-sil',
+        gatilho: 'resposta_cliente',
+      },
+      { delayMs: 60_000 },
+    );
+
+    // Silencia pelo MESMO serviço + despachante da UI/API (flush pós-commit).
+    const despSil = new DespachanteFila(log);
+    const rSil = await runInTenantContext(ds, tenantA, (em) =>
+      definirSilencioIa(em, atorOp, chamadoSil, true, { despachante: despSil }),
+    );
+    await despSil.flush();
+    ok(
+      rSil.ok && rSil.triagemEmAndamento === true,
+      'D-041: silenciar informa que havia triagem em andamento',
+    );
+    ok(
+      (await redis.exists(chaveCancelamentoTriagem(chamadoSil))) === 1,
+      'D-041: sinal de cancelamento gravado no Redis (chave por chamado)',
+    );
+    ok(
+      (await fila.getJobs(['delayed', 'wait', 'paused', 'prioritized'])).every(
+        (j) => !(typeof j.id === 'string' && j.id.startsWith(prefixoJobChamado(chamadoSil))),
+      ),
+      'D-041: jobs pendentes do chamado removidos da fila',
+    );
+
+    const rCancel = await execEmCurso;
+    ok(rCancel.status === 'cancelado', 'D-041: a execução em curso terminou CANCELADA');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const execs = await listarExecucoesDoChamado(em, atorOp, chamadoSil);
+      ok(
+        execs.length === 1 &&
+          execs[0]?.status === StatusExecucaoIA.cancelado &&
+          execs[0]?.erro === 'ia_silenciada',
+        'D-041: ExecucaoIA status = cancelado, erro = ia_silenciada',
+      );
+      const publicas: Array<{ n: number }> = await em.query(
+        `SELECT count(*)::int AS n FROM mensagem
+          WHERE chamado_id = $1 AND visibilidade = 'publica' AND deleted_at IS NULL`,
+        [chamadoSil],
+      );
+      ok(publicas[0]?.n === 0, 'D-041: NENHUMA mensagem pública ao cliente');
+      const internas: Array<{ n: number }> = await em.query(
+        `SELECT count(*)::int AS n FROM mensagem
+          WHERE chamado_id = $1 AND visibilidade = 'interna' AND deleted_at IS NULL`,
+        [chamadoSil],
+      );
+      ok(internas[0]?.n === 1, 'D-041: exatamente 1 nota interna (a do cancelamento)');
+      const falhas: Array<{ n: number }> = await em.query(
+        `SELECT count(*)::int AS n FROM evento_chamado
+          WHERE chamado_id = $1 AND tipo IN ('ia_falhou', 'ia_diagnosticou', 'ia_pediu_info')`,
+        [chamadoSil],
+      );
+      ok(falhas[0]?.n === 0, 'D-041: sem ia_falhou/ia_diagnosticou/ia_pediu_info');
+      const ch = await em.findOne(ChamadoSchema, { where: { id: chamadoSil } });
+      ok(ch?.complexidade == null, 'D-041: classificação NÃO aplicada (complexidade nula)');
+      ok(
+        ch?.status === StatusChamado.em_atendimento && ch?.ia_silenciada === true,
+        'D-041: chamado não fica preso — em_atendimento, com a IA silenciada',
+      );
+    });
+
+    // Cross-tenant: operador do tenant B não silencia chamado do tenant A.
+    const chamadoAlvo = await runInTenantContext(ds, tenantA, async (em) => {
+      const r = await criarChamado(em, atorCli, {
+        titulo: 'Alvo cross-tenant',
+        descricao: 'x',
+        natureza: Natureza.problema,
+      });
+      if (!r.ok) throw new Error('falha ao criar chamado alvo');
+      return r.id;
+    });
+    const despB = new DespachanteFila(log);
+    const rB = await runInTenantContext(ds, tenantB, (em) =>
+      definirSilencioIa(em, atorOpB, chamadoAlvo, true, { despachante: despB }),
+    );
+    await despB.flush();
+    ok(
+      !rB.ok && rB.motivo === 'inexistente',
+      'D-041: operador do tenant B NÃO silencia chamado do tenant A (RLS → inexistente)',
+    );
+    ok(
+      (await redis.exists(chaveCancelamentoTriagem(chamadoAlvo))) === 0,
+      'D-041: nenhum sinal de cancelamento gravado pela tentativa cross-tenant',
+    );
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const ch = await em.findOne(ChamadoSchema, { where: { id: chamadoAlvo } });
+      ok(ch?.ia_silenciada === false, 'D-041: a flag do chamado do tenant A segue intacta');
+    });
+    await redis.del(chaveCancelamentoTriagem(chamadoSil));
+    delete process.env.FAKE_LENTO_MS;
 
     // Sanidade: o M7 APLICA o resultado ao chamado (diagnóstico) -------------
     await runInTenantContext(ds, tenantA, async (em) => {

@@ -3,10 +3,19 @@ import {
   serializarMensagemParaCliente,
   serializarTimelineParaCliente,
   serializarChamadoParaCliente,
+  eventoVisivelAoCliente,
   type MensagemInterna,
   type ChamadoInterno,
 } from './serializers';
-import { VisibilidadeMensagem, StatusChamado, Natureza, Prioridade, Complexidade } from './enums';
+import {
+  VisibilidadeMensagem,
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  EstimativaCusto,
+  TipoEvento,
+} from './enums';
 
 function msg(over: Partial<MensagemInterna>): MensagemInterna {
   return {
@@ -56,6 +65,14 @@ describe('serializarTimelineParaCliente', () => {
   });
 });
 
+describe('eventos de custo (D-043) são visíveis ao cliente', () => {
+  it('estimativa_custo_alterada e custo_final_definido não são internos', () => {
+    expect(eventoVisivelAoCliente(TipoEvento.estimativa_custo_alterada)).toBe(true);
+    expect(eventoVisivelAoCliente(TipoEvento.custo_final_definido)).toBe(true);
+    expect(eventoVisivelAoCliente(TipoEvento.complexidade_alterada)).toBe(false);
+  });
+});
+
 describe('serializarChamadoParaCliente — exclui complexidade e atribuição', () => {
   const completo: ChamadoInterno = {
     id: 'c-1',
@@ -97,6 +114,53 @@ describe('serializarChamadoParaCliente — exclui complexidade e atribuição', 
     });
     expect(out.fechar_automaticamente_em).toBe('2026-07-20T00:00:00Z');
     expect(serializarChamadoParaCliente(completo).fechar_automaticamente_em).toBeNull();
+  });
+
+  it('D-037: a projeção é a MESMA allowlist para chamado alheio do tenant (chaves exatas)', () => {
+    // O serializer não depende de ownership: um cliente lendo o chamado de outro
+    // solicitante do tenant recebe exatamente estas chaves — nada interno.
+    const alheio = serializarChamadoParaCliente({ ...completo, cliente_id: 'cli-outro' });
+    expect(Object.keys(alheio).sort()).toEqual(
+      [
+        'id',
+        'numero',
+        'sistema_alvo_id',
+        'categoria_id',
+        'cliente_id',
+        'titulo',
+        'descricao_json',
+        'descricao_html',
+        'status',
+        'natureza',
+        'prioridade',
+        'estimativa_custo',
+        'custo_final',
+        'resolvido_em',
+        'fechar_automaticamente_em',
+        'fechado_em',
+        'reaberto_count',
+        'created_at',
+        'updated_at',
+      ].sort(),
+    );
+    expect(alheio.cliente_id).toBe('cli-outro');
+  });
+
+  it('D-043: estimativa de custo e custo final são PÚBLICOS; complexidade continua interna', () => {
+    const out = serializarChamadoParaCliente({
+      ...completo,
+      estimativa_custo: EstimativaCusto.B,
+      custo_final: 150.5,
+    });
+    expect(out.estimativa_custo).toBe(EstimativaCusto.B);
+    expect(out.custo_final).toBe(150.5);
+    expect(out as object).not.toHaveProperty('complexidade');
+  });
+
+  it('D-043: sem estimativa/custo, os campos saem como null (nunca ausentes)', () => {
+    const out = serializarChamadoParaCliente(completo);
+    expect(out.estimativa_custo).toBeNull();
+    expect(out.custo_final).toBeNull();
   });
 
   it('expõe status/natureza/prioridade e dados próprios (acompanhamento RF-04)', () => {

@@ -4,6 +4,10 @@ import {
   Prioridade,
   Papel,
   Complexidade,
+  EstimativaCusto,
+  ehEstimativaCusto,
+  validarCustoFinal,
+  MENSAGEM_VALOR_BRL,
   type VisibilidadeMensagem,
 } from '@chamados/shared';
 import type { AnexoResumo, ChamadoView, FiltrosChamado, MensagemTimeline } from '@chamados/db';
@@ -164,6 +168,18 @@ export function parsearFiltros(sp: URLSearchParams): ResultadoFiltros {
   const busca = sp.get('busca');
   if (busca !== null && busca.trim().length > 0) filtros.busca = busca.trim();
 
+  // `meus` (D-037): recorte "só os chamados em que EU sou o solicitante". Útil
+  // sobretudo ao cliente, que desde a D-037 lista todo o tenant por padrão.
+  // Booleano estrito — qualquer outro valor é erro, não "falso" silencioso.
+  const meus = sp.get('meus');
+  if (meus !== null) {
+    const v = meus.trim().toLowerCase();
+    if (v === 'true') filtros.meus = true;
+    else if (v !== 'false') {
+      return { ok: false, erro: 'Parâmetro "meus" deve ser "true" ou "false".' };
+    }
+  }
+
   const limite = sp.get('limite');
   if (limite !== null) {
     const n = inteiroNaFaixa(limite.trim(), LIMITE_MIN, LIMITE_MAX);
@@ -253,6 +269,9 @@ export function projetarItemLista(c: ChamadoView, nomes: Nomes): Record<string, 
     natureza: c.natureza,
     prioridade: c.prioridade,
     ...(complexidade !== undefined ? { complexidade } : {}),
+    // D-043: públicos — presentes para TODOS os papéis (null = não definido).
+    estimativa_custo: c.estimativa_custo ?? null,
+    custo_final: c.custo_final ?? null,
     ...(operadorId !== undefined
       ? { operador_nome: operadorId ? (nomes.usuarios.get(operadorId)?.nome ?? null) : null }
       : {}),
@@ -417,6 +436,8 @@ export interface EntradaCriarApi {
   /** Solicitante quando a equipe abre "em nome de" (um OU outro, nunca ambos). */
   solicitante_id?: string;
   solicitante_email?: string;
+  /** D-043: estimativa de custo na abertura (só equipe — cliente recebe 403 do domínio). */
+  estimativa_custo?: EstimativaCusto;
 }
 
 export type ResultadoEntradaCriar =
@@ -511,6 +532,18 @@ export function parsearEntradaCriar(corpo: Record<string, unknown>): ResultadoEn
     };
   }
 
+  let estimativaCusto: EstimativaCusto | undefined;
+  if (corpo.estimativa_custo !== undefined && corpo.estimativa_custo !== null) {
+    if (!ehEstimativaCusto(corpo.estimativa_custo)) {
+      return {
+        ok: false,
+        codigo: 'parametro_invalido',
+        erro: `Estimativa de custo inválida. Valores: ${Object.values(EstimativaCusto).join(', ')}.`,
+      };
+    }
+    estimativaCusto = corpo.estimativa_custo;
+  }
+
   return {
     ok: true,
     entrada: {
@@ -522,6 +555,7 @@ export function parsearEntradaCriar(corpo: Record<string, unknown>): ResultadoEn
       ...(categoriaId !== undefined ? { categoria_id: categoriaId } : {}),
       ...(solicitanteId !== undefined ? { solicitante_id: solicitanteId } : {}),
       ...(solicitanteEmail !== undefined ? { solicitante_email: solicitanteEmail } : {}),
+      ...(estimativaCusto !== undefined ? { estimativa_custo: estimativaCusto } : {}),
     },
   };
 }
@@ -578,4 +612,97 @@ export function parsearAtribuicao(
     };
   }
   return { ok: true, operadorId: v.trim() };
+}
+
+// ---------------------------------------------------------------------------
+// Custo do chamado (specs/11 §4.10 — D-043)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lê `custo_final` de um corpo JSON: NÚMERO em BRL (≥ 0, até 2 casas, dentro
+ * do `numeric(12,2)`) ou `null` (limpa). String é recusada — "1.500" seria
+ * ambíguo entre pt-BR e en-US; quem integra manda número.
+ */
+export function lerCustoFinalApi(valor: unknown): { ok: true; valor: number | null } | ErroEntrada {
+  if (valor === null) return { ok: true, valor: null };
+  if (typeof valor !== 'number') {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: '"custo_final" deve ser um número em reais (ex.: 150.5) ou null.',
+    };
+  }
+  const v = validarCustoFinal(valor);
+  if (!v.ok) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: `"custo_final" inválido: ${MENSAGEM_VALOR_BRL[v.motivo]}`,
+    };
+  }
+  return { ok: true, valor: v.valor };
+}
+
+const VALORES_ESTIMATIVA = Object.values(EstimativaCusto).join(', ');
+
+/**
+ * `POST /chamados/{ref}/custo` — `{ "estimativa_custo"?: "A".."E"|"I"|null,
+ * "custo_final"?: number|null }`. Pelo menos UMA das chaves; chave ausente = não
+ * mexe; `null` = limpa. Código da faixa é exato (maiúsculo).
+ */
+export function parsearCusto(
+  corpo: Record<string, unknown>,
+): { ok: true; estimativa?: EstimativaCusto | null; custoFinal?: number | null } | ErroEntrada {
+  const temEstimativa = 'estimativa_custo' in corpo;
+  const temCusto = 'custo_final' in corpo;
+  if (!temEstimativa && !temCusto) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: `Informe "estimativa_custo" (${VALORES_ESTIMATIVA} ou null) e/ou "custo_final" (número em reais ou null).`,
+    };
+  }
+  const saida: { ok: true; estimativa?: EstimativaCusto | null; custoFinal?: number | null } = {
+    ok: true,
+  };
+  if (temEstimativa) {
+    const e = corpo.estimativa_custo;
+    if (e === null) saida.estimativa = null;
+    else if (ehEstimativaCusto(e)) saida.estimativa = e;
+    else {
+      return {
+        ok: false,
+        codigo: 'parametro_invalido',
+        erro: `Estimativa de custo inválida. Valores: ${VALORES_ESTIMATIVA} (ou null para remover).`,
+      };
+    }
+  }
+  if (temCusto) {
+    const c = lerCustoFinalApi(corpo.custo_final);
+    if (!c.ok) return c;
+    saida.custoFinal = c.valor;
+  }
+  return saida;
+}
+
+/**
+ * `custo_final` opcional do `POST …/status` (D-043): só junto de `status =
+ * resolvido` — em qualquer outra transição é erro explícito (nunca ignorado em
+ * silêncio). Ausente → `undefined` (não mexe no custo).
+ */
+export function parsearCustoDaTransicao(
+  corpo: Record<string, unknown>,
+  status: StatusChamado,
+): { ok: true; custoFinal?: number | null } | ErroEntrada {
+  if (!('custo_final' in corpo)) return { ok: true };
+  if (status !== StatusChamado.resolvido) {
+    return {
+      ok: false,
+      codigo: 'parametro_invalido',
+      erro: '"custo_final" só pode ser enviado com "status": "resolvido". Para corrigir depois, use POST /api/v1/chamados/{ref}/custo.',
+    };
+  }
+  const c = lerCustoFinalApi(corpo.custo_final);
+  if (!c.ok) return c;
+  return { ok: true, custoFinal: c.valor };
 }

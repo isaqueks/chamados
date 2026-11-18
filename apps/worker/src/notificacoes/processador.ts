@@ -26,7 +26,7 @@ import {
   type EventoNotificavel,
   type PayloadWebhook,
 } from '@chamados/db';
-import { Papel } from '@chamados/shared';
+import { Papel, formatarPrazoAprovacao, custoDoBanco } from '@chamados/shared';
 import type { GatewayRegistry } from './registry';
 import type { CanalConfig, EnvioResultado, NotificationPayload } from './tipos';
 import type { NotificacoesConfig } from './config';
@@ -35,6 +35,7 @@ import {
   montarEmailAlertaWebhook,
   montarEmailTransacional,
   montarPayloadWebhook,
+  estimativaParaPayload,
 } from './templates';
 
 export interface DepsProcessador {
@@ -219,7 +220,17 @@ interface ChamadoRender {
   operador_id: string | null;
   sistema_alvo_id: string | null;
   categoria_id: string | null;
+  /** D-042: prazo para o cliente aprovar ou contestar (evento `resolvido`). */
+  fechar_automaticamente_em: Date | null;
+  /** D-043: estimativa de custo (código) e custo final (`numeric` → string do driver). */
+  estimativa_custo: string | null;
+  custo_final: string | null;
 }
+
+/** Eventos cujo `autor` (nome) vai no e-mail/webhook (D-042 amplia além da mensagem). */
+const EVENTOS_COM_AUTOR = new Set<string>(['mensagem_publica', 'contestado', 'aprovado']);
+/** Eventos que carregam um trecho de mensagem PÚBLICA (o motivo, na contestação). */
+const EVENTOS_COM_TRECHO = new Set<string>(['mensagem_publica', 'contestado']);
 
 async function processarChamado(
   job: JobNotificacao,
@@ -277,7 +288,7 @@ async function processarChamado(
     // Extras: autor + trecho público (mensagem), sistema/categoria (webhook).
     let autorNome: string | null = null;
     let trechoPublico: string | null = null;
-    if (job.contexto.mensagemId && job.evento === 'mensagem_publica') {
+    if (job.contexto.mensagemId && EVENTOS_COM_TRECHO.has(job.evento)) {
       const msg = await em.findOne(MensagemSchema, {
         where: { id: job.contexto.mensagemId, deleted_at: IsNull() },
       });
@@ -286,6 +297,12 @@ async function processarChamado(
         const autor = await em.findOne(UsuarioSchema, { where: { id: msg.autor_id } });
         autorNome = autor?.nome ?? null;
       }
+    }
+    // D-042: quem contestou/aprovou (sempre o cliente solicitante — nome público).
+    // Aprovação TÁCITA tem ator `sistema` (autorId null) → sem autor.
+    if (!autorNome && job.contexto.autorId && EVENTOS_COM_AUTOR.has(job.evento)) {
+      const autor = await em.findOne(UsuarioSchema, { where: { id: job.contexto.autorId } });
+      if (autor && autor.papel === Papel.cliente) autorNome = autor.nome;
     }
 
     let sistemaNome: string | null = null;
@@ -316,6 +333,7 @@ async function processarChamado(
       sistemaNome,
       categoriaNome,
       link,
+      papelArea,
     };
   });
 
@@ -332,6 +350,11 @@ async function processarChamado(
   }
 
   // ---- Fase B: renderiza + envia (fora da transação) -----------------------
+  // D-043: estado ATUAL do custo (público) — vai em todo e-mail/payload.
+  const custoFinal = custoDoBanco(fase.chamado.custo_final);
+  const estimativaCusto = fase.chamado.estimativa_custo ?? null;
+  // Mudança do custo final: números em BRL (o contexto genérico só tem strings).
+  const ehCusto = job.evento === 'custo_final';
   let payload: NotificationPayload;
   if (job.canal === 'email') {
     const email = montarEmailChamado({
@@ -346,6 +369,13 @@ async function processarChamado(
       trechoPublico: fase.trechoPublico,
       para: job.contexto.para,
       link: fase.link,
+      paraCliente: fase.papelArea === 'portal',
+      prazoAprovacao: fase.chamado.fechar_automaticamente_em
+        ? formatarPrazoAprovacao(fase.chamado.fechar_automaticamente_em)
+        : null,
+      aprovacao: job.contexto.aprovacao ?? null,
+      estimativaCusto,
+      custoFinal,
     });
     payload = {
       canal: 'email',
@@ -368,14 +398,24 @@ async function processarChamado(
         natureza: fase.chamado.natureza,
         sistema_alvo: fase.sistemaNome,
         categoria: fase.categoriaNome,
+        estimativa_custo: estimativaParaPayload(estimativaCusto),
+        custo_final: custoFinal,
       },
       autorNome: fase.autorNome,
       trechoPublico: fase.trechoPublico,
-      de: job.contexto.de,
-      para: job.contexto.para,
+      de: ehCusto ? (job.contexto.custo?.de ?? null) : job.contexto.de,
+      para: ehCusto ? (job.contexto.custo?.para ?? null) : job.contexto.para,
       link: fase.link,
-      incluiMensagem: job.evento === 'mensagem_publica',
-      incluiMudanca: job.evento === 'mudanca_status' || job.evento === 'mudanca_prioridade',
+      incluiMensagem: EVENTOS_COM_TRECHO.has(job.evento),
+      incluiAutor: EVENTOS_COM_AUTOR.has(job.evento),
+      incluiMudanca:
+        job.evento === 'mudanca_status' ||
+        job.evento === 'mudanca_prioridade' ||
+        job.evento === 'aprovado' ||
+        job.evento === 'contestado' ||
+        job.evento === 'estimativa_custo' ||
+        job.evento === 'custo_final',
+      aprovacao: job.contexto.aprovacao ?? null,
     });
     payload = {
       canal: 'webhook',

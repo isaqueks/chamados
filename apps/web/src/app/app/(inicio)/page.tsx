@@ -6,6 +6,7 @@ import {
   GitPullRequest,
   CheckCircle2,
   ExternalLink,
+  Plus,
 } from 'lucide-react';
 import {
   obterAppDataSource,
@@ -21,6 +22,7 @@ import { exigirUsuario } from '@/lib/sessao';
 import { PontoStatus, PrioridadeBadge, StatusBadge } from '@/components/chamado/badges';
 import { tempoRelativo, duracaoMin } from '@/lib/tempo';
 import { cn } from '@/lib/utils';
+import { buttonVariants } from '@/components/ui/button';
 
 export default async function DashboardPage() {
   const { usuario, tenant } = await exigirUsuario();
@@ -38,11 +40,23 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">Olá, {primeiroNome}</h1>
-        <p className="text-sm text-muted-foreground">
-          Panorama do atendimento em {tenant.nome_exibicao}.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            Olá, {primeiroNome}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Panorama do atendimento em {tenant.nome_exibicao}.
+          </p>
+        </div>
+        {/* D-040: atalho para abrir chamado em nome de um cliente. */}
+        <Link
+          href="/app/chamados/novo"
+          className={cn(buttonVariants({ variant: 'outline' }), 'w-fit shrink-0')}
+        >
+          <Plus className="size-4" />
+          Novo chamado
+        </Link>
       </div>
 
       {/* KPIs principais */}

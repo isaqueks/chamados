@@ -5,12 +5,19 @@
  *
  * A tabela de transições (§1.3) codifica QUEM (papel) pode disparar cada
  * transição status→status. Invariantes cobertas:
- *  - `fechado`/`cancelado` são terminais: nenhuma transição parte deles.
+ *  - `fechado`/`cancelado` são ENCERRADOS (`ehTerminal`): não aceitam mensagens,
+ *    atribuições nem transições — exceto a REABERTURA (D-038), única saída.
  *  - Guardrail humano-no-circuito: `agente_ia` só marca `resolvido` a partir de
  *    `em_triagem` (dúvida respondida sozinha — D-017; o APLICADOR garante que a
  *    aresta só é usada para natureza `duvida` com resposta publicada);
  *    `em_atendimento → resolvido` continua exclusivo de operador/admin.
- *  - Reabertura: `resolvido` → `em_atendimento` (cliente autor ou operador).
+ *  - Reabertura: `resolvido`/`fechado`/`cancelado` → `em_atendimento` (cliente
+ *    autor ou operador/admin — D-038). `agente_ia` e `sistema` nunca reabrem.
+ *  - Janela de aprovação (D-042): em `resolvido` o cliente autor APROVA
+ *    (`resolvido → fechado`, `ehAprovacaoDoCliente`) ou CONTESTA (`resolvido →
+ *    em_atendimento`, `ehContestacao` — exige mensagem, regra do serviço); sem
+ *    resposta no prazo, o `sistema` fecha (aprovação tácita). `agente_ia` nunca
+ *    aprova nem contesta.
  *  - `admin ⊇ operador`: toda transição de operador vale também para admin.
  *  - Cancelamento e suas regras: cliente (autor) cancela `novo`/`aguardando_cliente`;
  *    operador cancela também `em_triagem`/`em_atendimento`.
@@ -23,7 +30,8 @@ import { StatusChamado, Papel } from './enums';
 /**
  * Ator de uma transição. Além dos papéis de usuário, o `sistema` dispara
  * transições automáticas (job de triagem: `novo`→`em_triagem`; re-enfileiramento:
- * `aguardando_cliente`→`em_triagem`; auto-fechamento: `resolvido`→`fechado`).
+ * `aguardando_cliente`→`em_triagem`; aprovação tácita ao fim do prazo — D-042:
+ * `resolvido`→`fechado`).
  */
 export const ATOR_SISTEMA = 'sistema' as const;
 export type PapelTransicao = Papel | typeof ATOR_SISTEMA;
@@ -58,16 +66,65 @@ export const TRANSICOES: readonly Transicao[] = [
   { de: em_atendimento, para: aguardando_cliente, papeis: [operador, agente_ia] },
   { de: em_atendimento, para: resolvido, papeis: [operador] },
   { de: em_atendimento, para: cancelado, papeis: [operador] },
+  // D-042: vindo do cliente, `resolvido → em_atendimento` é a CONTESTAÇÃO da
+  // resolução (exige mensagem — regra do serviço) e `resolvido → fechado` é a
+  // APROVAÇÃO explícita; o `sistema` fecha ao fim do prazo (aprovação tácita) e
+  // o operador continua podendo fechar manualmente.
   { de: resolvido, para: em_atendimento, papeis: [cliente, operador] },
-  { de: resolvido, para: fechado, papeis: [ATOR_SISTEMA, operador] },
+  { de: resolvido, para: fechado, papeis: [ATOR_SISTEMA, cliente, operador] },
+  // D-038: reabertura de chamado encerrado — a ÚNICA saída de fechado/cancelado.
+  // Nunca agente_ia nem sistema (reabrir é decisão humana).
+  { de: fechado, para: em_atendimento, papeis: [cliente, operador] },
+  { de: cancelado, para: em_atendimento, papeis: [cliente, operador] },
 ];
 
-/** Estados terminais (§1.1): não aceitam transições, mensagens nem atribuições. */
+/**
+ * Estados terminais (§1.1) — "encerrados salvo reabertura" (D-038): não aceitam
+ * mensagens, atribuições, silêncio da IA nem transições, com UMA exceção: a
+ * reabertura humana para `em_atendimento` (`podeReabrir`). Quem só precisa saber
+ * se o chamado está encerrado (bloquear mensagem, triagem, atribuição) continua
+ * usando `ehTerminal`; a máquina abre a exceção em `transicaoValida`.
+ */
 const TERMINAIS: readonly StatusChamado[] = [fechado, cancelado];
 
-/** Um status é terminal? */
+/** Status de onde se pode REABRIR (→ `em_atendimento`): specs/04 §1.3, §8.2, D-038. */
+const REABRIVEIS: readonly StatusChamado[] = [resolvido, fechado, cancelado];
+
+/** Um status é terminal (encerrado; só sai por reabertura — D-038)? */
 export function ehTerminal(status: StatusChamado): boolean {
   return TERMINAIS.includes(status);
+}
+
+/** A transição `de → para` é uma reabertura (evento `chamado_reaberto`, `reaberto_count++`)? */
+export function ehReabertura(de: StatusChamado, para: StatusChamado): boolean {
+  return para === em_atendimento && REABRIVEIS.includes(de);
+}
+
+/**
+ * `resolvido → fechado` disparado pelo CLIENTE é a aprovação explícita da
+ * resolução (D-042, evento `chamado_aprovado`). Pelo `sistema` é a aprovação
+ * tácita (fim do prazo, `chamado_fechado_auto`); pelo operador, fechamento manual.
+ */
+export function ehAprovacaoDoCliente(
+  ator: PapelTransicao,
+  de: StatusChamado,
+  para: StatusChamado,
+): boolean {
+  return ator === cliente && de === resolvido && para === fechado;
+}
+
+/**
+ * `resolvido → em_atendimento` disparado pelo CLIENTE é a CONTESTAÇÃO da
+ * resolução (D-042, evento `chamado_contestado` no lugar de `chamado_reaberto`;
+ * `reaberto_count` continua contando). O serviço exige uma mensagem pública do
+ * cliente na mesma transação (o motivo).
+ */
+export function ehContestacao(
+  ator: PapelTransicao,
+  de: StatusChamado,
+  para: StatusChamado,
+): boolean {
+  return ator === cliente && de === resolvido && para === em_atendimento;
 }
 
 /**
@@ -102,6 +159,15 @@ function papelAutorizado(papel: PapelTransicao, papeis: readonly PapelTransicao[
   return false;
 }
 
+/**
+ * `ator` pode reabrir um chamado em `status` (→ `em_atendimento`)? Decide só
+ * papel × status: o ownership do cliente (só os próprios chamados) é da camada
+ * de serviço via `autorizar(..., 'chamado', 'mudar_status')`.
+ */
+export function podeReabrir(ator: PapelTransicao, status: StatusChamado): boolean {
+  return ehReabertura(status, em_atendimento) && podeTransicionar(ator, status, em_atendimento);
+}
+
 /** Motivo pelo qual uma transição foi negada. */
 export type MotivoNegacao =
   'mesmo_status' | 'estado_terminal' | 'transicao_inexistente' | 'papel_nao_autorizado';
@@ -120,8 +186,13 @@ export function transicaoValida(
   para: StatusChamado,
 ): ResultadoTransicao {
   if (de === para) return { ok: false, motivo: 'mesmo_status' };
-  if (ehTerminal(de)) return { ok: false, motivo: 'estado_terminal' };
   const t = TRANSICOES.find((x) => x.de === de && x.para === para);
+  // Encerrado (D-038): a única saída é a reabertura por papel autorizado; para
+  // todo o resto — inclusive agente_ia/sistema tentando reabrir — o chamado
+  // continua "terminal" e o motivo segue `estado_terminal` (contrato da API).
+  if (ehTerminal(de) && (!t || !papelAutorizado(ator, t.papeis))) {
+    return { ok: false, motivo: 'estado_terminal' };
+  }
   if (!t) return { ok: false, motivo: 'transicao_inexistente' };
   if (!papelAutorizado(ator, t.papeis)) return { ok: false, motivo: 'papel_nao_autorizado' };
   return { ok: true };
@@ -138,10 +209,10 @@ export function podeTransicionar(
 
 /**
  * Alvos de transição que `ator` pode alcançar a partir de `de` (útil para a UI
- * mostrar só as ações permitidas). Vazio para estados terminais.
+ * mostrar só as ações permitidas). Em estado terminal, só a reabertura
+ * (`[em_atendimento]`) para quem pode reabrir; vazio para os demais (D-038).
  */
 export function transicoesDoPapel(ator: PapelTransicao, de: StatusChamado): StatusChamado[] {
-  if (ehTerminal(de)) return [];
   return TRANSICOES.filter((t) => t.de === de && papelAutorizado(ator, t.papeis)).map(
     (t) => t.para,
   );

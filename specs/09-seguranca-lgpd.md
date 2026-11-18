@@ -82,6 +82,7 @@ Três camadas independentes garantem que dados de um tenant nunca sejam acessív
 - Suíte de testes automatizada dedicada a isolamento, executada em CI, bloqueando merge em caso de falha.
 - Casos mínimos:
   - Usuário do tenant A não lê/escreve `Chamado`, `Mensagem`, `Anexo`, `SistemaAlvo` do tenant B (via API e via acesso direto simulado).
+  - Cliente do tenant A lê o chamado de outro cliente do **mesmo** tenant só na visão pública e não escreve nele (D-037).
   - RLS bloqueia leitura cross-tenant mesmo com query sem filtro explícito.
   - Job com `tenant_id` do tenant A não consegue tocar dados do tenant B.
   - URLs assinadas de `Anexo` do tenant A não abrem objeto do tenant B.
@@ -178,6 +179,17 @@ Descrições e mensagens usam rich text (TipTap no cliente, ver `04`/`08`). O cl
 - **Cookies/sessão**: `HttpOnly`, `Secure`, `SameSite` (detalhes em `03`) reduzem impacto de eventual XSS.
 - **Saída da IA**: notas e mensagens geradas pelo `agente_ia` passam pela mesma sanitização — a IA não é fonte confiável de HTML.
 
+### 6.1 Exportação para planilha (D-045) — injeção de fórmula e vazamento
+
+Títulos, nomes e e-mails vêm de usuários e acabam numa planilha aberta no Excel/LibreOffice de outra pessoa ("CSV/formula injection": `=HYPERLINK(...)`, `=cmd|...`, `@SUM(...)`).
+
+- **Gerador `.xlsx` próprio (`@chamados/db/planilha`, D-034) nunca emite fórmula**: não há elemento `<f>`; todo texto vai como `inlineStr`, que o Excel e o LibreOffice exibem literalmente (verificado convertendo o arquivo com o LibreOffice headless).
+- **Defesa extra:** texto que começa com `=` `+` `-` `@`, TAB ou CR recebe um estilo com `quotePrefix="1"` — o mesmo efeito do apóstrofo digitado à mão: reeditar a célula (F2+Enter) ou salvar como CSV não a transforma em fórmula. O conteúdo visível não muda (nada de prefixar `'` no dado).
+- **Fora do escopo:** o CSV de `artefato_consulta` (D-034, worker) ainda escreve o texto cru; neutralizar lá é evolução registrada no ADR D-045.
+- **Autorização e escopo:** as rotas de exportação (`/app/chamados/exportar` — operador/admin; `/portal/exportar` — cliente) autenticam pelo cookie de sessão, respondem `401/403` antes de qualquer consulta e rodam em `runInTenantContext` (RLS). A do portal usa projeção **allowlist** da visão pública (`03` §7). Teto de 10.000 linhas por arquivo (`TETO_EXPORTACAO`; o nome ganha `-parcial` e a aba avisa).
+- **Cabeçalhos:** `Content-Type` oficial do `.xlsx`, `Content-Disposition: attachment` (nome ASCII + `filename*` UTF-8, slug saneado), `Cache-Control: private, no-store` e `nosniff` — o arquivo não fica em cache compartilhado nem é renderizado no contexto da aplicação.
+- **LGPD:** a planilha da equipe leva nome e e-mail do solicitante (dados que a equipe já vê no painel). Registrar cada exportação no log de acesso (§8.6) é **pendente** (ver ADR D-045).
+
 ---
 
 ## 7. Segredos e credenciais de SistemaAlvo
@@ -217,6 +229,8 @@ Descrições e mensagens usam rich text (TipTap no cliente, ver `04`/`08`). O cl
 | Dados do SistemaAlvo  | logs/BD do cliente acessados pela IA podem conter dados pessoais de terceiros              | acesso read-only, efêmero no worker                     | Responsabilidade do tenant controlador    |
 
 Princípio de **minimização**: os formulários mínimos do produto já limitam a coleta. Não solicitar dados sensíveis; se aparecerem no texto livre, aplicam-se retenção e exclusão como aos demais.
+
+**Visibilidade do conteúdo de chamado dentro do tenant (D-037, decisão do usuário):** todo usuário `cliente` lê **todos os chamados do seu tenant** na visão pública — nome do solicitante, título, descrição, mensagens `publica` e anexos públicos (prints podem conter dados de terceiros). É uma consequência **consciente**: o canal de suporte é compartilhado dentro da empresa-cliente, e cabe ao tenant (controlador, §8.1) orientar seus usuários a não registrar ali o que não deva ser visto por colegas. Notas internas, complexidade, `ExecucaoIA` e demais bastidores seguem fora do alcance do cliente (specs/03 §7), e **nada** cruza tenants (§3). Escrever, anexar, reabrir e cancelar continuam restritos ao solicitante.
 
 ### 8.3 Direitos do titular (DSR)
 
@@ -287,6 +301,7 @@ Suportar, mediado pelo tenant controlador: confirmação de tratamento, acesso, 
 - [ ] Conjunto fechado de ações do `agente_ia`; contexto do chamado marcado como não confiável.
 - [ ] Validação de tipo real + limites + allowlist em uploads; storage privado; URLs assinadas.
 - [ ] Sanitização server-side de rich text + CSP.
+- [x] Exportação `.xlsx` sem fórmulas (`inlineStr` + `quotePrefix` em texto suspeito), autenticada, sob RLS e com projeção pública no portal (§6.1, D-045).
 - [ ] Envelope encryption de credenciais de `SistemaAlvo`; nenhum segredo em log.
 - [ ] Bases legais mapeadas; rotinas de exportação e exclusão/anonimização (DSR).
 - [ ] Logs de acesso a dados pessoais; auditoria append-only.

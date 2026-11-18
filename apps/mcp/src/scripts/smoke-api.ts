@@ -6,7 +6,9 @@
  *  2. Bearer autentica; SEM header e com COOKIE não autenticam (anti-CSRF §1.4);
  *  3. listagem filtra por status e recusa valor inválido (400, não "tudo");
  *  4. equipe lê a timeline COM notas internas; cliente NÃO as vê (§5);
- *  5. cliente não lê chamado de outro cliente (404, sem vazar existência);
+ *  5. D-037: cliente LÊ chamado de outro cliente do MESMO tenant só na visão
+ *     pública (sem nota interna/complexidade/operador), lista o tenant, recorta
+ *     com `meus=true` e NÃO escreve/transiciona o chamado alheio (403);
  *  6. cliente é recusado ao tentar escrever nota interna (403);
  *  7. publicar mensagem e transicionar status funcionam e valem no banco;
  *  8. transição inválida é recusada pela máquina de estados (409);
@@ -18,12 +20,31 @@
  * 12. anexos e formato (D-035): o detalhe lista imagens inline e arquivos por
  *     mensagem, `formato=markdown|html` preserva as imagens apontando para a
  *     rota Bearer, `GET /anexos/{id}` entrega os bytes com o tipo pinado e a
- *     fronteira vale (cliente não baixa anexo de nota interna nem de outro).
+ *     fronteira vale (cliente não baixa anexo de nota interna; anexo público de
+ *     chamado alheio do mesmo tenant sim — D-037).
  * 13. extensões da Forja (D-036): L1 silenciar/reativar a IA (idempotente, sem
  *     evento na repetição), L2 ids de equipe na projeção, L3 filtro
  *     `complexidade` e L4 atribuição — com o cliente recusado (403, sem vazar
  *     existência) e o ISOLAMENTO CROSS-TENANT provado contra um segundo tenant
  *     com o MESMO número de chamado: o token de A nunca enxerga nem altera B.
+ * 14. reabertura de encerrado (D-038): `POST …/status {em_atendimento}` reabre
+ *     `fechado` e `cancelado` pelo operador (qualquer chamado) e pelo cliente
+ *     DONO; cliente não-dono → 403; encerrado continua recusando mensagem e
+ *     qualquer outra transição (409 `estado_terminal`); o token de A não reabre
+ *     o cancelado de B (404).
+ * 15. "quem responde fica responsável" (D-039): `POST …/mensagens` pública de
+ *     operador atribui o chamado a ele (evento `operador_atribuido` com motivo
+ *     `resposta_publica`, sem duplicar na segunda resposta); nota interna e
+ *     mensagem do `agente_ia` não atribuem; um segundo operador que responde (e
+ *     move para `aguardando_cliente`, como a Forja faz) assume; o token do
+ *     tenant B não responde nem reatribui o chamado de A (404).
+ * 16. custo (D-043): `POST …/custo` — cliente 403 antes de resolver o `{ref}`;
+ *     estimativa definida (idempotente), corpo vazio/código inválido 400; custo
+ *     final fora de `resolvido` → 409 `custo_fora_da_resolucao` (e a estimativa
+ *     enviada junto é desfeita — transação única); `POST …/status` com
+ *     `custo_final` só em `resolvido` (400 em outra transição); lista e detalhe
+ *     trazem `estimativa_custo`/`custo_final` para o cliente; correção grava
+ *     evento; o token de B não alcança A e vice-versa (404).
  *
  * Requer também o MinIO de pé (os anexos vão para o storage).
  *
@@ -159,7 +180,8 @@ async function main(): Promise<void> {
         const alheio = await criarChamado(em, atorOutro, {
           titulo: 'Chamado de outro cliente',
           natureza: Natureza.duvida,
-          descricao: 'Conteudo que a Ana nunca pode ver.',
+          // D-037: a Ana LÊ este chamado (visão pública), mas não age nele.
+          descricao: 'Chamado de um colega da Ana no mesmo tenant.',
         });
         if (!alheio.ok) throw new Error(`criarChamado (alheio) falhou: ${alheio.motivo}`);
 
@@ -171,6 +193,20 @@ async function main(): Promise<void> {
           corpo: 'Diagnostico interno: excecao no BoletoService, linha 88.',
         });
         if (!nota.ok) throw new Error(`nota interna falhou: ${nota.motivo}`);
+        // Nota interna também no chamado ALHEIO: a leitura ampliada (D-037) não
+        // pode trazê-la ao cliente.
+        const notaAlheia = await criarMensagem(em, atorOp, {
+          chamado_id: alheio.id,
+          visibilidade: VisibilidadeMensagem.interna,
+          corpo: 'Bastidor do chamado alheio: nunca vai a cliente.',
+        });
+        if (!notaAlheia.ok) throw new Error(`nota interna (alheio) falhou: ${notaAlheia.motivo}`);
+        const pubAlheia = await criarMensagem(em, atorOp, {
+          chamado_id: alheio.id,
+          visibilidade: VisibilidadeMensagem.publica,
+          corpo: 'Resposta publica ao colega.',
+        });
+        if (!pubAlheia.ok) throw new Error(`mensagem publica (alheio) falhou: ${pubAlheia.motivo}`);
 
         // Sai de `novo` para um estado onde as transições do teste são válidas.
         // `novo → em_triagem` é do ator SISTEMA (specs/04 §1.3); operador não pode.
@@ -317,18 +353,75 @@ async function main(): Promise<void> {
     ok(!('complexidade' in detCli.corpo.chamado), 'cliente NÃO recebe complexidade');
     ok(!('ia_silenciada' in detCli.corpo.chamado), 'cliente NÃO recebe ia_silenciada');
 
-    const alheio = await chamar<{ codigo: string }>(slug, `/api/v1/chamados/${chamadoAlheioId}`, {
+    // D-037: o cliente LÊ o chamado de outro cliente do mesmo tenant, só na
+    // visão pública (sem nota interna, complexidade, operador, flag da IA).
+    const alheio = await chamar<{
+      chamado: Record<string, unknown>;
+      mensagens: Array<{ visibilidade?: string; corpo: string }>;
+    }>(slug, `/api/v1/chamados/${chamadoAlheioId}`, { token: tokenCli });
+    ok(alheio.status === 200, 'cliente lê o chamado de OUTRO cliente do mesmo tenant (D-037)');
+    ok(
+      alheio.corpo.mensagens.length === 1 &&
+        alheio.corpo.mensagens.every(
+          (m) => m.visibilidade === undefined && !m.corpo.includes('Bastidor'),
+        ),
+      'chamado alheio: só a mensagem pública — nenhuma nota interna nem o campo visibilidade',
+    );
+    ok(
+      ['complexidade', 'operador_nome', 'operador_id', 'ia_silenciada'].every(
+        (c) => !(c in alheio.corpo.chamado),
+      ),
+      'chamado alheio: sem complexidade/operador/ia_silenciada na projeção do cliente',
+    );
+    ok(
+      alheio.corpo.chamado.solicitante_nome === 'Cliente Outro',
+      'chamado alheio: traz o nome do solicitante (dado público da visão do cliente)',
+    );
+
+    const listaCli = await chamar<{ itens: Array<{ id: string }> }>(slug, '/api/v1/chamados', {
       token: tokenCli,
     });
     ok(
-      alheio.status === 404 && alheio.corpo.codigo === 'chamado_inexistente',
-      'cliente pedindo chamado de outro recebe 404 (não vaza existência)',
+      listaCli.corpo.itens.some((i) => i.id === chamadoId) &&
+        listaCli.corpo.itens.some((i) => i.id === chamadoAlheioId),
+      'listagem do cliente traz os chamados do TENANT (próprio + alheio — D-037)',
     );
-
-    const listaCli = await chamar<{ itens: unknown[] }>(slug, '/api/v1/chamados', {
+    const listaMeus = await chamar<{ itens: Array<{ id: string }> }>(
+      slug,
+      '/api/v1/chamados?meus=true',
+      { token: tokenCli },
+    );
+    ok(
+      listaMeus.corpo.itens.length === 1 && listaMeus.corpo.itens[0]!.id === chamadoId,
+      '`meus=true` recorta para os chamados em que o cliente é o solicitante',
+    );
+    const meusInvalido = await chamar<{ codigo: string }>(slug, '/api/v1/chamados?meus=sim', {
       token: tokenCli,
     });
-    ok(listaCli.corpo.itens.length === 1, 'listagem do cliente traz só os próprios chamados');
+    ok(
+      meusInvalido.status === 400 && meusInvalido.corpo.codigo === 'parametro_invalido',
+      '`meus` fora de true/false → 400',
+    );
+
+    // Ler ≠ agir: no chamado alheio o cliente não escreve nem transiciona.
+    const escreveAlheio = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${chamadoAlheioId}/mensagens`,
+      { token: tokenCli, metodo: 'POST', corpo: { visibilidade: 'publica', corpo: 'eu tambem' } },
+    );
+    ok(
+      escreveAlheio.status === 403 && escreveAlheio.corpo.codigo === 'sem_permissao',
+      'cliente NÃO publica mensagem no chamado alheio (403)',
+    );
+    const cancelaAlheio = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${chamadoAlheioId}/status`,
+      { token: tokenCli, metodo: 'POST', corpo: { status: 'cancelado' } },
+    );
+    ok(
+      cancelaAlheio.status === 403 && cancelaAlheio.corpo.codigo === 'sem_permissao',
+      'cliente NÃO transiciona o chamado alheio (403)',
+    );
 
     // --- 6) Escrita: fronteira de visibilidade -----------------------------
     const notaProibida = await chamar<{ codigo: string }>(
@@ -691,7 +784,14 @@ async function main(): Promise<void> {
     const outroBaixa = await chamar(slug, `/api/v1/anexos/${inlineId}`, {
       token: rLoginOutro.corpo.token,
     });
-    ok(outroBaixa.status === 404, 'outro cliente NÃO baixa anexo de chamado alheio (404)');
+    ok(
+      outroBaixa.status === 200,
+      'outro cliente do MESMO tenant baixa anexo PÚBLICO de chamado alheio (D-037)',
+    );
+    const outroInterno = await chamar(slug, `/api/v1/anexos/${notaAnexoId}`, {
+      token: rLoginOutro.corpo.token,
+    });
+    ok(outroInterno.status === 404, 'outro cliente NÃO baixa anexo de nota interna alheia (404)');
     const semAuth = await chamar(slug, `/api/v1/anexos/${inlineId}`);
     ok(semAuth.status === 401, 'anexo sem Bearer → 401');
 
@@ -1052,6 +1152,459 @@ async function main(): Promise<void> {
         desatrib.corpo.operador_id === null &&
         (await lerChamado(tenantId, chamadoId)).operador_id === null,
       'L4: operador_id null desatribui (200, vale no banco)',
+    );
+
+    // --- 14) Reabertura de encerrado (D-038) -------------------------------
+    const massaR = await runInTenantContext(ds, tenantId, async (em) => {
+      const idPorEmail = async (email: string) =>
+        (await em.query('SELECT id FROM usuario WHERE email = $1', [email]))[0].id as string;
+      const outroId = await idPorEmail(`out.${sufixo}@smoke.dev`);
+      const atorOp = { id: massaA.opAId, tenant_id: tenantId, papel: Papel.operador };
+      const atorAna = { id: massaA.cliAId, tenant_id: tenantId, papel: Papel.cliente };
+      const atorOutro = { id: outroId, tenant_id: tenantId, papel: Papel.cliente };
+      const novo = async (ator: typeof atorAna, titulo: string) => {
+        const c = await criarChamado(em, ator, {
+          titulo,
+          natureza: Natureza.problema,
+          descricao: 'Massa da reabertura (D-038).',
+        });
+        if (!c.ok) throw new Error(`criarChamado (${titulo}) falhou: ${c.motivo}`);
+        return c.id;
+      };
+      const passo = async (
+        ator: Parameters<typeof transicionarStatus>[1],
+        id: string,
+        para: (typeof StatusChamado)[keyof typeof StatusChamado],
+      ) => {
+        const t = await transicionarStatus(em, ator, id, para, { motivo: 'smoke' });
+        if (!t.ok) throw new Error(`transição → ${para} falhou: ${t.motivo}`);
+      };
+      // Fechado da Ana: novo → em_triagem → em_atendimento → resolvido → fechado.
+      const fechadoId = await novo(atorAna, 'Reabrir fechado (D-038)');
+      await passo(atorSistema(tenantId), fechadoId, StatusChamado.em_triagem);
+      await passo(atorOp, fechadoId, StatusChamado.em_atendimento);
+      await passo(atorOp, fechadoId, StatusChamado.resolvido);
+      await passo(atorOp, fechadoId, StatusChamado.fechado);
+      // Cancelado da Ana (ela mesma cancelou) e cancelado do "Cliente Outro".
+      const canceladoId = await novo(atorAna, 'Reabrir cancelado (D-038)');
+      await passo(atorAna, canceladoId, StatusChamado.cancelado);
+      const alheioCanceladoId = await novo(atorOutro, 'Cancelado de outro cliente (D-038)');
+      await passo(atorOutro, alheioCanceladoId, StatusChamado.cancelado);
+      return { fechadoId, canceladoId, alheioCanceladoId };
+    });
+    const canceladoBId = await runInTenantContext(ds, tenantBId, async (em) => {
+      const cliB = (
+        await em.query('SELECT id FROM usuario WHERE email = $1', [`clib.${sufixo}@smoke.dev`])
+      )[0].id as string;
+      const atorCliB = { id: cliB, tenant_id: tenantBId, papel: Papel.cliente };
+      const c = await criarChamado(em, atorCliB, {
+        titulo: 'Cancelado do tenant B (D-038)',
+        natureza: Natureza.problema,
+        descricao: 'Ninguém de A reabre isto.',
+      });
+      if (!c.ok) throw new Error(`criarChamado (B, cancelado) falhou: ${c.motivo}`);
+      const t = await transicionarStatus(em, atorCliB, c.id, StatusChamado.cancelado);
+      if (!t.ok) throw new Error(`cancelamento (B) falhou: ${t.motivo}`);
+      return c.id;
+    });
+
+    /** Estado persistido do chamado (no tenant indicado) que a reabertura mexe. */
+    const lerReabertura = (tid: string, id: string) =>
+      runInTenantContext(ds, tid, async (em) => {
+        const l: Array<{ status: string; reaberto_count: number; fechado_em: Date | null }> =
+          await em.query('SELECT status, reaberto_count, fechado_em FROM chamado WHERE id = $1', [
+            id,
+          ]);
+        return l[0]!;
+      });
+    const reabrir = (id: string, token: string) =>
+      chamar<{ status?: string; codigo?: string }>(slug, `/api/v1/chamados/${id}/status`, {
+        token,
+        metodo: 'POST',
+        corpo: { status: 'em_atendimento', motivo: 'smoke D-038' },
+      });
+
+    // Encerrado continua encerrado para tudo que não é reabrir.
+    const msgFechado = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaR.fechadoId}/mensagens`,
+      { token: tokenOp, metodo: 'POST', corpo: { visibilidade: 'publica', corpo: 'oi' } },
+    );
+    ok(
+      msgFechado.status === 409 && msgFechado.corpo.codigo === 'estado_terminal',
+      'D-038: fechado continua recusando mensagem (409 estado_terminal)',
+    );
+    const outraSaida = await chamar<{ codigo: string }>(
+      slug,
+      `/api/v1/chamados/${massaR.fechadoId}/status`,
+      { token: tokenOp, metodo: 'POST', corpo: { status: 'resolvido' } },
+    );
+    ok(
+      outraSaida.status === 409 && outraSaida.corpo.codigo === 'estado_terminal',
+      'D-038: fechado → resolvido continua 409 estado_terminal (só reabrir sai)',
+    );
+
+    // Cliente NÃO-dono não reabre (lê, mas não age — D-037).
+    const naoDono = await reabrir(massaR.alheioCanceladoId, tokenCli);
+    ok(
+      naoDono.status === 403 && naoDono.corpo.codigo === 'sem_permissao',
+      'D-038: cliente NÃO reabre o cancelado de outro cliente (403)',
+    );
+
+    // Cliente dono reabre o fechado; operador reabre de novo após novo ciclo.
+    const anaFechado = await reabrir(massaR.fechadoId, tokenCli);
+    const estF1 = await lerReabertura(tenantId, massaR.fechadoId);
+    ok(
+      anaFechado.status === 200 &&
+        anaFechado.corpo.status === 'em_atendimento' &&
+        estF1.status === 'em_atendimento' &&
+        estF1.reaberto_count === 1 &&
+        estF1.fechado_em === null,
+      'D-038: cliente dono reabre FECHADO (200; banco: em_atendimento, count 1, fechado_em limpo)',
+    );
+    ok(
+      (await contarEventos(massaR.fechadoId, 'chamado_reaberto')) === 1,
+      'D-038: evento chamado_reaberto registrado na reabertura do fechado',
+    );
+    for (const para of ['resolvido', 'fechado']) {
+      const r = await chamar(slug, `/api/v1/chamados/${massaR.fechadoId}/status`, {
+        token: tokenOp,
+        metodo: 'POST',
+        corpo: { status: para },
+      });
+      ok(r.status === 200, `D-038: operador leva o reaberto a ${para} de novo`);
+    }
+    const opFechado = await reabrir(massaR.fechadoId, tokenOp);
+    ok(
+      opFechado.status === 200 &&
+        (await lerReabertura(tenantId, massaR.fechadoId)).reaberto_count === 2,
+      'D-038: operador reabre FECHADO (200, count 2)',
+    );
+
+    // Operador reabre cancelado (inclusive de outro cliente); dono também reabre.
+    const opCancelado = await reabrir(massaR.canceladoId, tokenOp);
+    ok(
+      opCancelado.status === 200 &&
+        (await lerReabertura(tenantId, massaR.canceladoId)).status === 'em_atendimento',
+      'D-038: operador reabre CANCELADO (200)',
+    );
+    const opAlheio = await reabrir(massaR.alheioCanceladoId, tokenOp);
+    ok(opAlheio.status === 200, 'D-038: operador reabre QUALQUER chamado do tenant (200)');
+    const recancela = await chamar(slug, `/api/v1/chamados/${massaR.canceladoId}/status`, {
+      token: tokenOp,
+      metodo: 'POST',
+      corpo: { status: 'cancelado' },
+    });
+    ok(recancela.status === 200, 'D-038: operador cancela de novo');
+    const anaCancelado = await reabrir(massaR.canceladoId, tokenCli);
+    const estC = await lerReabertura(tenantId, massaR.canceladoId);
+    ok(
+      anaCancelado.status === 200 && estC.status === 'em_atendimento' && estC.reaberto_count === 2,
+      'D-038: cliente dono reabre CANCELADO (200, count 2)',
+    );
+
+    // Cross-tenant (regra 6): token de A com o UUID de um cancelado de B.
+    const cross = await reabrir(canceladoBId, tokenOp);
+    ok(
+      cross.status === 404 && cross.corpo.codigo === 'chamado_inexistente',
+      'D-038: token de A NÃO reabre cancelado do tenant B (404)',
+    );
+    const crossCli = await reabrir(canceladoBId, tokenCli);
+    ok(crossCli.status === 404, 'D-038: cliente de A também recebe 404 no chamado de B');
+    ok(
+      (await lerReabertura(tenantBId, canceladoBId)).status === 'cancelado',
+      'D-038: o chamado de B continua cancelado no banco',
+    );
+
+    // --- 15) Quem responde fica responsável (D-039) -------------------------
+    const massaD = await runInTenantContext(ds, tenantId, async (em) => {
+      const op2Email = `op2.${sufixo}@smoke.dev`;
+      const op2Id = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantId,
+        email: op2Email,
+        nome: 'Operador Bruno',
+        papel: Papel.operador,
+        senha: SENHA,
+      });
+      const atorAna = { id: massaA.cliAId, tenant_id: tenantId, papel: Papel.cliente };
+      const atorOp = { id: massaA.opAId, tenant_id: tenantId, papel: Papel.operador };
+      const c = await criarChamado(em, atorAna, {
+        titulo: 'Quem responde assume (D-039)',
+        natureza: Natureza.problema,
+        descricao: 'Massa da auto-atribuição por resposta.',
+      });
+      if (!c.ok) throw new Error(`criarChamado (D-039) falhou: ${c.motivo}`);
+      const t1 = await transicionarStatus(
+        em,
+        atorSistema(tenantId),
+        c.id,
+        StatusChamado.em_triagem,
+      );
+      if (!t1.ok) throw new Error(`transição (D-039) → em_triagem falhou: ${t1.motivo}`);
+      const t2 = await transicionarStatus(em, atorOp, c.id, StatusChamado.em_atendimento);
+      if (!t2.ok) throw new Error(`transição (D-039) → em_atendimento falhou: ${t2.motivo}`);
+      return { chamadoDId: c.id, op2Id, op2Email };
+    });
+    const idD = massaD.chamadoDId;
+    const responder = (token: string, visibilidade: string, corpo: string, id = idD) =>
+      chamar<{ id?: string; codigo?: string }>(slug, `/api/v1/chamados/${id}/mensagens`, {
+        token,
+        metodo: 'POST',
+        corpo: { visibilidade, corpo },
+      });
+    const eventosAtrib = (tid: string, id: string) =>
+      runInTenantContext(ds, tid, async (em) => {
+        const l: Array<{ ator_id: string | null; dados: Record<string, unknown> }> = await em.query(
+          `SELECT ator_id, dados FROM evento_chamado
+              WHERE chamado_id = $1 AND tipo = 'operador_atribuido'
+              ORDER BY created_at, id`,
+          [id],
+        );
+        return l;
+      });
+
+    ok(
+      (await lerChamado(tenantId, idD)).operador_id === null,
+      'D-039: chamado nasce sem responsável',
+    );
+
+    const notaD = await responder(tokenOp, 'interna', 'Nota interna: investigando.');
+    ok(
+      notaD.status === 201 && (await lerChamado(tenantId, idD)).operador_id === null,
+      'D-039: nota interna via API NÃO atribui',
+    );
+
+    // agente_ia não tem token na API: a regra vale no serviço (mesma função da rota).
+    await runInTenantContext(ds, tenantId, async (em) => {
+      const r = await criarMensagem(
+        em,
+        { id: prov.agente_ia_id, tenant_id: tenantId, papel: Papel.agente_ia },
+        { chamado_id: idD, visibilidade: VisibilidadeMensagem.publica, corpo: 'Resposta da IA.' },
+      );
+      if (!r.ok) throw new Error(`mensagem da IA (D-039) falhou: ${r.motivo}`);
+    });
+    ok(
+      (await lerChamado(tenantId, idD)).operador_id === null,
+      'D-039: mensagem pública do agente_ia NÃO atribui',
+    );
+
+    const pubD = await responder(tokenOp, 'publica', 'Olá! Vou cuidar do seu chamado.');
+    const evD1 = await eventosAtrib(tenantId, idD);
+    ok(
+      pubD.status === 201 && (await lerChamado(tenantId, idD)).operador_id === massaA.opAId,
+      'D-039: resposta PÚBLICA do operador via API o torna responsável',
+    );
+    ok(
+      evD1.length === 1 &&
+        evD1[0]!.ator_id === massaA.opAId &&
+        evD1[0]!.dados.operador_novo === massaA.opAId &&
+        evD1[0]!.dados.operador_anterior === null &&
+        evD1[0]!.dados.motivo === 'resposta_publica',
+      'D-039: evento operador_atribuido (ator = autor, motivo resposta_publica)',
+    );
+    const pubD2 = await responder(tokenOp, 'publica', 'Mais um detalhe para você.');
+    ok(
+      pubD2.status === 201 && (await eventosAtrib(tenantId, idD)).length === 1,
+      'D-039: o responsável responder de novo NÃO duplica o evento',
+    );
+
+    // Segundo operador responde e pergunta ao cliente (fluxo da Forja: pública →
+    // status aguardando_cliente): assume no lugar do primeiro.
+    const loginOp2 = await chamar<{ token: string }>(slug, '/api/v1/sessao', {
+      metodo: 'POST',
+      corpo: { email: massaD.op2Email, senha: SENHA },
+    });
+    ok(loginOp2.status === 200, 'D-039: login do segundo operador');
+    const tokenOp2 = loginOp2.corpo.token;
+    const pubOp2 = await responder(tokenOp2, 'publica', 'Pode me confirmar a versão do app?');
+    const aguardar = await chamar<{ status?: string }>(slug, `/api/v1/chamados/${idD}/status`, {
+      token: tokenOp2,
+      metodo: 'POST',
+      corpo: { status: 'aguardando_cliente', motivo: 'smoke D-039' },
+    });
+    const evD3 = await eventosAtrib(tenantId, idD);
+    ok(
+      pubOp2.status === 201 &&
+        aguardar.status === 200 &&
+        (await lerChamado(tenantId, idD)).operador_id === massaD.op2Id,
+      'D-039: segundo operador que responde ASSUME (e a transição segue normal)',
+    );
+    ok(
+      evD3.length === 2 &&
+        evD3[1]!.dados.operador_anterior === massaA.opAId &&
+        evD3[1]!.dados.operador_novo === massaD.op2Id,
+      'D-039: evento registra a troca de responsável (anterior → novo)',
+    );
+    const detCliD = await chamar<{ chamado: Record<string, unknown> }>(
+      slug,
+      `/api/v1/chamados/${idD}`,
+      { token: tokenCli },
+    );
+    ok(
+      detCliD.status === 200 && !('operador_id' in detCliD.corpo.chamado),
+      'D-039: o cliente continua sem ver o responsável',
+    );
+
+    // Cross-tenant (regra 6): token do operador de B contra o UUID de A, e o
+    // token de A contra o chamado de B — nada responde, nada é reatribuído.
+    const loginOpB = await chamar<{ token: string }>(`${slug}-b`, '/api/v1/sessao', {
+      metodo: 'POST',
+      corpo: { email: `opb.${sufixo}@smoke.dev`, senha: SENHA },
+    });
+    ok(loginOpB.status === 200, 'D-039: login do operador do tenant B');
+    const crossD = await chamar<{ codigo: string }>(
+      `${slug}-b`,
+      `/api/v1/chamados/${idD}/mensagens`,
+      {
+        token: loginOpB.corpo.token,
+        metodo: 'POST',
+        corpo: { visibilidade: 'publica', corpo: 'Tentativa cross-tenant.' },
+      },
+    );
+    ok(
+      crossD.status === 404 && crossD.corpo.codigo === 'chamado_inexistente',
+      'D-039: operador de B não responde o chamado de A (404)',
+    );
+    ok(
+      (await lerChamado(tenantId, idD)).operador_id === massaD.op2Id,
+      'D-039: responsável do chamado de A intacto após a tentativa de B',
+    );
+    const crossB = await responder(tokenOp, 'publica', 'Tentativa de A em B.', massaB.chamadoBId);
+    ok(
+      crossB.status === 404 &&
+        (await lerChamado(tenantBId, massaB.chamadoBId)).operador_id === null,
+      'D-039: token de A não responde (nem assume) o chamado de B (404, B segue sem responsável)',
+    );
+
+    // --- 16) Custo do chamado (D-043) ---------------------------------------
+    const chCustoId = await runInTenantContext(ds, tenantId, async (em) => {
+      const atorAna = { id: massaA.cliAId, tenant_id: tenantId, papel: Papel.cliente };
+      const atorOp = { id: massaA.opAId, tenant_id: tenantId, papel: Papel.operador };
+      const c = await criarChamado(em, atorAna, {
+        titulo: 'Custo pela API (D-043)',
+        natureza: Natureza.alteracao,
+        descricao: 'Estimativa e custo final.',
+      });
+      if (!c.ok) throw new Error(`criarChamado (custo) falhou: ${c.motivo}`);
+      await transicionarStatus(em, atorSistema(tenantId), c.id, StatusChamado.em_triagem);
+      const t = await transicionarStatus(em, atorOp, c.id, StatusChamado.em_atendimento);
+      if (!t.ok) throw new Error(`transição (custo) falhou: ${t.motivo}`);
+      return c.id;
+    });
+    const custo = (corpo: unknown, token: string, id = chCustoId, s = slug) =>
+      chamar<{ estimativa_custo?: string | null; custo_final?: number | null; codigo?: string }>(
+        s,
+        `/api/v1/chamados/${id}/custo`,
+        { token, metodo: 'POST', corpo },
+      );
+    const lerCusto = (tid: string, id: string) =>
+      runInTenantContext(ds, tid, async (em) => {
+        const l: Array<{ estimativa_custo: string | null; custo_final: string | null }> =
+          await em.query('SELECT estimativa_custo, custo_final FROM chamado WHERE id = $1', [id]);
+        return l[0]!;
+      });
+
+    const custoCli = await custo({ estimativa_custo: 'B' }, tokenCli);
+    ok(
+      custoCli.status === 403 && custoCli.corpo.codigo === 'sem_permissao',
+      'D-043: cliente não define custo (403)',
+    );
+    const custoCliInex = await custo({ estimativa_custo: 'B' }, tokenCli, '999999');
+    ok(
+      custoCliInex.status === 403,
+      'D-043: cliente recebe 403 mesmo para chamado inexistente (não vaza existência)',
+    );
+    ok(
+      (await custo({}, tokenOp)).status === 400 &&
+        (await custo({ estimativa_custo: 'b' }, tokenOp)).status === 400 &&
+        (await custo({ custo_final: '10,00' }, tokenOp)).status === 400,
+      'D-043: corpo vazio, código minúsculo e custo em string → 400',
+    );
+    const estB = await custo({ estimativa_custo: 'B' }, tokenOp);
+    ok(
+      estB.status === 200 && estB.corpo.estimativa_custo === 'B' && estB.corpo.custo_final === null,
+      'D-043: operador define a estimativa B',
+    );
+    const estB2 = await custo({ estimativa_custo: 'B' }, tokenOp);
+    ok(estB2.status === 200, 'D-043: repetir a mesma estimativa é idempotente (200)');
+    const nEst = await runInTenantContext(ds, tenantId, async (em) => {
+      const l: Array<{ n: string }> = await em.query(
+        `SELECT COUNT(*) AS n FROM evento_chamado WHERE chamado_id = $1 AND tipo = 'estimativa_custo_alterada'`,
+        [chCustoId],
+      );
+      return Number(l[0]!.n);
+    });
+    ok(nEst === 1, 'D-043: um único evento estimativa_custo_alterada');
+
+    const fora = await custo({ estimativa_custo: 'C', custo_final: 10 }, tokenOp);
+    ok(
+      fora.status === 409 && fora.corpo.codigo === 'custo_fora_da_resolucao',
+      'D-043: custo final fora de resolvido → 409 custo_fora_da_resolucao',
+    );
+    ok(
+      (await lerCusto(tenantId, chCustoId)).estimativa_custo === 'B',
+      'D-043: a estimativa enviada junto foi desfeita (transação única)',
+    );
+
+    const statusFechado = await chamar<{ codigo?: string }>(
+      slug,
+      `/api/v1/chamados/${chCustoId}/status`,
+      { token: tokenOp, metodo: 'POST', corpo: { status: 'cancelado', custo_final: 5 } },
+    );
+    ok(statusFechado.status === 400, 'D-043: custo_final em transição ≠ resolvido → 400');
+    const resolver = await chamar<{ status?: string; custo_final?: number | null }>(
+      slug,
+      `/api/v1/chamados/${chCustoId}/status`,
+      { token: tokenOp, metodo: 'POST', corpo: { status: 'resolvido', custo_final: 99.9 } },
+    );
+    ok(
+      resolver.status === 200 &&
+        resolver.corpo.status === 'resolvido' &&
+        resolver.corpo.custo_final === 99.9,
+      'D-043: resolver com custo_final = 99.9',
+    );
+    const detCustoCli = await chamar<{
+      chamado: { estimativa_custo: string | null; custo_final: number | null };
+    }>(slug, `/api/v1/chamados/${chCustoId}`, { token: tokenCli });
+    ok(
+      detCustoCli.status === 200 &&
+        detCustoCli.corpo.chamado.estimativa_custo === 'B' &&
+        detCustoCli.corpo.chamado.custo_final === 99.9 &&
+        !('complexidade' in detCustoCli.corpo.chamado),
+      'D-043: cliente LÊ estimativa e custo final no detalhe (sem complexidade)',
+    );
+    const listaCustoCli = await chamar<{
+      itens: Array<{ id: string; estimativa_custo: string | null; custo_final: number | null }>;
+    }>(slug, '/api/v1/chamados?meus=true&limite=100', { token: tokenCli });
+    const itemCusto = listaCustoCli.corpo.itens.find((i) => i.id === chCustoId);
+    ok(
+      !!itemCusto && itemCusto.estimativa_custo === 'B' && itemCusto.custo_final === 99.9,
+      'D-043: item da lista do cliente traz estimativa e custo final',
+    );
+    const corr = await custo({ custo_final: 120 }, tokenOp);
+    ok(corr.status === 200 && corr.corpo.custo_final === 120, 'D-043: operador corrige o custo');
+    ok(
+      Number((await lerCusto(tenantId, chCustoId)).custo_final) === 120,
+      'D-043: custo corrigido gravado (numeric 120.00)',
+    );
+
+    // Cross-tenant (regra 6).
+    const custoBemA = await custo(
+      { estimativa_custo: 'E' },
+      loginOpB.corpo.token,
+      chCustoId,
+      `${slug}-b`,
+    );
+    ok(custoBemA.status === 404, 'D-043: operador de B não define custo em A (404)');
+    ok(
+      (await lerCusto(tenantId, chCustoId)).estimativa_custo === 'B',
+      'D-043: estimativa de A intacta após a tentativa de B',
+    );
+    const custoAemB = await custo({ estimativa_custo: 'E' }, tokenOp, massaB.chamadoBId);
+    ok(
+      custoAemB.status === 404 &&
+        (await lerCusto(tenantBId, massaB.chamadoBId)).estimativa_custo === null,
+      'D-043: token de A não define custo no chamado de B (404)',
     );
 
     // --- 9) Cliente MCP sobre a mesma API ----------------------------------

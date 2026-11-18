@@ -3,6 +3,10 @@ import {
   transicaoValida,
   podeTransicionar,
   ehTerminal,
+  ehReabertura,
+  podeReabrir,
+  ehAprovacaoDoCliente,
+  ehContestacao,
   transicoesDoPapel,
   situacaoDoStatus,
   STATUS_ABERTOS,
@@ -31,15 +35,25 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
       expect(ehTerminal(StatusChamado.resolvido)).toBe(false);
     });
 
-    it('nenhuma transição parte de fechado/cancelado, para qualquer papel', () => {
+    it('de fechado/cancelado a ÚNICA saída é a reabertura → em_atendimento (D-038)', () => {
       for (const terminal of [StatusChamado.fechado, StatusChamado.cancelado]) {
         for (const ator of ATORES) {
           for (const para of TODOS_STATUS) {
             const r = transicaoValida(ator, terminal, para);
-            expect(r.ok).toBe(false);
+            if (para !== StatusChamado.em_atendimento) {
+              expect(r.ok).toBe(false);
+              if (para !== terminal) expect(r).toEqual({ ok: false, motivo: 'estado_terminal' });
+            }
           }
         }
       }
+      const saidas = TRANSICOES.filter(
+        (t) => t.de === StatusChamado.fechado || t.de === StatusChamado.cancelado,
+      );
+      expect(saidas.map((t) => t.para)).toEqual([
+        StatusChamado.em_atendimento,
+        StatusChamado.em_atendimento,
+      ]);
     });
   });
 
@@ -72,40 +86,121 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
     });
   });
 
-  describe('reabertura de resolvido', () => {
-    it('resolvido → em_atendimento é permitido a cliente e operador', () => {
-      expect(
-        podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.em_atendimento),
-      ).toBe(true);
-      expect(
-        podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.em_atendimento),
-      ).toBe(true);
-      expect(
-        podeTransicionar(Papel.admin, StatusChamado.resolvido, StatusChamado.em_atendimento),
-      ).toBe(true);
+  describe('reabertura (specs/04 §8.2, D-038)', () => {
+    const REABRIVEIS: readonly StatusChamado[] = [
+      StatusChamado.resolvido,
+      StatusChamado.fechado,
+      StatusChamado.cancelado,
+    ];
+
+    it('resolvido/fechado/cancelado → em_atendimento: cliente, operador e admin', () => {
+      for (const de of REABRIVEIS) {
+        for (const ator of [Papel.cliente, Papel.operador, Papel.admin]) {
+          expect(podeTransicionar(ator, de, StatusChamado.em_atendimento)).toBe(true);
+          expect(podeReabrir(ator, de)).toBe(true);
+        }
+      }
     });
 
-    it('agente_ia não reabre', () => {
+    it('agente_ia e sistema nunca reabrem (encerrado responde estado_terminal)', () => {
+      for (const de of REABRIVEIS) {
+        for (const ator of [Papel.agente_ia, ATOR_SISTEMA]) {
+          expect(podeTransicionar(ator, de, StatusChamado.em_atendimento)).toBe(false);
+          expect(podeReabrir(ator, de)).toBe(false);
+        }
+      }
+      for (const de of [StatusChamado.fechado, StatusChamado.cancelado]) {
+        expect(transicaoValida(Papel.agente_ia, de, StatusChamado.em_atendimento)).toEqual({
+          ok: false,
+          motivo: 'estado_terminal',
+        });
+        expect(transicaoValida(ATOR_SISTEMA, de, StatusChamado.em_atendimento)).toEqual({
+          ok: false,
+          motivo: 'estado_terminal',
+        });
+      }
       expect(
-        podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.em_atendimento),
-      ).toBe(false);
+        transicaoValida(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toEqual({ ok: false, motivo: 'papel_nao_autorizado' });
+    });
+
+    it('podeReabrir é falso fora dos status reabríveis', () => {
+      for (const de of TODOS_STATUS.filter((s) => !REABRIVEIS.includes(s))) {
+        for (const ator of ATORES) expect(podeReabrir(ator, de)).toBe(false);
+      }
+    });
+
+    it('ehReabertura: só X → em_atendimento com X reabrível', () => {
+      for (const de of TODOS_STATUS) {
+        for (const para of TODOS_STATUS) {
+          expect(ehReabertura(de, para)).toBe(
+            para === StatusChamado.em_atendimento && REABRIVEIS.includes(de),
+          );
+        }
+      }
+    });
+
+    it('fechado/cancelado continuam terminais (encerrados salvo reabertura)', () => {
+      expect(ehTerminal(StatusChamado.fechado)).toBe(true);
+      expect(ehTerminal(StatusChamado.cancelado)).toBe(true);
     });
   });
 
   describe('fechamento de resolvido', () => {
-    it('resolvido → fechado é permitido a sistema (auto) e operador (manual)', () => {
-      expect(podeTransicionar(ATOR_SISTEMA, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
-        true,
-      );
-      expect(podeTransicionar(Papel.operador, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
-        true,
-      );
+    it('resolvido → fechado é permitido a sistema (tácita), cliente (aprovação — D-042) e operador (manual)', () => {
+      for (const ator of [ATOR_SISTEMA, Papel.cliente, Papel.operador, Papel.admin] as const) {
+        expect(podeTransicionar(ator, StatusChamado.resolvido, StatusChamado.fechado)).toBe(true);
+      }
     });
 
-    it('cliente e agente_ia não fecham', () => {
-      expect(podeTransicionar(Papel.cliente, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
-        false,
-      );
+    it('agente_ia nunca fecha nem aprova (D-042)', () => {
+      expect(
+        transicaoValida(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.fechado),
+      ).toEqual({ ok: false, motivo: 'papel_nao_autorizado' });
+    });
+
+    it('cliente só fecha a partir de resolvido (aprovar não pula etapas)', () => {
+      for (const de of TODOS_STATUS) {
+        if (de === StatusChamado.resolvido) continue;
+        expect(podeTransicionar(Papel.cliente, de, StatusChamado.fechado)).toBe(false);
+      }
+    });
+  });
+
+  describe('janela de aprovação (D-042)', () => {
+    it('ehAprovacaoDoCliente: só cliente em resolvido → fechado', () => {
+      expect(
+        ehAprovacaoDoCliente(Papel.cliente, StatusChamado.resolvido, StatusChamado.fechado),
+      ).toBe(true);
+      for (const ator of [ATOR_SISTEMA, Papel.operador, Papel.admin, Papel.agente_ia] as const) {
+        expect(ehAprovacaoDoCliente(ator, StatusChamado.resolvido, StatusChamado.fechado)).toBe(
+          false,
+        );
+      }
+      expect(
+        ehAprovacaoDoCliente(Papel.cliente, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(false);
+    });
+
+    it('ehContestacao: só cliente em resolvido → em_atendimento (reabrir fechado/cancelado não é contestar)', () => {
+      expect(
+        ehContestacao(Papel.cliente, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(true);
+      expect(
+        ehContestacao(Papel.operador, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(false);
+      expect(
+        ehContestacao(Papel.cliente, StatusChamado.fechado, StatusChamado.em_atendimento),
+      ).toBe(false);
+      expect(
+        ehContestacao(Papel.cliente, StatusChamado.cancelado, StatusChamado.em_atendimento),
+      ).toBe(false);
+    });
+
+    it('agente_ia não contesta nem aprova pela máquina', () => {
+      expect(
+        podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.em_atendimento),
+      ).toBe(false);
       expect(
         podeTransicionar(Papel.agente_ia, StatusChamado.resolvido, StatusChamado.fechado),
       ).toBe(false);
@@ -201,13 +296,13 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
       expect(r).toEqual({ ok: false, motivo: 'papel_nao_autorizado' });
     });
 
-    it('a partir de terminal → estado_terminal', () => {
-      const r = transicaoValida(
-        Papel.operador,
-        StatusChamado.fechado,
-        StatusChamado.em_atendimento,
-      );
-      expect(r).toEqual({ ok: false, motivo: 'estado_terminal' });
+    it('a partir de terminal, fora da reabertura → estado_terminal', () => {
+      expect(
+        transicaoValida(Papel.operador, StatusChamado.fechado, StatusChamado.resolvido),
+      ).toEqual({ ok: false, motivo: 'estado_terminal' });
+      expect(
+        transicaoValida(Papel.operador, StatusChamado.cancelado, StatusChamado.aguardando_cliente),
+      ).toEqual({ ok: false, motivo: 'estado_terminal' });
     });
   });
 
@@ -226,10 +321,19 @@ describe('máquina de estados do chamado (specs/04 §1)', () => {
       expect(transicoesDoPapel(Papel.operador, StatusChamado.em_atendimento).sort()).toEqual(
         [StatusChamado.aguardando_cliente, StatusChamado.cancelado, StatusChamado.resolvido].sort(),
       );
+      // D-042: em resolvido o cliente contesta (→ em_atendimento) ou aprova (→ fechado).
       expect(transicoesDoPapel(Papel.cliente, StatusChamado.resolvido)).toEqual([
         StatusChamado.em_atendimento,
+        StatusChamado.fechado,
       ]);
-      expect(transicoesDoPapel(Papel.operador, StatusChamado.fechado)).toEqual([]);
+      // Encerrado: só a reabertura, e só para quem pode reabrir (D-038).
+      for (const de of [StatusChamado.fechado, StatusChamado.cancelado]) {
+        for (const ator of [Papel.operador, Papel.admin, Papel.cliente]) {
+          expect(transicoesDoPapel(ator, de)).toEqual([StatusChamado.em_atendimento]);
+        }
+        expect(transicoesDoPapel(Papel.agente_ia, de)).toEqual([]);
+        expect(transicoesDoPapel(ATOR_SISTEMA, de)).toEqual([]);
+      }
     });
   });
 

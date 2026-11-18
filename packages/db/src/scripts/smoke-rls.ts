@@ -4,7 +4,9 @@
  * Prova, usando o ROLE DA APLICAÇÃO (SEM BYPASSRLS), que:
  *  - é possível criar 2 tenants + 1 usuário em cada (cada um no seu contexto);
  *  - dentro de runInTenantContext(tenantA) só se enxerga o usuário do tenant A
- *    (e o próprio tenant A), nunca dados do tenant B.
+ *    (e o próprio tenant A), nunca dados do tenant B;
+ *  - a config de modelo/esforço/timeout da IA (D-044) gravada por A não vaza
+ *    nem atinge B.
  *
  * Sai com código 0 se o isolamento vale; 1 caso contrário.
  */
@@ -17,6 +19,7 @@ const { criarAppDataSource } = await import('../data-source');
 const { runInTenantContext } = await import('../rls');
 const { TenantSchema } = await import('../entities/tenant');
 const { UsuarioSchema } = await import('../entities/usuario');
+const { atualizarConfigModeloIa } = await import('../tenants/config-service');
 const { Papel, StatusTenant, StatusUsuario } = await import('@chamados/shared');
 
 function ok(cond: boolean, msg: string): void {
@@ -93,6 +96,37 @@ async function main(): Promise<void> {
       ok(usuarios.length === 1, `vê exatamente 1 usuário (viu ${usuarios.length})`);
       ok(usuarios[0]?.email === emailB, 'é o e-mail do usuário B');
       ok(!usuarios.some((u) => u.email === emailA), 'NÃO enxerga o usuário do tenant A');
+    });
+
+    // ---- D-044: config de modelo/esforço/timeout da IA é por tenant -------
+    console.log('[smoke-rls] verificando isolamento da config de IA (D-044):');
+    await runInTenantContext(ds, tenantA, async (em) => {
+      const r = await atualizarConfigModeloIa(em, tenantA, {
+        modelo: 'claude-haiku-5-5',
+        esforco: 'low',
+        timeoutMs: 120_000,
+      });
+      ok(r.ok, 'admin do tenant A grava a própria config de IA');
+      // Tentativa cross-tenant: mesmo passando o id de B, a RLS não deixa o
+      // UPDATE enxergar a linha de B (0 linhas afetadas, sem erro).
+      const cruzado = await atualizarConfigModeloIa(em, tenantB, { modelo: 'claude-opus-5-5' });
+      ok(cruzado.ok, 'UPDATE com id de B no contexto de A não lança (só não enxerga)');
+      const proprio = await em.findOne(TenantSchema, { where: { id: tenantA } });
+      ok(
+        proprio?.ia_modelo === 'claude-haiku-5-5' &&
+          proprio.ia_esforco === 'low' &&
+          proprio.ia_timeout_ms === 120_000,
+        'tenant A vê a config que gravou',
+      );
+    });
+    await runInTenantContext(ds, tenantB, async (em) => {
+      const b = await em.findOne(TenantSchema, { where: { id: tenantB } });
+      ok(
+        b?.ia_modelo === null && b.ia_esforco === null && b.ia_timeout_ms === null,
+        'tenant B segue no padrão da instalação (não herdou nem sofreu o UPDATE de A)',
+      );
+      const a = await em.findOne(TenantSchema, { where: { id: tenantA } });
+      ok(a === null, 'tenant B NÃO enxerga a linha (nem a config de IA) do tenant A');
     });
 
     console.log('\n[smoke-rls] RESULTADO: PASSOU — isolamento por RLS confirmado.');

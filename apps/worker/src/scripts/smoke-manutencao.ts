@@ -2,15 +2,19 @@
  * Smoke da manutenção do ciclo de vida + busca full-text (M10 — specs/04 §8, §10.4).
  *
  * Tenants DESCARTÁVEIS. Prova ponta a ponta:
- *   1. AUTO-FECHAMENTO (db): chamado `resolvido` VENCIDO (fechar_automaticamente_em
- *      no passado) é fechado (evento `chamado_fechado_auto`, `fechado_em` preenchido,
- *      prazo limpo) e notifica cliente + operador; um `resolvido` NÃO vencido NÃO
- *      é tocado.
+ *   1. APROVAÇÃO TÁCITA (db — D-042; antes "auto-fechamento"): chamado
+ *      `resolvido` VENCIDO (fechar_automaticamente_em no passado) é fechado
+ *      (evento `chamado_fechado_auto` com `aprovacao = tacita`, `fechado_em`
+ *      preenchido, prazo limpo), notifica cliente + operador (`aprovado`) e gera
+ *      UM webhook `aprovado` cuja chave deriva do id do evento; a reconciliação
+ *      republica o webhook só enquanto não há linha no `notificacao_log` (mesma
+ *      chave) e para depois; um `resolvido` NÃO vencido NÃO é tocado.
  *   2. ORQUESTRAÇÃO + LOCK (worker): `executarManutencao` respeita o lock global
  *      (instância concorrente não varre) e, liberado, fecha o vencido varrendo os
  *      tenants ativos (via a função SECURITY DEFINER).
- *   3. REABERTURA: cliente reabre `resolvido` → `em_atendimento`, limpando o prazo,
- *      incrementando `reaberto_count` e notificando o operador atribuído.
+ *   3. CONTESTAÇÃO (D-042): cliente contesta `resolvido` com motivo →
+ *      `em_atendimento`, limpando o prazo, incrementando `reaberto_count` e
+ *      notificando o operador atribuído (`contestado`); sem motivo é recusado.
  *   4. BUSCA FTS: stemming português (plural casa singular), ranking TÍTULO > CORPO,
  *      busca por número, e SEM vazamento entre tenants (RLS). Também no portal do
  *      cliente (listarChamados).
@@ -36,6 +40,11 @@ const {
   listarFilaChamados,
   listarChamados,
   fecharChamadosResolvidosVencidos,
+  reconciliarWebhooksAprovacaoTacita,
+  contestarResolucao,
+  salvarWebhook,
+  criarSecretStore,
+  chaveIdempotencia,
   listarTenantsAtivos,
   ChamadoSchema,
   EventoChamadoSchema,
@@ -158,6 +167,18 @@ async function main(): Promise<void> {
     );
     const atorCliB = { id: cliB, tenant_id: tenantB, papel: Papel.cliente };
 
+    // Webhook do tenant A (D-042: a aprovação tácita PRECISA gerar webhook). Só a
+    // resolução dos jobs é exercitada aqui; a entrega HTTP é do smoke-notificacoes.
+    process.env.NOTIFICACOES_WEBHOOK_PERMITIR_PRIVADO = 'true';
+    await runInTenantContext(ds, tenantA, (em) =>
+      salvarWebhook(
+        em,
+        tenantA,
+        { url: 'http://127.0.0.1:9/webhook', segredo: 'segredo-smoke', ativo: true },
+        criarSecretStore(),
+      ),
+    );
+
     // =====================================================================
     // 1) AUTO-FECHAMENTO (db, determinístico via despachante coletor)
     // =====================================================================
@@ -204,6 +225,10 @@ async function main(): Promise<void> {
     );
     ok(!!evtFechado, 'evento chamado_fechado_auto registrado');
     ok(evtFechado?.ator_id === null, 'ator do auto-fechamento é o sistema (ator_id null)');
+    ok(
+      (evtFechado?.dados as { aprovacao?: string } | undefined)?.aprovacao === 'tacita',
+      'D-042: evento marca a aprovação como TÁCITA',
+    );
 
     const emailsFech = jobsFech.filter((j) => j.canal === 'email');
     ok(
@@ -215,9 +240,47 @@ async function main(): Promise<void> {
       'auto-fechamento notifica o operador atribuído',
     );
     ok(
-      jobsFech.every((j) => j.evento === 'fechado'),
-      'notificações de auto-fechamento têm evento notificável = fechado',
+      jobsFech.every((j) => j.evento === 'aprovado' && j.contexto.aprovacao === 'tacita'),
+      'D-042: notificações da aprovação tácita têm evento `aprovado` (forma tacita)',
     );
+    const whFech = jobsFech.filter((j) => j.canal === 'webhook');
+    const chaveEsperada = chaveIdempotencia({
+      eventoNotifId: evtFechado!.id,
+      canal: 'webhook',
+      tenantId: tenantA,
+    });
+    ok(
+      whFech.length === 1 && whFech[0]!.idempotencyKey === chaveEsperada,
+      'D-042: UM webhook `aprovado`, com chave derivada do id do evento',
+    );
+
+    // Reconciliação: sem linha no log (o job "se perdeu"), republica com a MESMA
+    // chave (BullMQ/log deduplicam); com a linha, não republica mais.
+    const jobsRec1 = await coletar(tenantA, (em, hooks) =>
+      reconciliarWebhooksAprovacaoTacita(em, tenantA, hooks as never),
+    );
+    ok(
+      jobsRec1.length === 1 &&
+        jobsRec1[0]!.canal === 'webhook' &&
+        jobsRec1[0]!.idempotencyKey === chaveEsperada,
+      'D-042: reconciliação republica o webhook perdido com a MESMA chave (sem e-mail)',
+    );
+    await runInTenantContext(ds, tenantA, (em) =>
+      em.query(
+        `INSERT INTO notificacao_log
+           (tenant_id, idempotency_key, chamado_id, evento, canal, destino, status)
+         VALUES ($1, $2, $3, 'aprovado', 'webhook', 'http://127.0.0.1:9/webhook', 'entregue')`,
+        [tenantA, chaveEsperada, chVencido.id],
+      ),
+    );
+    const jobsRec2 = await coletar(tenantA, (em, hooks) =>
+      reconciliarWebhooksAprovacaoTacita(em, tenantA, hooks as never),
+    );
+    ok(jobsRec2.length === 0, 'D-042: webhook já registrado no log NÃO é republicado');
+    const jobsRecB = await coletar(tenantB, (em, hooks) =>
+      reconciliarWebhooksAprovacaoTacita(em, tenantB, hooks as never),
+    );
+    ok(jobsRecB.length === 0, 'D-042: reconciliação do tenant B não vê eventos do tenant A (RLS)');
 
     // =====================================================================
     // 2) ORQUESTRAÇÃO + LOCK (worker executarManutencao)
@@ -285,13 +348,19 @@ async function main(): Promise<void> {
       { titulo: 'Relatório com total incorreto', descricao: 'A soma final está errada.' },
       { atribuir: true },
     );
+    const semMotivo = await runInTenantContext(ds, tenantA, (em) =>
+      transicionarStatus(em, atorCli as never, chReabrir.id, StatusChamado.em_atendimento),
+    );
+    ok(
+      !semMotivo.ok && semMotivo.motivo === 'motivo_obrigatorio',
+      'D-042: contestar sem motivo → motivo_obrigatorio',
+    );
     const jobsReabre = await coletar(tenantA, (em, hooks) =>
-      transicionarStatus(
+      contestarResolucao(
         em,
         atorCli as never,
         chReabrir.id,
-        StatusChamado.em_atendimento,
-        {},
+        'A soma continua errada.',
         hooks as never,
       ),
     );
@@ -303,8 +372,10 @@ async function main(): Promise<void> {
     ok(reaberto?.resolvido_em == null, 'resolvido_em limpo na reabertura');
     ok(reaberto?.fechar_automaticamente_em == null, 'prazo de auto-fechamento cancelado');
     ok(
-      jobsReabre.some((j) => j.canal === 'email' && j.destinatarioId === uA.operador),
-      'reabertura NOTIFICA o operador atribuído',
+      jobsReabre.some(
+        (j) => j.canal === 'email' && j.evento === 'contestado' && j.destinatarioId === uA.operador,
+      ),
+      'D-042: contestação NOTIFICA o operador atribuído (`contestado`)',
     );
 
     // =====================================================================

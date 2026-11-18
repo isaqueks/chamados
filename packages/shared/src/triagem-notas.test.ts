@@ -4,6 +4,7 @@ import {
   formatarPerguntasCliente,
   montarNotaDiagnostico,
   montarNotaEscalonamento,
+  montarNotaTriagemCancelada,
   montarTemplateSpec,
   slugChamado,
   nomeBranchResolucao,
@@ -75,6 +76,29 @@ describe('montarNotaEscalonamento', () => {
   it('inclui o motivo normalizado sem stack trace', () => {
     expect(montarNotaEscalonamento('timeout')).toContain('Motivo: timeout.');
     expect(montarNotaEscalonamento('')).toContain('erro_desconhecido');
+  });
+});
+
+describe('montarNotaTriagemCancelada (D-041)', () => {
+  it('cita quem silenciou e deixa claro que nada foi aplicado', () => {
+    const nota = montarNotaTriagemCancelada({ silenciadaPor: 'Olga Operadora' });
+    expect(nota).toContain('silenciada neste chamado por Olga Operadora');
+    expect(nota).toContain('Nada da análise foi aplicado');
+    expect(nota).not.toContain('Atenção');
+  });
+
+  it('sem autor conhecido omite o "por"; avisa PR/branch já publicados', () => {
+    const comPr = montarNotaTriagemCancelada({
+      silenciadaPor: null,
+      resolucaoPublicada: { branch: 'ia/chamado-1-x', prUrl: 'https://github.com/o/r/pull/9' },
+    });
+    expect(comPr).not.toContain(' por ');
+    expect(comPr).toContain('o PR https://github.com/o/r/pull/9');
+    const soBranch = montarNotaTriagemCancelada({
+      silenciadaPor: 'Ana',
+      resolucaoPublicada: { branch: 'ia/chamado-1-x', prUrl: null },
+    });
+    expect(soBranch).toContain('a branch `ia/chamado-1-x`');
   });
 });
 

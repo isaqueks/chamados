@@ -93,4 +93,22 @@ describe('opções', () => {
       passos: ['em_atendimento'],
     });
   });
+
+  it('nunca reabre encerrado (D-038), nem direto nem como passo intermediário', () => {
+    for (const permitirReabrir of [false, true]) {
+      for (const de of ['fechado', 'cancelado'] as const) {
+        expect(calcularCadeia(de, 'em_atendimento', { permitirReabrir })).toMatchObject({
+          tipo: 'impossivel',
+          motivo: 'estado_terminal',
+        });
+      }
+      const c = calcularCadeia('resolvido', 'aguardando_cliente', { permitirReabrir });
+      if (c.tipo === 'cadeia') expect(c.passos).not.toContain('fechado');
+    }
+    // Sem permitirReabrir, `resolvido → fechado → em_atendimento` não vale.
+    expect(calcularCadeia('resolvido', 'em_atendimento')).toMatchObject({
+      tipo: 'impossivel',
+      motivo: 'exige_reabrir',
+    });
+  });
 });

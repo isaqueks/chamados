@@ -24,15 +24,15 @@ Os enums abaixo usam EXATAMENTE os valores do brief canônico. Implementação r
 
 ### status_chamado
 
-| valor                | descrição                                                                |
-| -------------------- | ------------------------------------------------------------------------ |
-| `novo`               | recém-criado, ainda não entrou na triagem                                |
-| `em_triagem`         | job de IA na fila ou em execução                                         |
-| `aguardando_cliente` | IA/operador pediu informações; aguarda resposta do cliente               |
-| `em_atendimento`     | em tratativa por operador e/ou IA                                        |
-| `resolvido`          | solução entregue; fecha automaticamente após N dias (config. por tenant) |
-| `fechado`            | terminal; não reabre                                                     |
-| `cancelado`          | encerrado sem resolução                                                  |
+| valor                | descrição                                                                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `novo`               | recém-criado, ainda não entrou na triagem                                                                                                                                                       |
+| `em_triagem`         | job de IA na fila ou em execução                                                                                                                                                                |
+| `aguardando_cliente` | IA/operador pediu informações; aguarda resposta do cliente                                                                                                                                      |
+| `em_atendimento`     | em tratativa por operador e/ou IA                                                                                                                                                               |
+| `resolvido`          | solução entregue; janela de aprovação do cliente (D-042): aprova → `fechado`, contesta → `em_atendimento`; sem resposta em N dias (config. por tenant, padrão 7) → `fechado` (aprovação tácita) |
+| `fechado`            | terminal (encerrado); só sai por reabertura → `em_atendimento` (D-038)                                                                                                                          |
+| `cancelado`          | terminal, encerrado sem resolução; só sai por reabertura (D-038)                                                                                                                                |
 
 ### natureza
 
@@ -60,6 +60,19 @@ Avaliação interna, visível só para operador/admin/agente_ia.
 | `medio`   |
 | `dificil` |
 
+### estimativa_custo
+
+Faixa de custo estimada pela equipe (D-043, migration 0014). **Pública** (o cliente vê). Faixas fixas da plataforma; rótulos e limites em `packages/shared/src/custo.ts`. `NULL` na coluna = sem estimativa.
+
+| valor | faixa           |
+| ----- | --------------- |
+| `A`   | R$ 50 a R$ 100  |
+| `B`   | R$ 100 a R$ 200 |
+| `C`   | R$ 200 a R$ 400 |
+| `D`   | R$ 400 a R$ 600 |
+| `E`   | acima de R$ 600 |
+| `I`   | Isento (R$ 0)   |
+
 ### visibilidade_mensagem
 
 | valor     | descrição                                 |
@@ -78,7 +91,7 @@ Avaliação interna, visível só para operador/admin/agente_ia.
 
 ### tipo_evento (EventoChamado)
 
-Taxonomia canônica única de eventos de auditoria. Esta lista é a **fonte da verdade** e deve ser replicada IDÊNTICA em `04-chamados.md` (§9) e no glossário de `00-visao-geral.md`. Decisões consolidadas: (a) eventos de IA são **granulares** (`ia_*`) — não existe um `acao_ia` genérico; (b) atribuição usa o par `operador_atribuido`/`operador_desatribuido`; (c) mudança de natureza/complexidade usa o sufixo `_alterada` (coerente com `prioridade_alterada`); (d) `status_alterado` cobre transições genéricas de status, mas as transições notáveis do ciclo de vida têm evento próprio (`chamado_reaberto`, `chamado_resolvido`, `chamado_fechado`, `chamado_fechado_auto`, `chamado_cancelado`) e NÃO emitem também `status_alterado` (sem duplicidade).
+Taxonomia canônica única de eventos de auditoria. Esta lista é a **fonte da verdade** e deve ser replicada IDÊNTICA em `04-chamados.md` (§9) e no glossário de `00-visao-geral.md`. Decisões consolidadas: (a) eventos de IA são **granulares** (`ia_*`) — não existe um `acao_ia` genérico; (b) atribuição usa o par `operador_atribuido`/`operador_desatribuido`; (c) mudança de natureza/complexidade usa o sufixo `_alterada` (coerente com `prioridade_alterada`); (d) `status_alterado` cobre transições genéricas de status, mas as transições notáveis do ciclo de vida têm evento próprio (`chamado_reaberto`, `chamado_resolvido`, `chamado_fechado`, `chamado_fechado_auto`, `chamado_cancelado`, `chamado_aprovado`, `chamado_contestado`) e NÃO emitem também `status_alterado` (sem duplicidade).
 
 Valores canônicos:
 
@@ -92,11 +105,15 @@ Valores canônicos:
 - `mensagem_publicada`
 - `nota_interna_publicada`
 - `anexo_adicionado`
-- `chamado_reaberto`
+- `chamado_reaberto` — reabertura pela equipe (de `resolvido`) ou de `fechado`/`cancelado` (D-038)
 - `chamado_resolvido`
-- `chamado_fechado` — fechamento manual/terminal
-- `chamado_fechado_auto` — fechado pelo job após `dias_fechamento_automatico`
+- `chamado_fechado` — fechamento **manual** pela equipe (não é aprovação do cliente)
+- `chamado_fechado_auto` — **aprovação tácita** (D-042): fechado pelo job quando o prazo `dias_fechamento_automatico` venceu sem resposta do cliente; payload `{de, para, motivo: 'auto_fechamento_prazo', aprovacao: 'tacita'}`
 - `chamado_cancelado`
+- `chamado_aprovado` — o cliente solicitante **aprovou** a resolução (`resolvido → fechado`, D-042; migration 0013); payload `{de, para, aprovacao: 'explicita'}`
+- `chamado_contestado` — o cliente solicitante **contestou** a resolução com motivo (`resolvido → em_atendimento`, D-042; migration 0013) — substitui `chamado_reaberto` nesse caso; `reaberto_count` também incrementa; payload `{de, para, mensagem_id}`
+- `estimativa_custo_alterada` — operador/admin definiu, alterou ou removeu a estimativa de custo (D-043; migration 0014); payload `{de, para}` (códigos da faixa ou `null`); visível ao cliente
+- `custo_final_definido` — operador/admin informou/corrigiu/removeu o custo final (D-043; migration 0014); payload `{de, para}` (números em BRL ou `null`) e `origem: 'resolucao'` quando veio no próprio ato de resolver (só trilha — não notifica); visível ao cliente
 - `ia_iniciou`
 - `ia_pediu_info`
 - `ia_diagnosticou`
@@ -155,6 +172,9 @@ de status: são MOTIVOS de encerramento, registrados no campo `erro` de
 D-033) com `status='falhou'`. Mantém o enum enxuto e evita duplicar semântica
 entre `status` e `erro`. Execuções falhas por limite guardam a telemetria
 parcial (`custo_usd`/`tokens_*`/`duracao_ms`) apurada até o corte (D-033).
+`cancelado` (D-041) é a triagem interrompida porque a IA foi silenciada no
+chamado durante a execução: `erro='ia_silenciada'`, telemetria apurada até o
+corte, nada aplicado ao chamado (`05-agente-ia.md` §2).
 
 | valor        | descrição                                                                            |
 | ------------ | ------------------------------------------------------------------------------------ |
@@ -162,7 +182,7 @@ parcial (`custo_usd`/`tokens_*`/`duracao_ms`) apurada até o corte (D-033).
 | `executando` | worker em execução (equivale ao `running` de `05`)                                   |
 | `concluido`  | terminou com resultado                                                               |
 | `falhou`     | erro de execução (motivo em `erro`, ex.: `timeout`, `budget_excedido`, `max_turnos`) |
-| `cancelado`  | abortado                                                                             |
+| `cancelado`  | abortado (D-041: IA silenciada durante a triagem — `erro='ia_silenciada'`)           |
 
 ## Diagrama ER
 
@@ -203,19 +223,22 @@ erDiagram
 
 Empresa/instância whitelabel. Raiz do isolamento. Detalhes de branding/domínios em `07-multitenancy-whitelabel.md`.
 
-| campo                                | tipo                 | constraints                           | notas                                                                                                                             |
-| ------------------------------------ | -------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| id                                   | uuid                 | PK                                    |                                                                                                                                   |
-| nome                                 | text                 | NOT NULL                              | razão/identificação interna                                                                                                       |
-| nome_exibicao                        | text                 | NOT NULL                              | nome público exibido em UI e e-mails (`07`/`06` referenciam este campo); `nome` permanece como identificação interna/razão social |
-| slug                                 | text                 | NOT NULL, UNIQUE                      | subdomínio base                                                                                                                   |
-| dominio_proprio                      | text                 | UNIQUE NULL                           | domínio custom (nome canônico deste conceito; `03`/`07` referenciam este campo)                                                   |
-| status                               | status_tenant (enum) | NOT NULL default 'em_provisionamento' | governa acesso: `suspenso` bloqueia login, `em_provisionamento` libera só o admin (ver `07-multitenancy-whitelabel.md`)           |
-| dias_fechamento_automatico           | int                  | NOT NULL default 3                    | resolvido → fechado após N dias (mesmo nome/valor em `04-chamados.md` e `07-multitenancy-whitelabel.md`)                          |
-| ia_resolucao_automatica_habilitada   | bool                 | NOT NULL default true                 | guardrail relaxável (ver `05-agente-ia.md` §6 e `07` §4.1)                                                                        |
-| ia_instrucoes                        | text                 | NULL                                  | instruções do admin para a IA (D-020) — entra no system prompt da triagem; cap 4.000 chars (ver `05` §4.1 e `07` §4.1)            |
-| config_branding                      | jsonb                | NOT NULL default '{}'                 | cores, logo (ref)                                                                                                                 |
-| created_at / updated_at / deleted_at | timestamptz          |                                       |                                                                                                                                   |
+| campo                                | tipo                 | constraints                           | notas                                                                                                                                                                                                                                            |
+| ------------------------------------ | -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| id                                   | uuid                 | PK                                    |                                                                                                                                                                                                                                                  |
+| nome                                 | text                 | NOT NULL                              | razão/identificação interna                                                                                                                                                                                                                      |
+| nome_exibicao                        | text                 | NOT NULL                              | nome público exibido em UI e e-mails (`07`/`06` referenciam este campo); `nome` permanece como identificação interna/razão social                                                                                                                |
+| slug                                 | text                 | NOT NULL, UNIQUE                      | subdomínio base                                                                                                                                                                                                                                  |
+| dominio_proprio                      | text                 | UNIQUE NULL                           | domínio custom (nome canônico deste conceito; `03`/`07` referenciam este campo)                                                                                                                                                                  |
+| status                               | status_tenant (enum) | NOT NULL default 'em_provisionamento' | governa acesso: `suspenso` bloqueia login, `em_provisionamento` libera só o admin (ver `07-multitenancy-whitelabel.md`)                                                                                                                          |
+| dias_fechamento_automatico           | int                  | NOT NULL default 7 (D-042; antes 3)   | prazo, em dias (1–365), para o cliente aprovar ou contestar um `resolvido`; sem resposta → `fechado` (aprovação tácita). Migration 0013 levou a 7 os tenants que estavam em 3 (mesmo nome em `04-chamados.md` e `07-multitenancy-whitelabel.md`) |
+| ia_resolucao_automatica_habilitada   | bool                 | NOT NULL default true                 | guardrail relaxável (ver `05-agente-ia.md` §6 e `07` §4.1)                                                                                                                                                                                       |
+| ia_instrucoes                        | text                 | NULL                                  | instruções do admin para a IA (D-020) — entra no system prompt da triagem; cap 4.000 chars (ver `05` §4.1 e `07` §4.1)                                                                                                                           |
+| ia_modelo                            | text                 | NULL                                  | modelo da IA do tenant (D-044, migration 0012); NULL = `IA_MODELO`. Charset `[a-z0-9.-]`, ≤ 64 (ver `07` §4.1)                                                                                                                                   |
+| ia_esforco                           | text                 | NULL                                  | esforço de raciocínio (D-044): `low` … `max` (5 níveis); NULL = `IA_ESFORCO`. Inválido → worker usa o default                                                                                                                                    |
+| ia_timeout_ms                        | int                  | NULL                                  | timeout da TRIAGEM (D-044); NULL = `IA_TIMEOUT_MS`. 1 min ≤ t ≤ teto derivado do limiar de órfã (15 min)                                                                                                                                         |
+| config_branding                      | jsonb                | NOT NULL default '{}'                 | cores, logo (ref)                                                                                                                                                                                                                                |
+| created_at / updated_at / deleted_at | timestamptz          |                                       |                                                                                                                                                                                                                                                  |
 
 `slug` e `dominio_proprio` são globais (sem tenant_id — é a própria raiz).
 
@@ -351,31 +374,34 @@ Classificação do tenant. Um chamado referencia um sistema-alvo OU a categoria 
 
 Entidade central.
 
-| campo                                | tipo           | constraints              | notas                                                                          |
-| ------------------------------------ | -------------- | ------------------------ | ------------------------------------------------------------------------------ |
-| id                                   | uuid           | PK                       |                                                                                |
-| tenant_id                            | uuid           | FK, NOT NULL             |                                                                                |
-| numero                               | bigint         | NOT NULL                 | sequencial por tenant (ver Numeração)                                          |
-| sistema_alvo_id                      | uuid           | FK NULL                  | obrigatório se tenant tem >1 sistema                                           |
-| categoria_id                         | uuid           | FK NULL                  | usado quando não há sistema-alvo                                               |
-| cliente_id                           | uuid           | FK, NOT NULL             | autor (papel cliente)                                                          |
-| operador_id                          | uuid           | FK NULL                  | atribuído                                                                      |
-| titulo                               | text           | NOT NULL                 | CHECK length 3..160 (mesmo limite da tabela de limites em `04-chamados.md` §5) |
-| descricao_json                       | jsonb          | NOT NULL                 | documento do editor (ver Rich text)                                            |
-| descricao_html                       | text           | NOT NULL                 | HTML sanitizado (ver Rich text)                                                |
-| status                               | status_chamado | NOT NULL default 'novo'  |                                                                                |
-| natureza                             | natureza       | NOT NULL                 | problema/alteracao/duvida (duvida: D-017, migration 0009)                      |
-| prioridade                           | prioridade     | NOT NULL default 'media' | cliente pode sugerir                                                           |
-| complexidade                         | complexidade   | NULL                     | interna; definida pela IA/operador                                             |
-| ia_silenciada                        | boolean        | NOT NULL default false   | D-024: silenciada, nenhuma triagem roda; só operador/admin alteram; interna    |
-| resolvido_em                         | timestamptz    | NULL                     | marca início da janela de auto-fechamento                                      |
-| fechar_automaticamente_em            | timestamptz    | NULL                     | resolvido_em + dias_fechamento_automatico                                      |
-| fechado_em                           | timestamptz    | NULL                     | terminal                                                                       |
-| reaberto_count                       | int            | NOT NULL default 0       |                                                                                |
-| created_at / updated_at / deleted_at | timestamptz    |                          |                                                                                |
+| campo                                | tipo             | constraints              | notas                                                                                       |
+| ------------------------------------ | ---------------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| id                                   | uuid             | PK                       |                                                                                             |
+| tenant_id                            | uuid             | FK, NOT NULL             |                                                                                             |
+| numero                               | bigint           | NOT NULL                 | sequencial por tenant (ver Numeração)                                                       |
+| sistema_alvo_id                      | uuid             | FK NULL                  | obrigatório se tenant tem >1 sistema                                                        |
+| categoria_id                         | uuid             | FK NULL                  | usado quando não há sistema-alvo                                                            |
+| cliente_id                           | uuid             | FK, NOT NULL             | autor (papel cliente)                                                                       |
+| operador_id                          | uuid             | FK NULL                  | atribuído                                                                                   |
+| titulo                               | text             | NOT NULL                 | CHECK length 3..160 (mesmo limite da tabela de limites em `04-chamados.md` §5)              |
+| descricao_json                       | jsonb            | NOT NULL                 | documento do editor (ver Rich text)                                                         |
+| descricao_html                       | text             | NOT NULL                 | HTML sanitizado (ver Rich text)                                                             |
+| status                               | status_chamado   | NOT NULL default 'novo'  |                                                                                             |
+| natureza                             | natureza         | NOT NULL                 | problema/alteracao/duvida (duvida: D-017, migration 0009)                                   |
+| prioridade                           | prioridade       | NOT NULL default 'media' | cliente pode sugerir                                                                        |
+| complexidade                         | complexidade     | NULL                     | interna; definida pela IA/operador                                                          |
+| ia_silenciada                        | boolean          | NOT NULL default false   | D-024: silenciada, nenhuma triagem roda; só operador/admin alteram; interna                 |
+| estimativa_custo                     | estimativa_custo | NULL                     | D-043: faixa A–E/I definida por operador/admin; **pública**; NULL = sem estimativa          |
+| custo_final                          | numeric(12,2)    | NULL, CHECK `>= 0`       | D-043: custo final em BRL informado ao resolver (ou corrigido em `resolvido`); **público**  |
+| resolvido_em                         | timestamptz      | NULL                     | marca início da janela de aprovação do cliente (D-042)                                      |
+| fechar_automaticamente_em            | timestamptz      | NULL                     | prazo da aprovação: resolvido_em + dias_fechamento_automatico (exposto ao cliente e na API) |
+| fechado_em                           | timestamptz      | NULL                     | terminal                                                                                    |
+| reaberto_count                       | int              | NOT NULL default 0       |                                                                                             |
+| created_at / updated_at / deleted_at | timestamptz      |                          |                                                                                             |
 
 - UNIQUE `(tenant_id, numero)`.
 - CHECK: `sistema_alvo_id IS NOT NULL OR categoria_id IS NOT NULL` (todo chamado referencia um dos dois).
+- CHECK `ck_chamado_custo_final_nao_negativo`: `custo_final IS NULL OR custo_final >= 0` (D-043). O driver `pg` devolve `numeric` como string; o domínio expõe número (`custoDoBanco`).
 - Regras de quando cada `status` pode mudar: `04-chamados.md`.
 
 ### Mensagem
@@ -457,7 +483,7 @@ Registro de cada execução do pipeline do agente_ia. Detalhes de comportamento 
 | tokens_entrada  | int                | NULL                       |                                                                                                                    |
 | tokens_saida    | int                | NULL                       |                                                                                                                    |
 | duracao_ms      | int                | NULL                       |                                                                                                                    |
-| erro            | text               | NULL                       | quando `falhou`                                                                                                    |
+| erro            | text               | NULL                       | motivo quando `falhou` (ex.: `timeout`) ou `cancelado` (`ia_silenciada` — D-041)                                   |
 | iniciado_em     | timestamptz        | NULL                       |                                                                                                                    |
 | finalizado_em   | timestamptz        | NULL                       |                                                                                                                    |
 | created_at      | timestamptz        | NOT NULL                   |                                                                                                                    |
@@ -599,7 +625,7 @@ Todos os índices de negócio começam por `tenant_id` (alinhado ao filtro de RL
 - **Append-only (nunca soft-deletados)**: `evento_chamado` e `execucao_ia` — são trilha de auditoria e devem permanecer íntegros; expurgo só por política de retenção explícita.
 - **Sessao/Convite/RedefinicaoSenha**: não usam `deleted_at`. `sessao` é revogada via `revogada_em` e expurgada por retenção após expirar; `convite` transita de status (`revogado`/`expirado`) e é expurgado por retenção; `redefinicao_senha` é consumida via `usado_em` ou expira, e é expurgada por retenção. Todos guardam apenas `token_hash`, nunca o token em claro.
 - **Anexos**: soft delete marca a linha; o objeto físico no storage é removido por um job de GC após período de carência, respeitando checksum/dedupe.
-- **Cliente reabrindo chamado resolvido**: não deleta nada; incrementa `reaberto_count`, limpa `resolvido_em`/`fechar_automaticamente_em` e volta status para `em_atendimento` (regra completa em `04-chamados.md`).
+- **Reabertura de chamado `resolvido`/`fechado`/`cancelado`** (cliente autor ou operador/admin — D-038): não deleta nada; incrementa `reaberto_count`, limpa `resolvido_em`/`fechar_automaticamente_em`/`fechado_em` e volta status para `em_atendimento` (regra completa em `04-chamados.md` §8.2).
 - **Retenção/LGPD**: prazos de retenção, anonimização de dados pessoais e direito ao esquecimento são definidos em `09-seguranca-lgpd.md`. Este documento apenas garante que as colunas (`deleted_at`) e a separação auditoria/negócio existem para suportá-los.
 
 > DECISÃO PENDENTE: prazos concretos de retenção por entidade e política de anonimização (hard delete de PII em `usuario`/`mensagem` mantendo a trilha `evento_chamado` referencialmente válida) — a definir em `09-seguranca-lgpd.md`.

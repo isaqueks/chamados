@@ -22,6 +22,9 @@ import {
  *    legível passando por `em_atendimento`; no servidor ela é a da D-017);
  *  - não REABRE (`resolvido → em_atendimento`) por padrão: se o chamado aparece
  *    `resolvido` durante a execução, foi um humano (§8) — quem decide é ele;
+ *  - NUNCA reabre chamado encerrado (`fechado`/`cancelado → em_atendimento`,
+ *    arestas da D-038), nem com `permitirReabrir` — nem como passo intermediário
+ *    (ex.: `resolvido → fechado → em_atendimento` contornaria a regra acima);
  *  - `novo` não tem caminho do operador até nenhum alvo (`novo → em_triagem` é
  *    do `sistema`): a cadeia é `impossivel`, e a Forja nem começa (§5).
  */
@@ -52,6 +55,7 @@ export interface OpcoesCadeia {
 /** Arestas que a Forja nunca usa, mesmo válidas na máquina. */
 function arestaProibida(de: StatusChamado, para: StatusChamado, opcoes: OpcoesCadeia): boolean {
   if (para === 'cancelado') return true;
+  if (ehTerminal(de)) return true; // reabertura de encerrado (D-038): decisão humana
   if (de === 'em_triagem' && para === 'resolvido') return true;
   if (de === 'resolvido' && para === 'em_atendimento' && !opcoes.permitirReabrir) return true;
   return false;

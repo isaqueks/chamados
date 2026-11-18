@@ -82,6 +82,8 @@ async function main(): Promise<void> {
     nome: provider.nome,
     modelo: provider.modelo,
     esforco: iaConfig.provider === 'claude' ? iaConfig.esforco : null,
+    // D-044: modelo/esforço/timeout podem ser sobrescritos por tenant (/app/config).
+    tetoTimeoutTenantMs: iaConfig.tetoTimeoutTenantMs,
   });
 
   // Registro modular das filas (M9 adiciona notificacoes aqui).
@@ -91,6 +93,8 @@ async function main(): Promise<void> {
       redis,
       provider,
       limites: iaConfig.limites,
+      // D-044: teto do timeout por tenant (derivado do limiar de execução órfã).
+      tetoTimeoutTenantMs: iaConfig.tetoTimeoutTenantMs,
       mapa: iaConfig.mapa,
       lock: triagemConfig.lock,
       connection: redisConnection,

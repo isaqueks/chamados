@@ -88,7 +88,8 @@ export type ResultadoDownload =
  * Autoriza o download de um anexo e devolve os metadados para emitir a URL
  * assinada. Regras: RLS já isola o tenant (cross-tenant → `inexistente`); anexo de
  * mensagem `interna` NUNCA é servível ao cliente (specs/04 §6); leitura exige
- * pertencimento ao chamado (cliente → só os próprios).
+ * acesso de leitura ao chamado (cliente → qualquer chamado do tenant, D-037;
+ * anexo de nota interna segue barrado).
  */
 export async function autorizarDownloadAnexo(
   em: EntityManager,

@@ -1,5 +1,12 @@
 import { EntitySchema } from 'typeorm';
-import { StatusChamado, Natureza, Prioridade, Complexidade, valoresEnum } from '@chamados/shared';
+import {
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  EstimativaCusto,
+  valoresEnum,
+} from '@chamados/shared';
 
 /**
  * Documento rich text (ProseMirror/TipTap) armazenado em `*_json`. Tipado como
@@ -41,6 +48,13 @@ export interface Chamado {
   complexidade: Complexidade | null;
   /** IA silenciada neste chamado (D-024): nenhuma triagem roda enquanto true. */
   ia_silenciada: boolean;
+  /** Faixa de custo estimada pela equipe (D-043). Pública. `null` = sem estimativa. */
+  estimativa_custo: EstimativaCusto | null;
+  /**
+   * Custo final em BRL (D-043), `numeric(12,2)` — o driver pg devolve STRING
+   * ("150.00"); converta com `custoDoBanco` (a forma canônica é número).
+   */
+  custo_final: string | null;
   resolvido_em: Date | null;
   fechar_automaticamente_em: Date | null;
   fechado_em: Date | null;
@@ -92,6 +106,13 @@ export const ChamadoSchema = new EntitySchema<Chamado>({
       nullable: true,
     },
     ia_silenciada: { type: 'boolean', default: false },
+    estimativa_custo: {
+      type: 'enum',
+      enum: valoresEnum(EstimativaCusto),
+      enumName: 'estimativa_custo',
+      nullable: true,
+    },
+    custo_final: { type: 'numeric', precision: 12, scale: 2, nullable: true },
     resolvido_em: { type: 'timestamptz', nullable: true },
     fechar_automaticamente_em: { type: 'timestamptz', nullable: true },
     fechado_em: { type: 'timestamptz', nullable: true },

@@ -9,6 +9,7 @@ import {
   formatarPerguntasCliente,
   montarNotaDiagnostico,
   montarNotaEscalonamento,
+  montarNotaTriagemCancelada,
   montarNotaResolucaoPr,
   montarNotaFalhaResolucao,
   montarTemplateSpec,
@@ -613,4 +614,69 @@ export async function escalarParaHumano(
     dados: { erro },
   });
   deps.log('triagem escalada para humano', { chamadoId, erro });
+}
+
+/**
+ * Encerramento da triagem CANCELADA pelo silêncio da IA (D-041, specs/05 §2/§8).
+ * NÃO aplica nada da análise e NÃO publica mensagem ao cliente. Só: nota INTERNA
+ * explicando o cancelamento (quem silenciou, lido do último evento
+ * `ia_silenciada`; branch/PR que a resolução já tivesse publicado) e, se o
+ * chamado está em `em_triagem`, a mesma aresta do escalonamento
+ * (`em_triagem → em_atendimento`, pelo agente_ia, motivo
+ * `triagem_cancelada:ia_silenciada`) — o chamado nunca fica preso sem
+ * responsável. Sem `ia_falhou`: cancelamento não é falha. A `ExecucaoIA` é
+ * encerrada como `cancelado` pelo chamador, na MESMA transação.
+ */
+export async function encerrarTriagemCancelada(
+  em: EntityManager,
+  args: {
+    tenantId: string;
+    chamadoId: string;
+    execucaoId: string;
+    resolucaoPublicada?: { branch: string | null; prUrl: string | null } | null;
+  },
+  deps: DepsAplicador,
+): Promise<void> {
+  const { tenantId, chamadoId, execucaoId } = args;
+  const chamado = await em.findOne(ChamadoSchema, {
+    where: { id: chamadoId, deleted_at: IsNull() },
+  });
+  if (!chamado) return;
+
+  const ator = await atorAgenteIa(em, tenantId);
+  const quem: Array<{ nome: string | null }> = await em.query(
+    `SELECT u.nome FROM evento_chamado e
+       LEFT JOIN usuario u ON u.id = e.ator_id
+      WHERE e.chamado_id = $1 AND e.tipo = 'ia_silenciada'
+      ORDER BY e.created_at DESC LIMIT 1`,
+    [chamadoId],
+  );
+
+  if (ator) {
+    const msg = await criarMensagem(em, ator, {
+      chamado_id: chamadoId,
+      visibilidade: VisibilidadeMensagem.interna,
+      corpo: markdownParaDoc(
+        montarNotaTriagemCancelada({
+          silenciadaPor: quem[0]?.nome ?? null,
+          resolucaoPublicada: args.resolucaoPublicada ?? null,
+        }),
+      ),
+      execucao_ia_id: execucaoId,
+    });
+    if (!msg.ok) deps.log('cancelamento: nota interna falhou', { chamadoId, motivo: msg.motivo });
+  }
+
+  if (chamado.status === StatusChamado.em_triagem && ator) {
+    const t = await transicionarStatus(
+      em,
+      ator,
+      chamadoId,
+      StatusChamado.em_atendimento,
+      { motivo: 'triagem_cancelada:ia_silenciada' },
+      undefined,
+    );
+    if (!t.ok) deps.log('cancelamento: transição falhou', { chamadoId, motivo: t.motivo });
+  }
+  deps.log('triagem cancelada (IA silenciada) — chamado com a equipe', { chamadoId, execucaoId });
 }

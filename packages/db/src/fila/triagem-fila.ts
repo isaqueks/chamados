@@ -1,6 +1,12 @@
 import { Queue, type JobsOptions } from 'bullmq';
 import { GatilhoIA } from '@chamados/shared';
 import type { Despachante, EventoDominio } from '../chamados/eventos-dominio';
+import {
+  removerTriagensPendentes,
+  sinalizarCancelamentoTriagem,
+  type FilaComJobs,
+  type RedisSinalCancelamento,
+} from './cancelamento-triagem';
 
 /**
  * PUBLICADOR da fila `triagem-ia` (specs/01 §3.5, specs/05 §2). Vive em
@@ -137,6 +143,25 @@ export async function enfileirarTriagem(
 }
 
 /**
+ * Efeito pós-commit do SILÊNCIO da IA (D-041, specs/05 §2): grava o sinal Redis
+ * de cancelamento (PRIMEIRO — é o que interrompe a execução em curso, mesmo em
+ * outro processo/host) e remove os jobs pendentes do chamado. Usa a conexão da
+ * própria Queue `triagem-ia` (sem abrir outra). Lança em falha de Redis — o
+ * despachante registra e segue (best-effort; a rede de segurança é a releitura
+ * de `ia_silenciada` na Tx2 do worker).
+ */
+export async function cancelarTriagemDoChamado(chamadoId: string): Promise<{ removidos: number }> {
+  const q = filaTriagem();
+  const redis = (await q.client) as unknown as RedisSinalCancelamento;
+  await sinalizarCancelamentoTriagem(redis, chamadoId);
+  const removidos = await removerTriagensPendentes(
+    q as unknown as FilaComJobs,
+    prefixoJobChamado(chamadoId),
+  );
+  return { removidos };
+}
+
+/**
  * Despachante de eventos de domínio que ENFILEIRA a triagem-ia. Os eventos são
  * BUFFERIZADOS em `publicar` (síncrono, dentro da transação da mutação) e só vão
  * ao Redis em `flush()`, chamado PÓS-COMMIT pelo site de chamada — evitando job
@@ -159,6 +184,22 @@ export class DespachanteFila implements Despachante {
   async flush(): Promise<void> {
     const pendentes = this.buffer.splice(0, this.buffer.length);
     for (const ev of pendentes) {
+      if (ev.tipo === 'triagem_cancelamento_solicitado') {
+        try {
+          const { removidos } = await cancelarTriagemDoChamado(ev.chamadoId);
+          this.log('triagem: cancelamento sinalizado (IA silenciada)', {
+            chamadoId: ev.chamadoId,
+            pendentesRemovidos: removidos,
+          });
+        } catch (err) {
+          // Best-effort: a Tx2 do worker relê `ia_silenciada` e não aplica nada.
+          this.log('falha ao sinalizar cancelamento da triagem (ignorado)', {
+            chamadoId: ev.chamadoId,
+            erro: (err as Error).message,
+          });
+        }
+        continue;
+      }
       if (ev.tipo !== 'triagem_solicitada') continue;
       try {
         await enfileirarTriagem({

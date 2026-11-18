@@ -1,11 +1,17 @@
 import { IsNull } from 'typeorm';
 import type { EntityManager } from 'typeorm';
-import { LIMITE_IA_INSTRUCOES_CHARS } from '@chamados/shared';
+import {
+  LIMITE_IA_INSTRUCOES_CHARS,
+  normalizarDiasAprovacao,
+  validarConfigModeloIa,
+  type ConfigModeloIaTenant,
+  type EntradaConfigModeloIa,
+} from '@chamados/shared';
 import { TenantSchema, type Tenant, type ConfigBranding } from '../entities/tenant';
 
 /**
  * Configurações do tenant (specs/07 §3 e §4): branding whitelabel, prazo de
- * auto-fechamento, guardrail de IA e domínio próprio. Opera sob o
+ * aprovação do cliente (D-042), guardrail de IA e domínio próprio. Opera sob o
  * `EntityManager` já escopado ao tenant (a policy da tabela `tenant` é por `id`).
  */
 
@@ -50,13 +56,17 @@ export interface ConfigGeral {
   ia_resolucao_automatica_habilitada: boolean;
 }
 
-/** Atualiza as configurações gerais (com clamp defensivo do prazo). */
+/**
+ * Atualiza as configurações gerais. `dias_fechamento_automatico` é o prazo para o
+ * cliente aprovar ou contestar (D-042) — clamp defensivo em 1–365
+ * (`normalizarDiasAprovacao`; a UI valida antes e mostra o erro).
+ */
 export async function atualizarConfigGeral(
   em: EntityManager,
   tenantId: string,
   config: ConfigGeral,
 ): Promise<void> {
-  const dias = Math.min(Math.max(Math.trunc(config.dias_fechamento_automatico), 1), 365);
+  const dias = normalizarDiasAprovacao(config.dias_fechamento_automatico);
   await em.update(
     TenantSchema,
     { id: tenantId },
@@ -80,6 +90,28 @@ export async function atualizarInstrucoesIa(
   const texto = instrucoes?.trim() ?? '';
   const valor = texto.length > 0 ? texto.slice(0, LIMITE_IA_INSTRUCOES_CHARS) : null;
   await em.update(TenantSchema, { id: tenantId }, { ia_instrucoes: valor });
+}
+
+export type ResultadoConfigModeloIa =
+  { ok: true; valor: ConfigModeloIaTenant } | { ok: false; erro: string };
+
+/**
+ * Define/limpa modelo, esforço e timeout da IA do tenant (D-044, specs/07 §4.1).
+ * Valida AQUI (fronteira de gravação) com `validarConfigModeloIa` de
+ * @chamados/shared — campo vazio grava `null` ("Padrão da instalação").
+ * `tetoTimeoutMs` vem do ambiente (`lerPadroesIaAmbiente(...).tetoTimeoutTenantMs`):
+ * o teto é derivado do limiar de execução órfã, não fixo.
+ */
+export async function atualizarConfigModeloIa(
+  em: EntityManager,
+  tenantId: string,
+  entrada: EntradaConfigModeloIa,
+  tetoTimeoutMs?: number,
+): Promise<ResultadoConfigModeloIa> {
+  const r = validarConfigModeloIa(entrada, tetoTimeoutMs);
+  if (!r.ok) return r;
+  await em.update(TenantSchema, { id: tenantId }, { ...r.valor });
+  return r;
 }
 
 export type ResultadoDominio = { ok: true } | { ok: false; motivo: 'em_uso' };

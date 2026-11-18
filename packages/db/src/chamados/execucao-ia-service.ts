@@ -14,7 +14,8 @@ import type { AtorChamado } from './chamado-service';
  * Serviços de `ExecucaoIA` (specs/02, specs/05). Rodam SEMPRE dentro de
  * `runInTenantContext` (transação + RLS). Ciclo de vida:
  *   criar (na_fila) → marcarExecutando (executando) → concluir (concluido)
- *                                                    └→ falhar (falhou)
+ *                                                    ├→ falhar (falhou)
+ *                                                    └→ cancelar (cancelado — D-041)
  * `timeout`/`budget_excedido` são MOTIVOS (campo `erro`) sobre `status = falhou`,
  * não status próprios (specs/05 §8). A telemetria (`custoUsd`/`duracaoMs`/
  * `tokensEntrada`/`tokensSaida`) é gravada com EXATAMENTE esses nomes de origem
@@ -118,22 +119,26 @@ export async function concluirExecucaoMapeamento(
   );
 }
 
-/**
- * Falha a execução (`falhou`) com o `erro` detalhado (specs/05 §8: 'timeout',
- * 'budget_excedido' ou mensagem do provider). Persiste telemetria parcial se houver.
- */
-export async function falharExecucao(
+/** Telemetria parcial de uma execução encerrada sem resultado (D-033). */
+type OpcoesEncerramento = {
+  acoes?: unknown[];
+  telemetriaParcial?: Partial<AIProviderResult['telemetria']>;
+};
+
+/** Encerra a execução sem resultado (`falhou`/`cancelado`) com motivo e telemetria parcial. */
+async function encerrarSemResultado(
   em: EntityManager,
   id: string,
+  status: typeof StatusExecucaoIA.falhou | typeof StatusExecucaoIA.cancelado,
   erro: string,
-  opts: { acoes?: unknown[]; telemetriaParcial?: Partial<AIProviderResult['telemetria']> } = {},
+  opts: OpcoesEncerramento,
 ): Promise<void> {
   const t = opts.telemetriaParcial ?? {};
   await em.update(
     ExecucaoIASchema,
     { id },
     {
-      status: StatusExecucaoIA.falhou,
+      status,
       erro,
       acoes: opts.acoes ?? [],
       custo_usd: t.custoUsd !== undefined ? String(t.custoUsd) : null,
@@ -143,6 +148,34 @@ export async function falharExecucao(
       finalizado_em: new Date(),
     },
   );
+}
+
+/**
+ * Falha a execução (`falhou`) com o `erro` detalhado (specs/05 §8: 'timeout',
+ * 'budget_excedido' ou mensagem do provider). Persiste telemetria parcial se houver.
+ */
+export async function falharExecucao(
+  em: EntityManager,
+  id: string,
+  erro: string,
+  opts: OpcoesEncerramento = {},
+): Promise<void> {
+  await encerrarSemResultado(em, id, StatusExecucaoIA.falhou, erro, opts);
+}
+
+/**
+ * CANCELA a execução (`cancelado` — D-041): a IA foi silenciada no chamado
+ * durante a triagem. `motivo` vai em `erro` (ex.: 'ia_silenciada'); a telemetria
+ * parcial (D-033) é gravada como na falha — o gasto até o corte não some. Não é
+ * falha: a varredura de órfãs e os painéis de falha não a contam.
+ */
+export async function cancelarExecucao(
+  em: EntityManager,
+  id: string,
+  motivo: string,
+  opts: OpcoesEncerramento = {},
+): Promise<void> {
+  await encerrarSemResultado(em, id, StatusExecucaoIA.cancelado, motivo, opts);
 }
 
 /**
