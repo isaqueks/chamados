@@ -2,6 +2,11 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-11-18 — Produção: Agent SDK 0.3.327 (modelos novos) e diagnóstico da lentidão da VPS
+
+- **Triagem falhava com `400 Claude Code 2.1.210 does not support this model; version 2.1.280 or newer is required`.** Com a D-044 o admin escolheu `claude-opus-5-5` no card "Assistente IA", mas o worker usava `@anthropic-ai/claude-agent-sdk` 0.3.210, que embute o Claude Code 2.1.210 — antigo demais para esse modelo. Toda triagem do tenant caía em "encaminhado para atendimento humano". **Correção:** SDK atualizado para `^0.3.327` (Claude Code 2.1.327) em `apps/worker`. Sem mudança de código: typecheck e os testes do worker passam. **Lição para a D-044:** a lista de modelos sugeridos (`packages/shared/src/ia-config.ts`) só vale se o SDK instalado no worker suportar o modelo — ao acrescentar um modelo novo, conferir a versão do SDK.
+- **Lentidão em produção (carga 31 em 1 vCPU, 1,1 GB de swap).** Não era a aplicação: os processos `containerd-shim` dos containers com healthcheck a cada 5 s (Postgres, Redis e MinIO do Chamados, e containers de outros projetos na mesma VPS) cresceram para ~200 MB e ~10 % de CPU cada depois de ~2 meses no ar, empurrando o `next-server` e o worker para o swap. **Ação:** backup do banco e `docker restart` dos três containers do Chamados com web/worker parados (dados em volumes nomeados); carga voltou a ~3 e o login a 0,3 s. **Pendências operacionais:** (1) os containers de outros projetos na VPS têm o mesmo sintoma e não foram tocados; (2) o `docker-compose.prod.yml` que criou os containers de produção não existe mais em `/opt/chamados` (não está no repositório e o `rsync --delete` o removeu) — sem ele não dá para recriar os containers com healthcheck mais espaçado (30 s), que é a correção duradoura; até lá o sintoma tende a voltar em alguns meses e o remédio é reiniciar os containers.
+
 ## 2026-11-18 — D-046: enviar arquivos pela API `/api/v1` (multipart) e pelo MCP, com capturas de tela na conversa
 
 - **Pedido do usuário:** "Permita no MCP responder e enviar arquivos também (capturas de tela, etc)." Entrega a **L7** prevista na D-036 (pendente com ADR próprio) e estende D-028/D-035.
