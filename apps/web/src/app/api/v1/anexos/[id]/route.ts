@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 /**
  * Entrega um Anexo à API (specs/11 §4.7, D-035): autentica por **Bearer** e
  * autoriza com o MESMO `autorizarDownloadAnexo` da rota de cookie — RLS isola o
- * tenant, cliente só baixa dos próprios chamados e anexo de nota interna nunca
+ * tenant, cliente baixa de qualquer chamado do tenant (D-037) e anexo de nota interna nunca
  * sai para cliente (specs/04 §6). Negação é sempre 404, sem vazar existência.
  *
  * Diferença deliberada da rota de cookie: aqui os bytes saem PELA APLICAÇÃO em

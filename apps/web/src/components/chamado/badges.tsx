@@ -5,6 +5,10 @@ import {
   Prioridade,
   Complexidade,
   StatusExecucaoIA,
+  EstimativaCusto,
+  rotuloEstimativaCusto,
+  faixaEstimativaCusto,
+  formatarBrl,
 } from '@chamados/shared';
 import { cn } from '@/lib/utils';
 import {
@@ -108,6 +112,22 @@ const PONTO_PRIORIDADE: Record<Prioridade, string> = {
   [Prioridade.alta]: 'bg-amber-500',
   [Prioridade.urgente]: 'bg-red-500',
 };
+
+/** Ponto de cor da prioridade (menus/filtros que já trazem o rótulo — D-045). */
+export function PontoPrioridade({
+  prioridade,
+  className,
+}: {
+  prioridade: Prioridade;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn('size-1.5 shrink-0 rounded-full', PONTO_PRIORIDADE[prioridade], className)}
+      aria-hidden
+    />
+  );
+}
 
 export function PrioridadeBadge({
   prioridade,
@@ -225,6 +245,94 @@ export function ExecucaoIABadge({
     <span className={cn(execucaoIaBadge({ tom }), className)}>
       <span className={cn('size-1.5 rounded-full', PONTO_EXECUCAO[tom])} aria-hidden />
       {ROTULO_STATUS_EXECUCAO_IA[status]}
+    </span>
+  );
+}
+
+// --- Custo (D-043) ----------------------------------------------------------
+
+/**
+ * Estimativa de custo (faixa). Pública — pode aparecer em qualquer superfície da
+ * equipe (fila, detalhe). Sem cor semântica: é informação comercial, não alerta.
+ */
+export function EstimativaCustoBadge({
+  estimativa,
+  className,
+}: {
+  estimativa: EstimativaCusto;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(baseBadge, 'border-border bg-transparent text-muted-foreground', className)}
+      title="Estimativa de custo"
+    >
+      Estimativa: {rotuloEstimativaCusto(estimativa)}
+    </span>
+  );
+}
+
+/** Custo final (BRL) informado na resolução. */
+export function CustoFinalBadge({ valor, className }: { valor: number; className?: string }) {
+  return (
+    <span
+      className={cn(
+        baseBadge,
+        'border-transparent bg-muted text-foreground tabular-nums',
+        className,
+      )}
+      title="Custo final"
+    >
+      Custo final: {formatarBrl(valor)}
+    </span>
+  );
+}
+
+/**
+ * Resumo de custo para a célula densa da fila (D-045): o custo final, quando
+ * houver, manda (valor em destaque + "custo final"); senão a faixa estimada com
+ * o código num selo curto. Mesma linguagem neutra dos badges de custo acima.
+ */
+export function ResumoCusto({
+  estimativa,
+  custoFinal,
+  className,
+}: {
+  estimativa: EstimativaCusto | null;
+  custoFinal: number | null;
+  className?: string;
+}) {
+  if (custoFinal != null) {
+    return (
+      <span className={cn('flex flex-col leading-tight', className)}>
+        <span className="text-sm font-medium tabular-nums">{formatarBrl(custoFinal)}</span>
+        <span className="text-xs text-muted-foreground">
+          custo final
+          {estimativa
+            ? ` · estim. ${estimativa === EstimativaCusto.I ? 'isento' : estimativa}`
+            : ''}
+        </span>
+      </span>
+    );
+  }
+  if (estimativa) {
+    return (
+      <span
+        className={cn('flex items-center gap-1.5', className)}
+        title={`Estimativa de custo: ${rotuloEstimativaCusto(estimativa)}`}
+      >
+        {estimativa !== EstimativaCusto.I && (
+          <span className={cn(baseBadge, 'border-border px-1.5 text-muted-foreground')}>
+            {estimativa}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">{faixaEstimativaCusto(estimativa)}</span>
+      </span>
+    );
+  }
+  return (
+    <span className={cn('text-muted-foreground/60', className)} aria-label="Sem estimativa">
+      —
     </span>
   );
 }

@@ -24,7 +24,14 @@ import {
   type QueryFn,
   type QueryMapFn,
 } from './claude-agent-provider';
-import { ErroProviderBudget, ErroProviderMaxTurnos, ErroProviderTimeout } from '../erros';
+import {
+  ErroProviderBudget,
+  ErroProviderMaxTurnos,
+  ErroProviderTimeout,
+  ErroTriagemCancelada,
+  motivoErro,
+  telemetriaDoErro,
+} from '../erros';
 
 /**
  * Testa o MAPEAMENTO do ClaudeAgentProvider mockando a FRONTEIRA do SDK
@@ -149,6 +156,51 @@ describe('ClaudeAgentProvider — mapeamento SDK → AIProviderResult', () => {
     await custom.executarTriagem(inputBase());
     expect(vistos[1]).toEqual({ modelo: 'claude-sonnet-5', esforco: 'low' });
     expect(custom.esforco).toBe('low');
+  });
+
+  it('override do TENANT (input.parametrosModelo) chega à fronteira do SDK e vence o default (D-044)', async () => {
+    const vistos: Array<{ modelo: string; esforco: string }> = [];
+    const espiao: QueryFn = async function* (params) {
+      vistos.push({ modelo: params.modelo, esforco: params.esforco });
+      yield RESULTADO_SUCESSO;
+    };
+    // Default do provider = env (`IA_MODELO`/`IA_ESFORCO`).
+    const p = new ClaudeAgentProvider({ queryFn: espiao, modelo: 'claude-sonnet-5-5' });
+
+    await p.executarTriagem({
+      ...inputBase(),
+      parametrosModelo: { modelo: 'claude-opus-5-5', esforco: 'xhigh' },
+    });
+    expect(vistos[0]).toEqual({ modelo: 'claude-opus-5-5', esforco: 'xhigh' });
+    expect(p.modeloEfetivo({ modelo: 'claude-opus-5-5' })).toBe('claude-opus-5-5');
+
+    // Só o esforço sobrescrito: o modelo segue o default do provider (env).
+    await p.executarTriagem({ ...inputBase(), parametrosModelo: { esforco: 'low' } });
+    expect(vistos[1]).toEqual({ modelo: 'claude-sonnet-5-5', esforco: 'low' });
+
+    // Sem override: default do provider; o default não é mutado pelo override.
+    await p.executarTriagem(inputBase());
+    expect(vistos[2]).toEqual({ modelo: 'claude-sonnet-5-5', esforco: 'high' });
+    expect(p.modelo).toBe('claude-sonnet-5-5');
+  });
+
+  it('o timeout EFETIVO (limites.timeoutMs vindo do tenant) é o que aborta a triagem (D-044)', async () => {
+    let abortadoEm: number | null = null;
+    const inicio = Date.now();
+    const queryFn: QueryFn = async function* ({ abortController }) {
+      await new Promise<void>((_resolve, reject) => {
+        abortController.signal.addEventListener('abort', () => {
+          abortadoEm = Date.now() - inicio;
+          reject(new Error('aborted'));
+        });
+      });
+      yield { type: 'result', subtype: 'success' };
+    };
+    const p = new ClaudeAgentProvider({ queryFn });
+    const input = { ...inputBase(), limites: { timeoutMs: 30, budgetUsd: 1, maxTurnos: 5 } };
+    await expect(p.executarTriagem(input)).rejects.toBeInstanceOf(ErroProviderTimeout);
+    expect(abortadoEm).not.toBeNull();
+    expect(abortadoEm!).toBeLessThan(1000); // o default de inputBase() (1000 ms) não vale
   });
 
   it('extrai o resultado do texto (result JSON) quando não há structured_output', () => {
@@ -490,6 +542,33 @@ describe('ClaudeAgentProvider — mapeamento (D-013)', () => {
     expect(r.telemetria.custoUsd).toBe(0.05);
   });
 
+  it('mapearSistema leva o modelo/esforço do TENANT à fronteira, inclusive na conclusão (D-044)', async () => {
+    const vistos: Array<{ modelo: string; esforco: string; conclusao: boolean }> = [];
+    const queryMapFn: QueryMapFn = async function* (params) {
+      vistos.push({
+        modelo: params.modelo,
+        esforco: params.esforco,
+        conclusao: Boolean(params.conclusao),
+      });
+      if (!params.conclusao) {
+        yield { type: 'system', session_id: 'sess-1' };
+        yield { type: 'result', subtype: 'error_max_turns', num_turns: 10 };
+        return;
+      }
+      yield { type: 'result', subtype: 'success', result: '# Mapa parcial' };
+    };
+    const p = new ClaudeAgentProvider({ queryFn: queryFnDe(RESULTADO_SUCESSO), queryMapFn });
+    const r = await p.mapearSistema({
+      ...inputMapeamento(),
+      parametrosModelo: { modelo: 'claude-fable-5-2', esforco: 'medium' },
+    });
+    expect(r.resumo).toContain('Mapa parcial');
+    expect(vistos).toEqual([
+      { modelo: 'claude-fable-5-2', esforco: 'medium', conclusao: false },
+      { modelo: 'claude-fable-5-2', esforco: 'medium', conclusao: true },
+    ]);
+  });
+
   it('mapearSistema trunca o resumo ao maxChars', async () => {
     const longo = 'x'.repeat(500);
     const queryMapFn = queryMapFnDe({
@@ -708,6 +787,67 @@ describe('ClaudeAgentProvider — triagem: telemetria parcial nas falhas por lim
     expect(erro).toBeInstanceOf(ErroProviderMaxTurnos);
     expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.custoUsd).toBe(0.9);
     expect((erro as ErroProviderMaxTurnos).telemetriaParcial?.tokensEntrada).toBe(100);
+  });
+});
+
+describe('ClaudeAgentProvider — cancelamento por silêncio da IA (D-041)', () => {
+  /** queryFn que consome 1 turno e espera o abort (como o SDK real ao matar o subprocesso). */
+  const queryFnAteAbort: QueryFn = async function* ({ abortController }) {
+    yield { type: 'assistant', message: { usage: { input_tokens: 1500, output_tokens: 15 } } };
+    await new Promise<void>((resolve) => {
+      abortController.signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+    throw new Error('aborted');
+  };
+
+  it('o sinal externo aborta pelo MESMO AbortController e vira ErroTriagemCancelada (não timeout)', async () => {
+    let abortVisto = false;
+    const queryFn: QueryFn = (params) => {
+      params.abortController.signal.addEventListener('abort', () => (abortVisto = true));
+      return queryFnAteAbort(params);
+    };
+    const externo = new AbortController();
+    const p = new ClaudeAgentProvider({ queryFn });
+    const input = {
+      ...inputBase(),
+      limites: { timeoutMs: 60_000, budgetUsd: 1, maxTurnos: 5 },
+      sinalCancelamento: externo.signal,
+    };
+    const promessa = p.executarTriagem(input).catch((e: unknown) => e);
+    setTimeout(() => externo.abort(), 10);
+    const erro = await promessa;
+    expect(abortVisto).toBe(true);
+    expect(erro).toBeInstanceOf(ErroTriagemCancelada);
+    expect(erro).not.toBeInstanceOf(ErroProviderTimeout);
+    expect(motivoErro(erro)).toBe('ia_silenciada');
+    // Telemetria parcial (D-033) preservada no cancelamento.
+    expect(telemetriaDoErro(erro)?.tokensEntrada).toBe(1500);
+  });
+
+  it('sinal JÁ abortado: nem chama o SDK', async () => {
+    let chamou = false;
+    const queryFn: QueryFn = async function* () {
+      chamou = true;
+      yield { type: 'result', subtype: 'success' };
+    };
+    const externo = new AbortController();
+    externo.abort();
+    const p = new ClaudeAgentProvider({ queryFn });
+    await expect(
+      p.executarTriagem({ ...inputBase(), sinalCancelamento: externo.signal }),
+    ).rejects.toBeInstanceOf(ErroTriagemCancelada);
+    expect(chamou).toBe(false);
+  });
+
+  it('com sinal presente e NÃO abortado, o timeout continua sendo timeout', async () => {
+    const externo = new AbortController();
+    const p = new ClaudeAgentProvider({ queryFn: queryFnAteAbort });
+    const input = {
+      ...inputBase(),
+      limites: { timeoutMs: 20, budgetUsd: 1, maxTurnos: 5 },
+      sinalCancelamento: externo.signal,
+    };
+    await expect(p.executarTriagem(input)).rejects.toBeInstanceOf(ErroProviderTimeout);
   });
 });
 

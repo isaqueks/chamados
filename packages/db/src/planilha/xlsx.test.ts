@@ -1,9 +1,16 @@
 import { inflateRawSync } from 'node:zlib';
 import { describe, it, expect } from 'vitest';
-import { gerarXlsx, crc32, letraColuna, sanitizarNomeAba } from './xlsx';
+import {
+  gerarXlsx,
+  crc32,
+  letraColuna,
+  sanitizarNomeAba,
+  pareceFormula,
+  serialExcel,
+} from './xlsx';
 
 /**
- * Gerador de XLSX sem dependências (D-034). Como não há lib de planilha no
+ * Gerador de XLSX sem dependências (D-034; movido para `@chamados/db/planilha` na D-045). Como não há lib de planilha no
  * worker, o teste traz um LEITOR ZIP mínimo (percorre os local file headers e
  * descomprime com `inflateRawSync`) e valida o XML que sai de fato do pacote —
  * prova de que o arquivo é um ZIP bem formado E uma planilha correta.
@@ -123,6 +130,52 @@ describe('gerarXlsx (D-034)', () => {
     expect(tipos).toContain('PartName="/xl/worksheets/sheet1.xml"');
     expect(tipos).toContain('PartName="/xl/styles.xml"');
     expect(partes.get('xl/workbook.xml')!).toContain('name="Relório2024"');
+  });
+
+  it('anti-fórmula (D-045): texto iniciado por = + - @ vira inlineStr com quotePrefix, nunca <f>', () => {
+    const partes = lerZip(
+      gerarXlsx({
+        colunas: ['a', 'b', 'c', 'd', 'e'],
+        linhas: [['=HYPERLINK("http://x","y")', '+1', '-2+3', '@SUM(A1)', 'normal']],
+      }),
+    );
+    const sheet = partes.get('xl/worksheets/sheet1.xml')!;
+    expect(sheet).not.toContain('<f>');
+    for (const ref of ['A2', 'B2', 'C2', 'D2']) {
+      expect(sheet).toContain(`<c r="${ref}" s="2" t="inlineStr">`);
+    }
+    expect(sheet).toContain('<c r="E2" t="inlineStr">');
+    expect(sheet).toContain('=HYPERLINK(&quot;http://x&quot;,&quot;y&quot;)');
+    expect(partes.get('xl/styles.xml')!).toContain('quotePrefix="1"');
+    expect(pareceFormula('=1')).toBe(true);
+    expect(pareceFormula('\tx')).toBe(true);
+    expect(pareceFormula('Chamado = bug')).toBe(false);
+  });
+
+  it('datas nativas (D-045): número de série com estilo de data/hora, no fuso pedido', () => {
+    // 2026-11-17 15:30 UTC = 12:30 em São Paulo (UTC-3, sem horário de verão).
+    const instante = new Date(Date.UTC(2026, 10, 17, 15, 30, 0));
+    expect(serialExcel(new Date(Date.UTC(1970, 0, 1)))).toBe(25569);
+    expect(serialExcel(instante, 'America/Sao_Paulo')).toBeCloseTo(46343 + 12.5 / 24, 6);
+    const sheet = lerZip(
+      gerarXlsx({
+        colunas: ['quando', 'custo'],
+        linhas: [[instante, 1500.5]],
+        datas: 'data',
+        fusoHorario: 'America/Sao_Paulo',
+        formatos: [undefined, 'moeda'],
+      }),
+    ).get('xl/worksheets/sheet1.xml')!;
+    expect(sheet).toMatch(/<c r="A2" s="3" t="n"><v>46343\.52083\d*<\/v><\/c>/);
+    expect(sheet).toContain('<c r="B2" s="4" t="n"><v>1500.5</v></c>');
+  });
+
+  it('modo padrão continua escrevendo datas como texto (compatível com D-034)', () => {
+    const sheet = lerZip(
+      gerarXlsx({ colunas: ['d'], linhas: [[new Date(Date.UTC(2024, 0, 2, 3, 4, 5))]] }),
+    ).get('xl/worksheets/sheet1.xml')!;
+    expect(sheet).toContain('2024-01-02 03:04:05');
+    expect(sheet).not.toContain('s="3"');
   });
 
   it('aguenta muitas linhas/colunas sem estourar (500 x 30)', () => {

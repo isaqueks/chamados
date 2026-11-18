@@ -116,6 +116,45 @@ export function montarNotaEscalonamento(motivo: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Nota interna de triagem CANCELADA pelo silêncio da IA (D-041)
+// ---------------------------------------------------------------------------
+
+export interface DadosNotaTriagemCancelada {
+  /** Nome de quem silenciou (último evento `ia_silenciada`); `null` = desconhecido. */
+  silenciadaPor: string | null;
+  /** Branch/PR que a tentativa de resolução já publicou ANTES do cancelamento. */
+  resolucaoPublicada?: { branch: string | null; prUrl: string | null } | null;
+}
+
+/**
+ * Nota interna do cancelamento da triagem porque a IA foi silenciada durante a
+ * execução (D-041). Deixa claro que NADA da análise foi aplicado (nenhuma
+ * mensagem ao cliente, classificação ou mudança) e que a equipe conduz. Se a
+ * resolução já tinha publicado branch/PR antes do corte (ponto sem volta),
+ * avisa para a equipe avaliar/fechar — nunca some sem registro.
+ */
+export function montarNotaTriagemCancelada(d: DadosNotaTriagemCancelada): string {
+  const quem = d.silenciadaPor?.trim();
+  const linhas = [
+    `Triagem automática cancelada: a IA foi silenciada neste chamado${quem ? ` por ${quem}` : ''} ` +
+      'enquanto a análise estava em andamento.',
+    '',
+    'Nada da análise foi aplicado — nenhuma mensagem ao cliente, classificação, SPEC ou ' +
+      'mudança de dados. O chamado segue com a equipe.',
+  ];
+  const r = d.resolucaoPublicada;
+  if (r && (r.branch || r.prUrl)) {
+    linhas.push(
+      '',
+      'Atenção: antes do cancelamento a tentativa de resolução já havia publicado ' +
+        (r.prUrl ? `o PR ${r.prUrl}` : `a branch \`${r.branch}\``) +
+        ' — avalie ou feche manualmente.',
+    );
+  }
+  return linhas.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // SPEC de alteração (specs/05 §7) — nota INTERNA, template OBRIGATÓRIO
 // ---------------------------------------------------------------------------
 

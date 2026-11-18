@@ -18,7 +18,16 @@ import {
   type MensagemTimeline,
   type EventoView,
 } from '@chamados/db';
-import { Papel, StatusChamado, VisibilidadeMensagem, transicoesDoPapel } from '@chamados/shared';
+import {
+  MOTIVO_ATRIBUICAO_RESPOSTA,
+  Papel,
+  StatusChamado,
+  VisibilidadeMensagem,
+  transicoesDoPapel,
+  detalheEventoCusto,
+  situacaoAprovacao,
+  type SituacaoAprovacao,
+} from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 import {
   StatusBadge,
@@ -26,6 +35,8 @@ import {
   ComplexidadeBadge,
   NaturezaBadge,
   NotaInternaBadge,
+  EstimativaCustoBadge,
+  CustoFinalBadge,
 } from '@/components/chamado/badges';
 import { ROTULO_STATUS_CHAMADO, ROTULO_TIPO_EVENTO, ROTULO_PAPEL, iniciais } from '@/lib/rotulos';
 import { dataHora, tempoRelativo } from '@/lib/tempo';
@@ -143,6 +154,8 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
     return nomes[autorId]?.nome ?? 'Usuário';
   };
   const solicitante = autorLabel(chamado.cliente_id);
+  // Janela de aprovação do cliente (D-042): prazo enquanto resolvido; depois, como foi aprovado.
+  const aprovacao = textoAprovacao(situacaoAprovacao(chamado, eventos), solicitante);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
@@ -169,6 +182,10 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
           <NaturezaBadge natureza={chamado.natureza} />
           <PrioridadeBadge prioridade={chamado.prioridade} />
           {chamado.complexidade && <ComplexidadeBadge complexidade={chamado.complexidade} />}
+          {chamado.estimativa_custo && (
+            <EstimativaCustoBadge estimativa={chamado.estimativa_custo} />
+          )}
+          {chamado.custo_final != null && <CustoFinalBadge valor={chamado.custo_final} />}
         </div>
         <p className="text-xs text-muted-foreground">
           Aberto por {solicitante} · {tempoRelativo(chamado.created_at)} · atualizado{' '}
@@ -218,12 +235,16 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
             {encerrado ? (
               <div className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
                 Chamado {ROTULO_STATUS_CHAMADO[chamado.status].toLowerCase()} — não recebe novas
-                mensagens.
+                mensagens. Para retomar o atendimento, use “Reabrir” no painel de status.
               </div>
             ) : (
               <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
                 <h2 className="font-heading text-sm font-semibold">Responder</h2>
-                <RespostaForm chamadoId={chamado.id} podeInterna={podeInterna} />
+                <RespostaForm
+                  chamadoId={chamado.id}
+                  podeInterna={podeInterna}
+                  souResponsavel={chamado.operador_id === usuario.id}
+                />
               </div>
             )}
           </div>
@@ -237,6 +258,8 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
                 natureza={chamado.natureza}
                 prioridade={chamado.prioridade}
                 complexidade={chamado.complexidade ?? null}
+                estimativaCusto={chamado.estimativa_custo ?? null}
+                custoFinal={chamado.custo_final ?? null}
                 alvosStatus={alvos}
                 operadores={operadores}
                 operadorAtualId={chamado.operador_id ?? null}
@@ -256,6 +279,7 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
               {chamado.resolvido_em && (
                 <LinhaMeta rotulo="Resolvido em" valor={dataHora(chamado.resolvido_em)} />
               )}
+              {aprovacao && <LinhaMeta rotulo={aprovacao.rotulo} valor={aprovacao.valor} />}
               <LinhaMeta rotulo="Reaberturas" valor={String(chamado.reaberto_count)} />
             </div>
           </div>
@@ -272,6 +296,26 @@ export default async function ChamadoDetalhePage({ params }: { params: Promise<{
       />
     </div>
   );
+}
+
+/** Linha "Aprovação" do painel (D-042) a partir da situação derivada dos eventos. */
+function textoAprovacao(
+  s: SituacaoAprovacao,
+  solicitante: string,
+): { rotulo: string; valor: string } | null {
+  if (!s) return null;
+  if (s.tipo === 'aguardando') {
+    return {
+      rotulo: 'Aprovação até',
+      valor: s.prazo ? dataHora(s.prazo) : 'aguardando o cliente',
+    };
+  }
+  if (s.tipo === 'aprovado') {
+    return s.forma === 'explicita'
+      ? { rotulo: 'Aprovado', valor: `${solicitante} · ${dataHora(s.em)}` }
+      : { rotulo: 'Aprovado', valor: `tacitamente · ${dataHora(s.em)}` };
+  }
+  return { rotulo: 'Fechado', valor: `pela equipe · ${dataHora(s.em)}` };
 }
 
 function LinhaMeta({ rotulo, valor }: { rotulo: string; valor: string }) {
@@ -351,12 +395,23 @@ function MensagemBolha({
 }
 
 function EventoLinha({ autor, e }: { autor: string; e: EventoView }) {
-  const dados = e.dados as { de?: string; para?: string; motivo?: string };
+  const dados = e.dados as { de?: string; para?: string; motivo?: string; operador_novo?: string };
+  let rotulo = ROTULO_TIPO_EVENTO[e.tipo];
   let detalhe = '';
   if (e.tipo === 'status_alterado' && dados.de && dados.para) {
     const de = ROTULO_STATUS_CHAMADO[dados.de as StatusChamado] ?? dados.de;
     const para = ROTULO_STATUS_CHAMADO[dados.para as StatusChamado] ?? dados.para;
     detalhe = ` (${de} → ${para})`;
+  }
+  // D-043: faixa/valor do custo.
+  const custo = detalheEventoCusto(e.tipo, e.dados);
+  if (custo) detalhe = ` ${custo}`;
+  // Atribuição a si mesmo (D-039: ao responder em público; ou pelo seletor).
+  if (e.tipo === 'operador_atribuido' && e.ator_id && dados.operador_novo === e.ator_id) {
+    rotulo =
+      dados.motivo === MOTIVO_ATRIBUICAO_RESPOSTA
+        ? 'assumiu o chamado ao responder'
+        : 'assumiu o chamado';
   }
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-1 text-xs text-muted-foreground">
@@ -366,7 +421,7 @@ function EventoLinha({ autor, e }: { autor: string; e: EventoView }) {
       />
       <span className="font-medium">{autor}</span>
       <span>
-        {ROTULO_TIPO_EVENTO[e.tipo]}
+        {rotulo}
         {detalhe}
       </span>
       <span className="ml-auto" title={dataHora(e.created_at)}>

@@ -30,6 +30,9 @@ import { M111720000008000 } from './migrations/0008-m11';
 import { NaturezaDuvida1720000009000 } from './migrations/0009-natureza-duvida';
 import { IaInstrucoes1720000010000 } from './migrations/0010-ia-instrucoes';
 import { IaSilenciada1720000011000 } from './migrations/0011-ia-silenciada';
+import { IaConfigTenant1720000012000 } from './migrations/0012-ia-config-tenant';
+import { AprovacaoCliente1720000013000 } from './migrations/0013-aprovacao-cliente';
+import { CustoChamado1720000014000 } from './migrations/0014-custo-chamado';
 
 const entidades = [
   TenantSchema,
@@ -62,6 +65,9 @@ const migrations = [
   NaturezaDuvida1720000009000,
   IaInstrucoes1720000010000,
   IaSilenciada1720000011000,
+  IaConfigTenant1720000012000,
+  AprovacaoCliente1720000013000,
+  CustoChamado1720000014000,
 ];
 
 /**

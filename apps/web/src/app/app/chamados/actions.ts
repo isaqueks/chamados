@@ -11,6 +11,8 @@ import {
   alterarPrioridade,
   alterarNatureza,
   definirComplexidade,
+  definirEstimativaCusto,
+  definirCustoFinal,
   criarMensagem,
   definirSilencioIa,
   obterChamado,
@@ -19,6 +21,7 @@ import {
   type MotivoMensagem,
   type MotivoTransicionar,
   type MotivoMutacao,
+  type MotivoCusto,
   type ArquivoUpload,
   type DocRico,
 } from '@chamados/db';
@@ -30,10 +33,16 @@ import {
   VisibilidadeMensagem,
   Papel,
   GatilhoIA,
+  ehEstimativaCusto,
+  parsearValorBrl,
+  formatarBrl,
+  rotuloEstimativaCusto,
+  MENSAGEM_VALOR_BRL,
 } from '@chamados/shared';
 import { exigirUsuario } from '@/lib/sessao';
 import { comDespacho } from '@/lib/despacho';
 import { ROTULO_STATUS_CHAMADO } from '@/lib/rotulos';
+import { lerFormNovoChamado } from '@/lib/form-chamado';
 
 export interface EstadoChamado {
   erro?: string;
@@ -45,8 +54,8 @@ export type ResultadoAcao = { ok: true; msg: string } | { ok: false; msg: string
 
 const MOTIVOS_CRIAR: Record<MotivoCriar, string> = {
   sem_permissao: 'Sem permissão para abrir chamados.',
-  solicitante_obrigatorio: 'Informe o solicitante do chamado.',
-  solicitante_invalido: 'Solicitante inválido.',
+  solicitante_obrigatorio: 'Selecione o cliente solicitante.',
+  solicitante_invalido: 'O solicitante precisa ser um cliente ativo deste tenant.',
   titulo_invalido: 'O título deve ter entre 3 e 160 caracteres.',
   descricao_invalida: 'Descrição inválida.',
   descricao_obrigatoria: 'Descreva o chamado.',
@@ -58,15 +67,19 @@ const MOTIVOS_CRIAR: Record<MotivoCriar, string> = {
   sistema_alvo_obrigatorio: 'Selecione o sistema-alvo.',
   sistema_alvo_invalido: 'Sistema-alvo inválido.',
   categoria_invalida: 'Categoria inválida.',
+  estimativa_invalida: 'Estimativa de custo inválida.',
 };
 
 const MOTIVOS_TRANSICAO: Record<MotivoTransicionar, string> = {
   inexistente: 'Chamado não encontrado.',
   sem_permissao: 'Sem permissão para esta transição.',
   mesmo_status: 'O chamado já está nesse status.',
-  estado_terminal: 'Chamado encerrado não muda de status.',
+  estado_terminal: 'Chamado encerrado: a única ação possível é reabrir.',
   transicao_inexistente: 'Transição de status não permitida.',
   papel_nao_autorizado: 'Seu papel não pode fazer esta transição.',
+  // D-042: só o cliente contesta (e com motivo); a equipe nunca cai aqui.
+  motivo_obrigatorio: 'Para contestar a solução é preciso informar o motivo.',
+  valor_invalido: 'Custo final inválido.',
 };
 
 const MOTIVOS_MUTACAO: Record<MotivoMutacao, string> = {
@@ -76,6 +89,27 @@ const MOTIVOS_MUTACAO: Record<MotivoMutacao, string> = {
   valor_invalido: 'Valor inválido.',
   operador_invalido: 'Operador inválido.',
 };
+
+const MOTIVOS_CUSTO: Record<MotivoCusto, string> = {
+  ...MOTIVOS_MUTACAO,
+  estado_terminal: 'Chamado encerrado: reabra-o para alterar o custo.',
+  custo_fora_da_resolucao: 'O custo final só pode ser informado com o chamado resolvido.',
+};
+
+/**
+ * Lê o custo final digitado no painel (pt-BR, vírgula decimal — D-043). Vazio =
+ * "não informar" (`undefined`) quando `vazioLimpa` é falso, ou `null` (limpa)
+ * quando verdadeiro.
+ */
+function lerCustoDigitado(
+  bruto: string,
+  vazioLimpa: boolean,
+): { ok: true; valor: number | null | undefined } | { ok: false; msg: string } {
+  if (bruto.trim() === '') return { ok: true, valor: vazioLimpa ? null : undefined };
+  const r = parsearValorBrl(bruto);
+  if (!r.ok) return { ok: false, msg: MENSAGEM_VALOR_BRL[r.motivo] };
+  return { ok: true, valor: r.valor };
+}
 
 function ehNatureza(v: string): v is Natureza {
   return (Object.values(Natureza) as string[]).includes(v);
@@ -104,51 +138,127 @@ function revalidarChamado(id: string): void {
   revalidatePath(`/app/chamados/${id}`);
 }
 
-/** Abre um chamado com o formulário mínimo (specs/04 §2). */
+/** Estado do formulário "Novo chamado" do painel (D-040). */
+export interface EstadoCriarChamado {
+  erro?: string;
+  /** Preenchido no sucesso: o cliente do form mostra o toast e navega ao detalhe. */
+  criado?: { id: string; numero: string };
+}
+
+/**
+ * "Novo chamado" do painel (D-040, specs/04 §2): operador/admin abrem um chamado
+ * EM NOME de um cliente ativo do tenant. Delega a `criarChamado` (que revalida
+ * permissão, solicitante — papel `cliente`, ativo, mesmo tenant via RLS —, título,
+ * pipeline de rich text e alvo) dentro de `comDespacho`: auditoria
+ * (`chamado_criado`), confirmação por e-mail ao solicitante e triagem automática
+ * idênticas às do portal e da API. O sucesso NÃO redireciona no servidor: o form
+ * dispara o toast e navega ao detalhe (o toast sobrevive à navegação client-side).
+ */
 export async function acaoCriarChamado(
-  _prev: EstadoChamado,
+  _prev: EstadoCriarChamado,
   formData: FormData,
-): Promise<EstadoChamado> {
+): Promise<EstadoCriarChamado> {
   const { tenant, usuario } = await exigirUsuario();
+  if (usuario.papel !== Papel.operador && usuario.papel !== Papel.admin) {
+    return { erro: MOTIVOS_CRIAR.sem_permissao };
+  }
 
-  const titulo = String(formData.get('titulo') ?? '').trim();
-  const descricao = String(formData.get('descricao') ?? '');
-  const naturezaRaw = String(formData.get('natureza') ?? '');
-  const prioridadeRaw = String(formData.get('prioridade') ?? '');
-
-  if (!ehNatureza(naturezaRaw)) return { erro: 'Selecione a natureza do chamado.' };
-  const prioridade =
-    prioridadeRaw === '' ? undefined : ehPrioridade(prioridadeRaw) ? prioridadeRaw : null;
-  if (prioridade === null) return { erro: 'Prioridade inválida.' };
+  const lido = lerFormNovoChamado(formData);
+  if (!lido.ok) return { erro: lido.erro };
 
   const ds = await obterAppDataSource();
   const r = await comDespacho(ds, tenant.id, (em, hooks) =>
-    criarChamado(em, usuario, { titulo, descricao, natureza: naturezaRaw, prioridade }, hooks),
+    criarChamado(em, usuario, lido.entrada, hooks),
   );
   if (!r.ok) return { erro: MOTIVOS_CRIAR[r.motivo] };
 
+  revalidatePath('/app');
   revalidatePath('/app/chamados');
-  return { sucesso: `Chamado #${r.numero} aberto.` };
+  return { criado: { id: r.id, numero: r.numero } };
 }
 
-/** Aplica uma transição de status (máquina de estados — specs/04 §1). */
+/**
+ * Aplica uma transição de status (máquina de estados — specs/04 §1). Ao
+ * RESOLVER, `custoFinal` (texto pt-BR, opcional — D-043) é gravado no mesmo ato;
+ * em branco, o custo atual não muda.
+ */
 export async function acaoTransicionar(
   chamadoId: string,
   novoStatus: string,
+  custoFinal?: string,
 ): Promise<ResultadoAcao> {
   const { tenant, usuario } = await exigirUsuario();
   if (!(Object.values(StatusChamado) as string[]).includes(novoStatus)) {
     return { ok: false, msg: 'Status inválido.' };
   }
+  let custo: number | null | undefined;
+  if (novoStatus === StatusChamado.resolvido && custoFinal !== undefined) {
+    const lido = lerCustoDigitado(custoFinal, false);
+    if (!lido.ok) return { ok: false, msg: lido.msg };
+    custo = lido.valor;
+  }
   const ds = await obterAppDataSource();
   const r = await comDespacho(ds, tenant.id, (em, hooks) =>
-    transicionarStatus(em, usuario, chamadoId, novoStatus as StatusChamado, {}, hooks),
+    transicionarStatus(
+      em,
+      usuario,
+      chamadoId,
+      novoStatus as StatusChamado,
+      custo !== undefined ? { custo_final: custo } : {},
+      hooks,
+    ),
   );
   if (!r.ok) return { ok: false, msg: MOTIVOS_TRANSICAO[r.motivo] };
   revalidarChamado(chamadoId);
+  const rotulo = ROTULO_STATUS_CHAMADO[novoStatus as StatusChamado];
   return {
     ok: true,
-    msg: `Status alterado para "${ROTULO_STATUS_CHAMADO[novoStatus as StatusChamado]}".`,
+    msg:
+      typeof custo === 'number'
+        ? `Status alterado para "${rotulo}" com custo final de ${formatarBrl(custo)}.`
+        : `Status alterado para "${rotulo}".`,
+  };
+}
+
+/** Define/altera/limpa a estimativa de custo (D-043). `''` limpa. */
+export async function acaoDefinirEstimativaCusto(
+  chamadoId: string,
+  estimativa: string,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const valor = estimativa === '' ? null : ehEstimativaCusto(estimativa) ? estimativa : undefined;
+  if (valor === undefined) return { ok: false, msg: 'Estimativa de custo inválida.' };
+  const ds = await obterAppDataSource();
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    definirEstimativaCusto(em, usuario, chamadoId, valor, hooks),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_CUSTO[r.motivo] };
+  revalidarChamado(chamadoId);
+  return {
+    ok: true,
+    msg: valor ? `Estimativa de custo: ${rotuloEstimativaCusto(valor)}.` : 'Estimativa removida.',
+  };
+}
+
+/** Informa/corrige/limpa o custo final de um chamado resolvido (D-043). `''` limpa. */
+export async function acaoDefinirCustoFinal(
+  chamadoId: string,
+  custoFinal: string,
+): Promise<ResultadoAcao> {
+  const { tenant, usuario } = await exigirUsuario();
+  const lido = lerCustoDigitado(custoFinal, true);
+  if (!lido.ok) return { ok: false, msg: lido.msg };
+  const valor = lido.valor ?? null;
+  const ds = await obterAppDataSource();
+  const r = await comDespacho(ds, tenant.id, (em, hooks) =>
+    definirCustoFinal(em, usuario, chamadoId, valor, hooks),
+  );
+  if (!r.ok) return { ok: false, msg: MOTIVOS_CUSTO[r.motivo] };
+  revalidarChamado(chamadoId);
+  if (!r.alterado) return { ok: true, msg: 'Custo final mantido.' };
+  return {
+    ok: true,
+    msg: valor === null ? 'Custo final removido.' : `Custo final: ${formatarBrl(valor)}.`,
   };
 }
 
@@ -247,7 +357,8 @@ export async function acaoDefinirComplexidade(
  * Silencia/reativa a IA no chamado (D-024, specs/05 §2). Só operador/admin.
  * Silenciada, nenhuma triagem roda no chamado (o worker também descarta jobs já
  * enfileirados); a reativação volta ao comportamento normal nos próximos
- * gatilhos (não reanalisa retroativamente).
+ * gatilhos (não reanalisa retroativamente). D-041: silenciar CANCELA a triagem em
+ * andamento (sinal pós-commit pelo despachante) — nada dela é aplicado.
  */
 export async function acaoSilenciarIa(
   chamadoId: string,
@@ -263,7 +374,9 @@ export async function acaoSilenciarIa(
   return {
     ok: true,
     msg: silenciar
-      ? 'IA silenciada neste chamado — nenhuma análise automática será executada.'
+      ? r.triagemEmAndamento
+        ? 'IA silenciada neste chamado — a triagem em andamento foi cancelada e nada dela será aplicado.'
+        : 'IA silenciada neste chamado — nenhuma análise automática será executada.'
       : 'IA reativada neste chamado.',
   };
 }
@@ -381,9 +494,13 @@ export async function acaoResponder(
   if (!r.ok) return { erro: MOTIVOS_MENSAGEM[r.motivo] };
 
   revalidarChamado(chamadoId);
+  // Resposta pública de operador/admin torna o autor o responsável (D-039) —
+  // a regra vive em `criarMensagem`; aqui só avisamos quando ela aconteceu.
   const rotulo =
     visibilidade === VisibilidadeMensagem.interna
       ? 'Nota interna registrada.'
-      : 'Resposta enviada.';
+      : r.assumiu
+        ? 'Resposta enviada. Você agora é o responsável por este chamado.'
+        : 'Resposta enviada.';
   return { sucesso: rotulo };
 }

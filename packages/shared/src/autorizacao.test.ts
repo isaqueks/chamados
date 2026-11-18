@@ -3,6 +3,7 @@ import { autorizar, type Ator } from './autorizacao';
 import { Papel } from './enums';
 
 const TENANT = '11111111-1111-1111-1111-111111111111';
+const OUTRO = '22222222-2222-2222-2222-222222222222';
 
 function ator(papel: Papel, id = 'u-1', tenant_id = TENANT): Ator {
   return { papel, id, tenant_id };
@@ -26,16 +27,56 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(ator(Papel.cliente), 'execucao_ia', 'ler')).toBe(false);
     });
 
-    it('cliente lê mensagem pública do próprio chamado (ownership)', () => {
+    it('cliente lê mensagem pública de qualquer chamado do tenant (D-037)', () => {
       const c = ator(Papel.cliente, 'cli-1');
-      expect(autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'cli-1' })).toBe(true);
-      expect(autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'outro' })).toBe(false);
+      expect(autorizar(c, 'mensagem_publica', 'ler', { tenant_id: TENANT })).toBe(true);
+      expect(autorizar(c, 'mensagem_publica', 'ler', { autor_id: 'outro' })).toBe(true);
     });
 
-    it('cliente lê o próprio chamado, não o de outro', () => {
+    it('cliente lê qualquer chamado do PRÓPRIO tenant, nunca de outro (D-037)', () => {
       const c = ator(Papel.cliente, 'cli-1');
-      expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-1' })).toBe(true);
-      expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-2' })).toBe(false);
+      expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-1', tenant_id: TENANT })).toBe(true);
+      expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-2', tenant_id: TENANT })).toBe(true);
+      expect(autorizar(c, 'chamado', 'ler', { cliente_id: 'cli-2', tenant_id: OUTRO })).toBe(false);
+    });
+
+    it('leitura ampliada NÃO abre nada interno ao cliente (D-037)', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      const alheio = { cliente_id: 'cli-2', tenant_id: TENANT };
+      expect(autorizar(c, 'mensagem_interna', 'ler', alheio)).toBe(false);
+      expect(autorizar(c, 'execucao_ia', 'ler', alheio)).toBe(false);
+      expect(autorizar(c, 'pr_ia', 'aprovar', alheio)).toBe(false);
+      expect(autorizar(c, 'chamado', 'classificar_complexidade', alheio)).toBe(false);
+      expect(autorizar(c, 'chamado', 'silenciar_ia', alheio)).toBe(false);
+    });
+
+    it('cliente lê eventos e baixa anexos de chamado alheio do tenant, não de outro tenant', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      expect(
+        autorizar(c, 'evento_chamado', 'ler', { cliente_id: 'cli-2', tenant_id: TENANT }),
+      ).toBe(true);
+      expect(autorizar(c, 'anexo', 'baixar', { cliente_id: 'cli-2', tenant_id: TENANT })).toBe(
+        true,
+      );
+      expect(autorizar(c, 'anexo', 'baixar', { cliente_id: 'cli-2', tenant_id: OUTRO })).toBe(
+        false,
+      );
+      expect(autorizar(c, 'evento_chamado', 'ler', { cliente_id: 'cli-2', tenant_id: OUTRO })).toBe(
+        false,
+      );
+    });
+
+    it('cliente só AGE no chamado de que é solicitante (escrita segue ownership — D-037)', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      const meu = { cliente_id: 'cli-1', tenant_id: TENANT };
+      const alheio = { cliente_id: 'cli-2', tenant_id: TENANT };
+      expect(autorizar(c, 'mensagem_publica', 'escrever', meu)).toBe(true);
+      expect(autorizar(c, 'mensagem_publica', 'escrever', alheio)).toBe(false);
+      expect(autorizar(c, 'anexo', 'enviar', meu)).toBe(true);
+      expect(autorizar(c, 'anexo', 'enviar', alheio)).toBe(false);
+      expect(autorizar(c, 'chamado', 'mudar_status', alheio)).toBe(false);
+      // Sem alvo de ownership: nega (fail-closed).
+      expect(autorizar(c, 'mensagem_publica', 'escrever', { tenant_id: TENANT })).toBe(false);
     });
 
     it('cliente NÃO muda prioridade/natureza pós-criação (define só na abertura)', () => {
@@ -49,6 +90,24 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       const c = ator(Papel.cliente, 'cli-1');
       expect(autorizar(c, 'chamado', 'mudar_status', { cliente_id: 'cli-1' })).toBe(true);
       expect(autorizar(c, 'chamado', 'mudar_status', { cliente_id: 'cli-2' })).toBe(false);
+    });
+
+    it('D-042: só o solicitante aprova/contesta — o colega LÊ o resolvido, mas não age', () => {
+      const c = ator(Papel.cliente, 'cli-1');
+      const meu = { cliente_id: 'cli-1', tenant_id: TENANT };
+      const alheio = { cliente_id: 'cli-2', tenant_id: TENANT };
+      const outroTenant = { cliente_id: 'cli-1', tenant_id: OUTRO };
+      // Aprovar = mudar_status (resolvido → fechado); contestar = mensagem pública +
+      // mudar_status (resolvido → em_atendimento).
+      expect(autorizar(c, 'chamado', 'ler', alheio)).toBe(true);
+      expect(autorizar(c, 'chamado', 'mudar_status', alheio)).toBe(false);
+      expect(autorizar(c, 'mensagem_publica', 'escrever', alheio)).toBe(false);
+      expect(autorizar(c, 'chamado', 'mudar_status', meu)).toBe(true);
+      expect(autorizar(c, 'mensagem_publica', 'escrever', meu)).toBe(true);
+      // Cross-tenant: a LEITURA já fecha aqui; a escrita (ownership por id) é
+      // barrada pela RLS antes — o chamado de outro tenant nem é carregado
+      // (provado no smoke-chamados §10).
+      expect(autorizar(c, 'chamado', 'ler', outroTenant)).toBe(false);
     });
   });
 
@@ -196,5 +255,39 @@ describe('autorizar — matriz papel × recurso × ação (specs/03 §8)', () =>
       expect(autorizar(ator(Papel.cliente), 'sistema_alvo', 'ler')).toBe(false);
       expect(autorizar(ator(Papel.cliente), 'branding', 'gerenciar')).toBe(false);
     });
+  });
+});
+
+describe('definir_custo — estimativa e custo final (D-043)', () => {
+  it('operador e admin definem custo no próprio tenant', () => {
+    expect(autorizar(ator(Papel.operador), 'chamado', 'definir_custo', { tenant_id: TENANT })).toBe(
+      true,
+    );
+    expect(autorizar(ator(Papel.admin), 'chamado', 'definir_custo', { tenant_id: TENANT })).toBe(
+      true,
+    );
+    expect(autorizar(ator(Papel.operador), 'chamado', 'definir_custo')).toBe(true);
+  });
+
+  it('equipe de OUTRO tenant é negada', () => {
+    expect(autorizar(ator(Papel.operador), 'chamado', 'definir_custo', { tenant_id: OUTRO })).toBe(
+      false,
+    );
+    expect(autorizar(ator(Papel.admin), 'chamado', 'definir_custo', { tenant_id: OUTRO })).toBe(
+      false,
+    );
+  });
+
+  it('cliente nunca define — nem no próprio chamado (só lê)', () => {
+    const c = ator(Papel.cliente, 'cli-1');
+    expect(
+      autorizar(c, 'chamado', 'definir_custo', { cliente_id: 'cli-1', tenant_id: TENANT }),
+    ).toBe(false);
+  });
+
+  it('agente_ia não estima nem informa custo', () => {
+    expect(
+      autorizar(ator(Papel.agente_ia), 'chamado', 'definir_custo', { tenant_id: TENANT }),
+    ).toBe(false);
   });
 });

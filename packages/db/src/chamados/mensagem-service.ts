@@ -7,6 +7,8 @@ import {
   VisibilidadeMensagem,
   Papel,
   GatilhoIA,
+  MOTIVO_ATRIBUICAO_RESPOSTA,
+  respostaAtribui,
   serializarMensagemParaCliente,
   type MensagemInterna,
   type MensagemCliente,
@@ -23,7 +25,12 @@ import {
 } from './rich-text';
 import { detectarTipo, MAX_ANEXOS_POR_MENSAGEM, type TipoDetectado } from './validacao-arquivo';
 import { gravarAnexo, type ArquivoUpload } from './anexo-service';
-import { transicionarStatus, atorSistema, type AtorChamado } from './chamado-service';
+import {
+  transicionarStatus,
+  atribuirOperador,
+  atorSistema,
+  type AtorChamado,
+} from './chamado-service';
 
 /**
  * Mensagens da timeline (specs/04 §4, §6). Rodam em `runInTenantContext` + RLS e
@@ -71,7 +78,16 @@ export type MotivoMensagem =
   | 'anexo_invalido';
 
 export type ResultadoMensagem =
-  { ok: true; id: string } | { ok: false; motivo: MotivoMensagem; indice?: number };
+  | {
+      ok: true;
+      id: string;
+      /**
+       * `true` quando a mensagem tornou o autor o responsável pelo chamado
+       * (auto-atribuição por resposta pública — D-039). Ausente nos demais casos.
+       */
+      assumiu?: true;
+    }
+  | { ok: false; motivo: MotivoMensagem; indice?: number };
 
 function motivoRich(m: MotivoRichText): MotivoMensagem {
   switch (m) {
@@ -90,10 +106,12 @@ function motivoRich(m: MotivoRichText): MotivoMensagem {
 
 /**
  * Cria uma mensagem (specs/04 §6). Cliente só escreve mensagem `publica` no
- * PRÓPRIO chamado; nota `interna` é de operador/admin/agente_ia. Estados terminais
+ * PRÓPRIO chamado (ler qualquer do tenant ≠ escrever — D-037); nota `interna` é de operador/admin/agente_ia. Estados terminais
  * não aceitam novas mensagens. Aplica o pipeline de rich text (imagens coladas →
  * anexos inline + sanitização). Se um cliente responde em `aguardando_cliente`, o
  * `sistema` re-enfileira a triagem (`→ em_triagem`, com evento) — specs/04 §1.3/§4.2.
+ * Resposta PÚBLICA de operador/admin torna o autor o responsável pelo chamado
+ * (D-039, specs/04 §7) — na mesma transação, via `atribuirOperador`.
  */
 export async function criarMensagem(
   em: EntityManager,
@@ -195,6 +213,37 @@ export async function criarMensagem(
     dados: { mensagem_id: id, visibilidade: entrada.visibilidade },
   });
 
+  // Auto-atribuição por resposta (D-039, specs/04 §7): operador/admin que
+  // responde em PÚBLICO passa a ser o responsável, substituindo quem estava. Nota
+  // interna, `agente_ia` e `cliente` não atribuem; autor que já é o responsável →
+  // nada (sem evento duplicado). Reusa `atribuirOperador` (alvo ativo, evento
+  // `operador_atribuido` com o próprio autor como ator, notificação/webhook
+  // `atribuicao` — o dispatcher não notifica o autor da própria ação).
+  //
+  // ORDEM: DEPOIS do evento `mensagem_publicada`. Assim (a) a timeline lê
+  // "respondeu → assumiu" (eventos da mesma Tx empatam no `created_at` e a
+  // mensagem vem antes na ordenação estável do painel) e (b) a notificação
+  // `mensagem_publica` ainda é resolvida com o responsável ANTERIOR, que fica
+  // sabendo da resposta de quem assumiu o chamado dele.
+  //
+  // Best-effort DENTRO da transação: se o autor não for um alvo válido (ex.:
+  // suspenso entre o login e o envio), a mensagem vale sem a atribuição — a
+  // resposta ao cliente não é perdida por causa do efeito colateral.
+  let assumiu = false;
+  if (
+    respostaAtribui({
+      autorPapel: ator.papel,
+      autorId: ator.id,
+      visibilidade: entrada.visibilidade,
+      operadorAtualId: chamado.operador_id,
+    })
+  ) {
+    const atrib = await atribuirOperador(em, ator, chamado.id, ator.id, hooks, {
+      motivo: MOTIVO_ATRIBUICAO_RESPOSTA,
+    });
+    assumiu = atrib.ok;
+  }
+
   // Resposta pública do cliente re-enfileira a triagem em QUALQUER estado não
   // terminal (D-017 parte 3 — specs/04 §1.3/§4.2, specs/05 §2), com os ajustes
   // de status adequados:
@@ -242,7 +291,7 @@ export async function criarMensagem(
     });
   }
 
-  return { ok: true, id };
+  return assumiu ? { ok: true, id, assumiu: true } : { ok: true, id };
 }
 
 /** Item de timeline exposto à camada web (equipe vê `visibilidade`; cliente não). */
@@ -252,7 +301,8 @@ export type MensagemTimeline = MensagemInterna | MensagemCliente;
  * Lista a timeline de mensagens de um chamado (specs/04 §4). O FILTRO de
  * visibilidade é feito NO REPOSITÓRIO: para o cliente, a query só traz
  * `visibilidade='publica'` (nunca confia no cliente para ocultar); ainda assim o
- * serializer remove `visibilidade`/`execucao_ia_id` como segunda barreira.
+ * serializer remove `visibilidade`/`execucao_ia_id` como segunda barreira. Vale
+ * igualmente quando o cliente lê um chamado ALHEIO do tenant (D-037).
  */
 export async function listarMensagens(
   em: EntityManager,

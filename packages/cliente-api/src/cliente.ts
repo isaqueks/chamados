@@ -3,6 +3,7 @@ import { ErroApi, ErroRede, lerErro } from './erros';
 import type {
   ArquivoBaixado,
   EntradaCriarChamado,
+  EntradaCusto,
   EntradaMensagem,
   EntradaStatus,
   FiltrosListarChamados,
@@ -12,6 +13,7 @@ import type {
   PaginaChamados,
   RespostaAtribuicao,
   RespostaCriarChamado,
+  RespostaCusto,
   RespostaDetalheChamado,
   RespostaMensagem,
   RespostaSessao,
@@ -130,6 +132,7 @@ export function queryDeFiltros(f: FiltrosListarChamados): Record<string, string 
     sistema_alvo_id: f.sistema_alvo_id,
     categoria_id: f.categoria_id,
     busca: f.busca,
+    meus: f.meus ? 'true' : undefined,
     limite: f.limite !== undefined ? String(f.limite) : undefined,
     cursor: f.cursor,
     complexidade: csv(f.complexidade),
@@ -335,6 +338,22 @@ export class ClienteChamados {
     opts: OpcoesChamada = {},
   ): Promise<RespostaStatus> {
     return this.requisitar<RespostaStatus>(caminhoChamado(ref, '/status'), {
+      ...opts,
+      metodo: 'POST',
+      corpo: entrada,
+    });
+  }
+
+  /**
+   * D-043 — `POST /api/v1/chamados/{ref}/custo` (equipe). Idempotente: o mesmo
+   * valor não gera evento nem webhook.
+   */
+  definirCusto(
+    ref: string,
+    entrada: EntradaCusto,
+    opts: OpcoesChamada = {},
+  ): Promise<RespostaCusto> {
+    return this.requisitar<RespostaCusto>(caminhoChamado(ref, '/custo'), {
       ...opts,
       metodo: 'POST',
       corpo: entrada,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { EntityManager } from 'typeorm';
 import type { TipoEvento } from '@chamados/shared';
 import { EventoChamadoSchema } from '../entities/evento-chamado';
@@ -14,6 +15,14 @@ import { despacharNotificacoes } from '../notificacoes/dispatcher';
  * auditor alternativo (ex.: no-op em testes, ou um coletor). Sem hook, escreve.
  */
 export interface EventoChamadoPendente {
+  /**
+   * Id do `EventoChamado` (opcional; default do banco). Quando o auditor também
+   * despacha notificações, ele fixa o id ANTES de gravar e o reaproveita como
+   * `eventoNotifId` — a chave de idempotência das notificações/webhook passa a
+   * ser derivada do evento auditado (D-042: permite reconciliar o webhook da
+   * aprovação tácita sem duplicar).
+   */
+  id?: string;
   /** Tipo canônico do evento (enum `tipo_evento` — specs/02). */
   tipo: TipoEvento;
   chamado_id: string;
@@ -44,6 +53,7 @@ export const gravarEvento: Auditar = async (em, ev) => {
     );
   }
   await em.insert(EventoChamadoSchema, {
+    ...(ev.id ? { id: ev.id } : {}),
     tenant_id: tenant,
     chamado_id: ev.chamado_id,
     tipo: ev.tipo,
@@ -82,7 +92,10 @@ export function auditorDe(hooks?: HooksChamado): Auditar {
   if (hooks?.auditar) return hooks.auditar;
   const despachante = hooks?.despachante;
   if (!despachante?.capturaNotificacoes) return gravarEvento;
-  return async (em, ev) => {
+  return async (em, evOriginal) => {
+    // Id fixado aqui: o mesmo valor identifica o EventoChamado e o evento de
+    // notificação (idempotência determinística — specs/06 §8.3, D-042).
+    const ev = { ...evOriginal, id: evOriginal.id ?? randomUUID() };
     await gravarEvento(em, ev);
     try {
       await despacharNotificacoes(em, ev, despachante);

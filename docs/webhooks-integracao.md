@@ -16,15 +16,41 @@ A cada atualização relevante de um chamado, a plataforma envia um `POST` com c
 
 O tipo do evento vai no campo `evento.tipo` do corpo e no header `x-chamados-event`:
 
-| `evento.tipo`         | Disparado quando…                                                                                   |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| `criado`              | Um chamado é aberto.                                                                                |
-| `mensagem_publica`    | Uma nova mensagem pública é publicada na conversa do chamado.                                       |
-| `status_alterado`     | O status do chamado muda — inclui **reabertura** e **cancelamento** (ambos são mudanças de status). |
-| `prioridade_alterada` | A prioridade do chamado é alterada.                                                                 |
-| `atribuicao`          | Um atendente é atribuído ao chamado (ou desatribuído).                                              |
-| `resolvido`           | O chamado é marcado como resolvido.                                                                 |
-| `fechado`             | O chamado é fechado.                                                                                |
+| `evento.tipo`               | Disparado quando…                                                                                   |
+| --------------------------- | --------------------------------------------------------------------------------------------------- |
+| `criado`                    | Um chamado é aberto.                                                                                |
+| `mensagem_publica`          | Uma nova mensagem pública é publicada na conversa do chamado.                                       |
+| `status_alterado`           | O status do chamado muda — inclui **reabertura** e **cancelamento** (ambos são mudanças de status). |
+| `prioridade_alterada`       | A prioridade do chamado é alterada.                                                                 |
+| `atribuicao`                | Um atendente é atribuído ao chamado (ou desatribuído).                                              |
+| `resolvido`                 | O chamado é marcado como resolvido. Abre o prazo para o cliente **aprovar ou contestar** (§2.1).    |
+| `fechado`                   | A equipe de atendimento fechou o chamado manualmente (não é aprovação do cliente).                  |
+| `aprovado`                  | O cliente **aprovou** a solução — explicitamente ou por não responder dentro do prazo (§2.1).       |
+| `contestado`                | O cliente **contestou** a solução, com um motivo; o chamado voltou para atendimento (§2.1).         |
+| `estimativa_custo_alterada` | A equipe definiu, alterou ou removeu a **estimativa de custo** do chamado (§2.2).                   |
+| `custo_final_definido`      | A equipe **corrigiu o custo final** de um chamado já resolvido (§2.2).                              |
+
+### 2.1 Aprovação da solução pelo cliente
+
+Quando um chamado é marcado como `resolvido`, o cliente que o abriu tem um prazo (padrão **7 dias**, configurável pela sua organização) para **aprovar** ou **contestar** a solução. Sem resposta até o fim do prazo, a solução é **considerada aprovada** e o chamado é fechado.
+
+- **Aprovação** — sempre chega como **`aprovado`** (nunca também como `fechado`): `aprovacao.forma` é `"explicita"` (o cliente aprovou; `autor` traz o nome dele) ou `"tacita"` (o prazo terminou sem resposta; `autor` é `null`). Em ambos os casos `chamado.status` é `fechado` e `mudanca` é `{ "de": "resolvido", "para": "fechado" }`. A aprovação tácita é **sempre** notificada: se a primeira tentativa de envio não chegar à fila, a plataforma a reenvia (com o mesmo `x-chamados-event-id`) por até 24 h.
+- **Contestação** — chega como **`contestado`**: `autor` traz o nome do cliente, `mensagem.trecho` traz o motivo informado e `mudanca` é `{ "de": "resolvido", "para": "em_atendimento" }`. O motivo também é publicado na conversa, então um evento `mensagem_publica` com o mesmo texto chega separadamente.
+- **Fechamento pela equipe** — chega como **`fechado`**. Para saber se um chamado foi encerrado, trate `aprovado` **e** `fechado`.
+
+### 2.2 Estimativa de custo e custo final
+
+A equipe pode definir uma **estimativa de custo** por faixa e, ao resolver, informar o **custo final** em reais. Os dois são visíveis ao cliente e vêm **em todo payload**, dentro de `chamado`:
+
+- `chamado.estimativa_custo` — `null` (sem estimativa) ou `{ "codigo", "rotulo", "min", "max" }`. Faixas: `A` R$ 50–100 · `B` R$ 100–200 · `C` R$ 200–400 · `D` R$ 400–600 · `E` acima de R$ 600 (`max: null`) · `I` isento (R$ 0).
+- `chamado.custo_final` — número em reais (ex.: `150.5`) ou `null`.
+
+Eventos:
+
+- **Estimativa definida/alterada/removida** → **`estimativa_custo_alterada`**, com `mudanca` contendo os **códigos** (ex.: `{ "de": null, "para": "B" }`).
+- **Custo final informado ao resolver** → não há evento próprio: o **`resolvido`** já chega com `chamado.custo_final` preenchido.
+- **Custo final corrigido depois** (com o chamado ainda resolvido) → **`custo_final_definido`**, com `mudanca` contendo **números** (ex.: `{ "de": 150, "para": 180.5 }`).
+- Repetir o mesmo valor não gera evento. O valor que o cliente aprovou é o `chamado.custo_final` que chega no `aprovado`.
 
 ## 3. A requisição
 
@@ -81,12 +107,19 @@ Rejeite com `401`/`403` requisições sem assinatura ou com assinatura inválida
     "natureza": "problema",
     "sistema_alvo": "ERP Web", // sistema relacionado, ou null
     "categoria": "Financeiro", // categoria, ou null
+    // Sempre presentes (§2.2):
+    "estimativa_custo": { "codigo": "B", "rotulo": "B · R$ 100 a R$ 200", "min": 100, "max": 200 }, // ou null
+    "custo_final": 150.5, // em reais, ou null
   },
-  // Presentes apenas em mensagem_publica (texto puro, limitado a ~240 caracteres):
+  // Quem praticou a ação: em mensagem_publica, contestado e aprovado (explícito):
   "autor": { "nome": "Maria Silva" },
+  // Em mensagem_publica e contestado (o motivo) — texto puro, ~240 caracteres no máximo:
   "mensagem": { "trecho": "Boa tarde! O erro acontece quando…" },
-  // Presente apenas em status_alterado / prioridade_alterada:
+  // Em status_alterado, prioridade_alterada, aprovado, contestado,
+  // estimativa_custo_alterada (códigos) e custo_final_definido (valores em reais):
   "mudanca": { "de": "em_triagem", "para": "em_atendimento" },
+  // Apenas em aprovado: "explicita" (o cliente aprovou) ou "tacita" (prazo sem resposta):
+  "aprovacao": null,
   // Link direto para o chamado na plataforma:
   "linkChamado": "https://<dominio>/portal/chamados/<id>",
 }
@@ -94,13 +127,71 @@ Rejeite com `401`/`403` requisições sem assinatura ou com assinatura inválida
 
 Campos condicionais vêm `null` quando não se aplicam ao evento.
 
+Exemplo de **aprovação tácita** (prazo terminou sem resposta do cliente):
+
+```json
+{
+  "evento": { "tipo": "aprovado", "id": "3b1e…", "timestamp": "2026-11-24T14:05:00.000Z" },
+  "chamado": {
+    "id": "uuid",
+    "numero": "2026-000123",
+    "titulo": "Erro ao emitir nota",
+    "status": "fechado",
+    "prioridade": "alta",
+    "natureza": "problema",
+    "sistema_alvo": "ERP Web",
+    "categoria": null,
+    "estimativa_custo": { "codigo": "B", "rotulo": "B · R$ 100 a R$ 200", "min": 100, "max": 200 },
+    "custo_final": 150.5
+  },
+  "autor": null,
+  "mensagem": null,
+  "mudanca": { "de": "resolvido", "para": "fechado" },
+  "aprovacao": { "forma": "tacita" },
+  "linkChamado": "https://<dominio>/portal/chamados/<id>"
+}
+```
+
+Na **aprovação explícita**, `aprovacao` é `{ "forma": "explicita" }` e `autor` é `{ "nome": "<cliente>" }`. Na **contestação** (`contestado`), `aprovacao` é `null`, `autor` traz o cliente, `mensagem.trecho` o motivo e `mudanca.para` é `em_atendimento`.
+
+Exemplo de **estimativa de custo alterada**:
+
+```json
+{
+  "evento": {
+    "tipo": "estimativa_custo_alterada",
+    "id": "9a0d…",
+    "timestamp": "2026-11-17T15:20:00.000Z"
+  },
+  "chamado": {
+    "id": "uuid",
+    "numero": "2026-000123",
+    "titulo": "Erro ao emitir nota",
+    "status": "em_atendimento",
+    "prioridade": "alta",
+    "natureza": "alteracao",
+    "sistema_alvo": "ERP Web",
+    "categoria": null,
+    "estimativa_custo": { "codigo": "C", "rotulo": "C · R$ 200 a R$ 400", "min": 200, "max": 400 },
+    "custo_final": null
+  },
+  "autor": null,
+  "mensagem": null,
+  "mudanca": { "de": "B", "para": "C" },
+  "aprovacao": null,
+  "linkChamado": "https://<dominio>/portal/chamados/<id>"
+}
+```
+
 ### 3.3 Valores possíveis
 
-| Campo        | Valores                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------- |
-| `status`     | `novo` · `em_triagem` · `aguardando_cliente` · `em_atendimento` · `resolvido` · `fechado` · `cancelado` |
-| `prioridade` | `baixa` · `media` · `alta` · `urgente`                                                                  |
-| `natureza`   | `problema` · `alteracao` · `duvida`                                                                     |
+| Campo                     | Valores                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `status`                  | `novo` · `em_triagem` · `aguardando_cliente` · `em_atendimento` · `resolvido` · `fechado` · `cancelado` |
+| `prioridade`              | `baixa` · `media` · `alta` · `urgente`                                                                  |
+| `natureza`                | `problema` · `alteracao` · `duvida`                                                                     |
+| `aprovacao.forma`         | `explicita` · `tacita`                                                                                  |
+| `estimativa_custo.codigo` | `A` · `B` · `C` · `D` · `E` · `I`                                                                       |
 
 Novos valores podem ser adicionados no futuro — trate valores desconhecidos de forma tolerante (não falhe o processamento).
 

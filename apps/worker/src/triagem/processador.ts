@@ -1,4 +1,4 @@
-import type { DataSource } from 'typeorm';
+import type { DataSource, EntityManager } from 'typeorm';
 import { IsNull } from 'typeorm';
 import type Redis from 'ioredis';
 import {
@@ -14,6 +14,8 @@ import {
   marcarExecutando,
   concluirExecucao,
   falharExecucao,
+  cancelarExecucao,
+  MOTIVO_CANCELAMENTO_IA_SILENCIADA,
   existeConcluidaParaMensagem,
   gravarEvento,
   transicionarStatus,
@@ -24,11 +26,26 @@ import {
   type JobTriagem,
 } from '@chamados/db';
 import { montarInput, type PreparacaoContexto } from './contexto';
-import { aplicarResultado, escalarParaHumano, type ResultadoResolucao } from './aplicador';
+import {
+  aplicarResultado,
+  escalarParaHumano,
+  encerrarTriagemCancelada,
+  type ResultadoResolucao,
+} from './aplicador';
+import {
+  descartarSinalObsoleto,
+  observarCancelamento,
+  type ObservadorCancelamento,
+} from './cancelamento';
 import { deveTentarResolver, executarResolucao } from './resolucao';
 import { ferramentasConfig } from './ferramentas/config';
 import type { FetchImpl } from './github-pr';
-import { motivoErro, telemetriaDoErro, type TelemetriaParcial } from '../ia/erros';
+import {
+  ErroTriagemCancelada,
+  motivoErro,
+  telemetriaDoErro,
+  type TelemetriaParcial,
+} from '../ia/erros';
 import {
   adquirirLockComEspera,
   liberarLockTenant,
@@ -36,6 +53,7 @@ import {
   type OpcoesEspera,
 } from '../lock-tenant';
 import { garantirConhecimento, type MapaLimites } from '../mapeamento/mapeamento';
+import { modeloEfetivoDe } from '../ia/parametros-tenant';
 
 /**
  * PROCESSADOR da fila `triagem-ia` (M7 — pipeline completo, specs/05 §3). Consome
@@ -52,6 +70,14 @@ import { garantirConhecimento, type MapaLimites } from '../mapeamento/mapeamento
  *      SPEC + transição) e conclui a `ExecucaoIA`. Qualquer falha (git, provider,
  *      aplicação) → `ExecucaoIA.falhou` + `ia_falhou` + escalonamento a humano
  *      (`em_triagem → em_atendimento`), nunca preso sem responsável (specs/05 §8).
+ *
+ * CANCELAMENTO por silêncio (D-041): se a IA é silenciada no chamado DURANTE a
+ * execução, o sinal Redis (observado por polling) aborta o provider pelo mesmo
+ * mecanismo do timeout e os pontos de checagem (pós-git, pós-mapa, antes do
+ * push da resolução, antes da Tx2) param o pipeline. Rede de segurança: a Tx2
+ * relê `ia_silenciada` com lock da linha — silenciado, NADA é aplicado. Desfecho:
+ * `ExecucaoIA.cancelado` (erro `ia_silenciada`, telemetria parcial) + nota
+ * interna + `em_triagem → em_atendimento`, sem mensagem ao cliente e sem retry.
  */
 
 export interface DepsProcessador {
@@ -59,8 +85,12 @@ export interface DepsProcessador {
   redis: Redis;
   provider: AIProvider;
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
+  /** Teto do timeout por tenant (D-044). Ausente → `IA_TIMEOUT_TENANT_MAX_MS`. */
+  tetoTimeoutTenantMs?: number;
   /** Limites do MAPA de conhecimento (D-013). Ausente → triagem sem mapeamento. */
   mapa?: MapaLimites;
+  /** Intervalo do polling do sinal de cancelamento (D-041). Default: 2 s. */
+  cancelamentoPollMs?: number;
   lock: OpcoesEspera;
   log: (msg: string, extra?: Record<string, unknown>) => void;
   /** Config da RESOLUÇÃO automática (specs/05 §6). Opcional (default: rede real). */
@@ -77,6 +107,7 @@ export interface DepsProcessador {
 export type ResultadoProcessamento =
   | { status: 'concluido'; execucaoId: string }
   | { status: 'falhou'; execucaoId: string; erro: string }
+  | { status: 'cancelado'; execucaoId: string; motivo: 'ia_silenciada' }
   | { status: 'ignorado'; motivo: 'idempotente' | 'chamado_inexistente' | 'ia_silenciada' };
 
 /** Preparação (Tx1): idempotência, transição, abertura da execução e do contexto. */
@@ -108,7 +139,12 @@ export async function processarTriagem(
       }),
   });
 
+  // D-041: apaga um sinal de cancelamento OBSOLETO antes da Tx1 (que relê a
+  // flag) — qualquer sinal gravado daqui em diante é de um silêncio posterior.
+  await descartarSinalObsoleto(redis, job.chamadoId);
+
   let ctx: PreparacaoContexto | null = null;
+  let observador: ObservadorCancelamento | null = null;
   try {
     // ---- Tx1: idempotência + transição + abertura da ExecucaoIA + contexto ---
     const acoes: unknown[] = [];
@@ -139,8 +175,15 @@ export async function processarTriagem(
         );
       }
 
-      const prepCtx = await montarInput(em, job.chamadoId, { acoes, log, limites: deps.limites });
+      const prepCtx = await montarInput(em, job.chamadoId, {
+        acoes,
+        log,
+        limites: deps.limites,
+        tetoTimeoutTenantMs: deps.tetoTimeoutTenantMs,
+      });
       if (!prepCtx) return { skip: true, motivo: 'chamado_inexistente' };
+      // D-044: grava o modelo EFETIVO (override do tenant ou default do provider).
+      const modelo = modeloEfetivoDe(provider, prepCtx.input.parametrosModelo);
 
       const execucaoId = await criarExecucao(
         em,
@@ -149,7 +192,7 @@ export async function processarTriagem(
           chamado_id: job.chamadoId,
           gatilho: job.gatilho,
           provider: provider.nome,
-          modelo: provider.modelo,
+          modelo,
           // Espelho FIEL do contexto enviado ao provider (D-014/D-015), para
           // auditoria: título + DESCRIÇÃO (o pedido do cliente) + contagem da
           // timeline COMPLETA (públicas e internas) + solicitante/natureza/
@@ -172,6 +215,10 @@ export async function processarTriagem(
             // #16: quantas imagens inline foram COLETADAS para o contexto
             // multimodal (o download em si é pós-Tx, best-effort).
             imagens_contexto: prepCtx.refsImagens,
+            // D-044: parâmetros efetivos desta execução (override do tenant;
+            // `null` = default do provider) e o timeout aplicado.
+            parametros_modelo: prepCtx.input.parametrosModelo ?? null,
+            timeout_ms: prepCtx.input.limites.timeoutMs,
           },
         },
       );
@@ -183,7 +230,7 @@ export async function processarTriagem(
         chamado_id: job.chamadoId,
         ator_id: atorIa?.id ?? null,
         execucao_ia_id: execucaoId,
-        dados: { gatilho: job.gatilho, provider: provider.nome, modelo: provider.modelo },
+        dados: { gatilho: job.gatilho, provider: provider.nome, modelo },
       });
 
       return { skip: false, execucaoId, ctx: prepCtx, acoes };
@@ -195,6 +242,28 @@ export async function processarTriagem(
     }
     ctx = prep.ctx;
     const ctxAtivo = prep.ctx;
+    const obs = observarCancelamento(redis, job.chamadoId, {
+      intervaloMs: deps.cancelamentoPollMs,
+      // Sinal Redis só vale se o banco confirmar o silêncio (sinal atrasado de
+      // um silêncio já desfeito não cancela esta execução).
+      confirmar: () =>
+        runInTenantContext(ds, job.tenantId, async (em) => {
+          const linhas: Array<{ ia_silenciada: boolean }> = await em.query(
+            'SELECT ia_silenciada FROM chamado WHERE id = $1 AND deleted_at IS NULL',
+            [job.chamadoId],
+          );
+          return linhas[0]?.ia_silenciada === true;
+        }),
+      log,
+    });
+    observador = obs;
+    // D-041: cancelamento detectado (sinal Redis, erro do provider ou releitura
+    // da flag na Tx2). Uma vez `true`, nenhuma etapa seguinte roda e nada é aplicado.
+    let cancelado = false;
+    const checarCancelamento = async (): Promise<boolean> => {
+      if (!cancelado && (await obs.verificarAgora())) cancelado = true;
+      return cancelado;
+    };
 
     // ---- Sincronização + provider (FORA da transação) ----------------------
     let resultado: AIProviderResult | null = null;
@@ -207,10 +276,11 @@ export async function processarTriagem(
     } catch (err) {
       erro = motivoErro(err);
     }
+    if (!erro) await checarCancelamento(); // D-041: silenciada durante o git sync
     // Prepara a working copy DESCARTÁVEL da resolução (specs/05 §6) — no-op se o
     // gate PRÉ-call fechou. Falha aqui NÃO derruba a triagem (best-effort): a
     // resolução simplesmente não acontece.
-    if (!erro) {
+    if (!erro && !cancelado) {
       try {
         await ctxAtivo.prepararResolucao();
       } catch (err) {
@@ -223,8 +293,10 @@ export async function processarTriagem(
     // Conhecimento do sistema (D-013): após o git sync, garante o mapa ATUALIZADO
     // (gera/re-gera como ExecucaoIA separada quando ausente ou o commit mudou) e o
     // injeta no contexto da triagem. Best-effort: `garantirConhecimento` nunca
-    // lança (falha de mapa não derruba a triagem).
-    if (!erro && deps.mapa && ctxAtivo.sistemaAlvoId) {
+    // lança (falha de mapa não derruba a triagem). D-041: o mapeamento inline NÃO
+    // é abortado pelo silêncio (é do sistema-alvo, serve às próximas triagens e
+    // tem timeout próprio); o cancelamento vale logo depois dele.
+    if (!erro && !cancelado && deps.mapa && ctxAtivo.sistemaAlvoId) {
       const checkoutDir = ctxAtivo.checkout();
       if (checkoutDir) {
         const conhecimento = await garantirConhecimento({
@@ -239,7 +311,8 @@ export async function processarTriagem(
         if (conhecimento) ctxAtivo.input.contexto.conhecimento = conhecimento;
       }
     }
-    if (!erro) {
+    if (!erro && !cancelado) await checarCancelamento(); // D-041: antes do provider
+    if (!erro && !cancelado) {
       // D-014: agora que o git sync terminou, aponta a exploração NATIVA
       // (Read/Grep/Glob) para o checkout — `cwd` + fronteira do canUseTool.
       if (ctxAtivo.input.exploracao) {
@@ -248,11 +321,14 @@ export async function processarTriagem(
       // #16: baixa as imagens inline (prints) para o contexto MULTIMODAL —
       // best-effort (nunca lança), fora de transação.
       await ctxAtivo.carregarImagens();
+      // D-041: o silêncio aborta a chamada pelo MESMO abort do timeout.
+      ctxAtivo.input.sinalCancelamento = obs.signal;
       try {
         resultado = await provider.executarTriagem(ctxAtivo.input);
       } catch (err) {
-        erro = motivoErro(err);
         telemetriaFalha = telemetriaDoErro(err);
+        if (err instanceof ErroTriagemCancelada || obs.cancelado()) cancelado = true;
+        else erro = motivoErro(err);
       }
     }
 
@@ -261,8 +337,21 @@ export async function processarTriagem(
     // tentativa NÃO derruba o diagnóstico: vira nota interna de falha + ia_falhou.
     let resolucaoOutcome: ResultadoResolucao = { tipo: 'nenhuma' };
     let resultadoRegistro = resultado;
-    if (resultado && !erro) {
-      resolucaoOutcome = await tentarResolver(resultado, ctxAtivo, prep.execucaoId, deps, job);
+    if (resultado && !erro && !cancelado) await checarCancelamento();
+    if (resultado && !erro && !cancelado) {
+      try {
+        resolucaoOutcome = await tentarResolver(
+          resultado,
+          ctxAtivo,
+          prep.execucaoId,
+          deps,
+          job,
+          checarCancelamento,
+        );
+      } catch (err) {
+        if (!(err instanceof ErroTriagemCancelada)) throw err;
+        cancelado = true; // D-041: silenciada antes do push — nada publicado
+      }
       if (resolucaoOutcome.tipo === 'sucesso') {
         resultadoRegistro = { ...resultado, tentativaResolucao: resolucaoOutcome.tentativa };
       } else if (resolucaoOutcome.tipo === 'falha' && resultado.tentativaResolucao) {
@@ -277,6 +366,7 @@ export async function processarTriagem(
         resultadoRegistro = { ...resultado, tentativaResolucao: null };
       }
     }
+    if (resultado && !erro && !cancelado) await checarCancelamento(); // antes da Tx2
 
     // ---- Tx2: aplicação + conclusão (ou falha + escalonamento) --------------
     // Despachante de NOTIFICAÇÕES (M9): captura, DENTRO da Tx2, os jobs traduzidos
@@ -287,14 +377,18 @@ export async function processarTriagem(
     // não notificam (o dispatcher filtra).
     let concluido = false;
     const despachanteNotif = new DespachanteNotificacoes(log);
-    if (resultado) {
+    if (resultado && !cancelado) {
       const r = resultado;
       const rRegistro = resultadoRegistro ?? r;
       // Artefatos entregáveis (D-026) gerados pela IA via `artefato_gerar` —
       // buffers acumulados FORA da transação; o aplicador anexa em Tx2.
       const artefatos = ctxAtivo.artefatos();
       try {
-        await runInTenantContext(ds, job.tenantId, async (em) => {
+        const aplicado = await runInTenantContext(ds, job.tenantId, async (em) => {
+          // D-041 — REDE DE SEGURANÇA: relê a flag com lock da linha (serializa
+          // com o `definirSilencioIa`). Silenciada → NADA é aplicado, mesmo que o
+          // sinal Redis tenha se perdido.
+          if (await chamadoSilenciadoComLock(em, job.chamadoId)) return false;
           await aplicarResultado(
             em,
             {
@@ -309,8 +403,10 @@ export async function processarTriagem(
           );
           // Grava o resultado ENRIQUECIDO (tentativa com branch/prUrl/situacao).
           await concluirExecucao(em, prep.execucaoId, rRegistro, prep.acoes);
+          return true;
         });
-        concluido = true;
+        if (aplicado) concluido = true;
+        else cancelado = true;
       } catch (err) {
         erro = motivoErro(err); // falha na aplicação → escalona
       }
@@ -319,7 +415,36 @@ export async function processarTriagem(
 
     if (!concluido) {
       const erroFinal = erro ?? 'erro_desconhecido';
-      await runInTenantContext(ds, job.tenantId, async (em) => {
+      // Telemetria a gravar: a parcial do corte ou, se o provider chegou a
+      // responder (cancelado antes da Tx2), a completa da resposta descartada.
+      const telemetria = telemetriaFalha ?? resultado?.telemetria;
+      const resolucaoPublicada =
+        resolucaoOutcome.tipo === 'sucesso'
+          ? {
+              branch: resolucaoOutcome.tentativa.branch ?? null,
+              prUrl: resolucaoOutcome.tentativa.prUrl ?? null,
+            }
+          : null;
+      const desfecho = await runInTenantContext(ds, job.tenantId, async (em) => {
+        // D-041: silenciada (sinal OU flag relida agora) → CANCELADA, não falha:
+        // sem `ia_falhou`, sem nota de escalonamento por erro.
+        if (cancelado || (await chamadoSilenciadoComLock(em, job.chamadoId))) {
+          await cancelarExecucao(em, prep.execucaoId, MOTIVO_CANCELAMENTO_IA_SILENCIADA, {
+            acoes: prep.acoes,
+            telemetriaParcial: telemetria,
+          });
+          await encerrarTriagemCancelada(
+            em,
+            {
+              tenantId: job.tenantId,
+              chamadoId: job.chamadoId,
+              execucaoId: prep.execucaoId,
+              resolucaoPublicada,
+            },
+            { log },
+          );
+          return 'cancelado' as const;
+        }
         await falharExecucao(em, prep.execucaoId, erroFinal, {
           acoes: prep.acoes,
           telemetriaParcial: telemetriaFalha,
@@ -334,7 +459,16 @@ export async function processarTriagem(
           },
           { log },
         );
+        return 'falhou' as const;
       });
+      if (desfecho === 'cancelado') {
+        log('triagem cancelada (IA silenciada)', {
+          chamadoId: job.chamadoId,
+          execucaoId: prep.execucaoId,
+          ...(erro ? { erroIgnorado: erro } : {}),
+        });
+        return { status: 'cancelado', execucaoId: prep.execucaoId, motivo: 'ia_silenciada' };
+      }
       log('triagem falhou', {
         chamadoId: job.chamadoId,
         execucaoId: prep.execucaoId,
@@ -347,6 +481,7 @@ export async function processarTriagem(
     return { status: 'concluido', execucaoId: prep.execucaoId };
   } finally {
     pararRenovacao();
+    observador?.parar();
     if (ctx) await ctx.encerrar().catch(() => {});
     await liberarLockTenant(redis, job.tenantId, token).catch(() => {});
   }
@@ -354,8 +489,9 @@ export async function processarTriagem(
 
 /**
  * Avalia o gate PÓS-call e, se autorizado, executa a tentativa de resolução
- * (branch/push/PR). Devolve o desfecho para o aplicador registrar em Tx2. Nunca
- * lança: falha da tentativa vira `{ tipo: 'falha' }` (o diagnóstico segue intacto).
+ * (branch/push/PR). Devolve o desfecho para o aplicador registrar em Tx2. Só
+ * lança `ErroTriagemCancelada` (D-041 — IA silenciada antes do push); qualquer
+ * outra falha da tentativa vira `{ tipo: 'falha' }` (o diagnóstico segue intacto).
  */
 async function tentarResolver(
   resultado: AIProviderResult,
@@ -363,6 +499,7 @@ async function tentarResolver(
   execucaoId: string,
   deps: DepsProcessador,
   job: JobTriagem,
+  deveCancelar: () => Promise<boolean>,
 ): Promise<ResultadoResolucao> {
   const { log } = deps;
   const copia = ctx.copiaResolucao();
@@ -404,12 +541,33 @@ async function tentarResolver(
         log,
         githubFetch: deps.resolucao?.githubFetch,
         webhookTimeoutMs: deps.resolucao?.prTimeoutMs,
+        deveCancelar,
       },
     );
     return { tipo: 'sucesso', tentativa };
   } catch (err) {
+    // D-041: cancelamento NÃO é falha da tentativa — sobe para o pipeline.
+    if (err instanceof ErroTriagemCancelada) throw err;
     const motivo = motivoErro(err);
     log('resolucao: tentativa falhou', { chamadoId: job.chamadoId, motivo });
     return { tipo: 'falha', motivo };
   }
+}
+
+/**
+ * D-041 — releitura de `chamado.ia_silenciada` com `FOR UPDATE` (dentro da
+ * transação): serializa com o `definirSilencioIa`, que atualiza a mesma linha. Se
+ * o silêncio commitou antes, vê `true`; se não, o silêncio espera esta transação
+ * terminar (a triagem "chegou antes"). Chamado inexistente → `false` (o
+ * aplicador/escalonamento já tratam).
+ */
+export async function chamadoSilenciadoComLock(
+  em: EntityManager,
+  chamadoId: string,
+): Promise<boolean> {
+  const linhas: Array<{ ia_silenciada: boolean }> = await em.query(
+    'SELECT ia_silenciada FROM chamado WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+    [chamadoId],
+  );
+  return linhas[0]?.ia_silenciada === true;
 }

@@ -10,6 +10,7 @@ import {
   atualizarNomeExibicao,
   atualizarConfigGeral,
   atualizarInstrucoesIa,
+  atualizarConfigModeloIa,
   definirDominioProprio,
   buscarCanal,
   salvarWebhook,
@@ -28,11 +29,16 @@ import {
   dominioProprioValido,
   normalizarDominio,
   LIMITE_IA_INSTRUCOES_CHARS,
+  lerPadroesIaAmbiente,
+  diasAprovacaoValido,
+  DIAS_APROVACAO_MIN,
+  DIAS_APROVACAO_MAX,
 } from '@chamados/shared';
 import { enviarObjeto, removerObjeto, chaveBranding } from '@chamados/storage';
 import { exigirUsuario } from '@/lib/sessao';
 import { chaveLogo, type VarianteLogo } from '@/lib/branding';
 import { validarImagemLogo } from '@/lib/upload-imagem';
+import { MODELO_OUTRO } from './ia-modelo-opcoes';
 
 export interface EstadoConfig {
   erro?: string;
@@ -195,9 +201,12 @@ export async function acaoSalvarGeral(
     return { erro: 'Sem permissão.' };
   }
 
+  // D-042: prazo para o cliente aprovar ou contestar um chamado resolvido.
   const dias = Number(formData.get('dias_fechamento_automatico'));
-  if (!Number.isFinite(dias) || dias < 1 || dias > 365) {
-    return { erro: 'O prazo de fechamento deve estar entre 1 e 365 dias.' };
+  if (!diasAprovacaoValido(dias)) {
+    return {
+      erro: `O prazo para o cliente aprovar ou contestar deve ser um número inteiro de ${DIAS_APROVACAO_MIN} a ${DIAS_APROVACAO_MAX} dias.`,
+    };
   }
   const iaAuto = formData.get('ia_resolucao_automatica_habilitada') === 'on';
 
@@ -239,6 +248,63 @@ export async function acaoSalvarInstrucoesIa(
       bruto.length > 0
         ? 'Instruções da IA salvas. Valem para as próximas análises.'
         : 'Instruções da IA removidas.',
+  };
+}
+
+/**
+ * Define/limpa modelo, esforço e tempo limite da IA do tenant (D-044, specs/07
+ * §4.1). Admin-only (mesma autorização das instruções da IA). Campo vazio =
+ * "Padrão da instalação" (`IA_MODELO`/`IA_ESFORCO`/`IA_TIMEOUT_MS`). O teto do
+ * tempo limite vem do ambiente — derivado do limiar de execução órfã.
+ */
+export async function acaoSalvarConfigModeloIa(
+  _prev: EstadoConfig,
+  formData: FormData,
+): Promise<EstadoConfig> {
+  const ctx = await exigirUsuario();
+  if (!autorizar(ctx.usuario, 'config_tenant', 'editar')) {
+    return { erro: 'Sem permissão.' };
+  }
+
+  const escolhaModelo = String(formData.get('ia_modelo') ?? '').trim();
+  const modelo =
+    escolhaModelo === MODELO_OUTRO
+      ? String(formData.get('ia_modelo_outro') ?? '').trim()
+      : escolhaModelo;
+  if (escolhaModelo === MODELO_OUTRO && modelo === '') {
+    return { erro: 'Informe o ID do modelo ou escolha uma opção da lista.' };
+  }
+
+  const minutosBruto = String(formData.get('ia_timeout_min') ?? '')
+    .trim()
+    .replace(',', '.');
+  let timeoutMs: number | null = null;
+  if (minutosBruto !== '') {
+    const minutos = Number(minutosBruto);
+    if (!Number.isFinite(minutos)) {
+      return { erro: 'Informe o tempo limite em minutos (apenas números).' };
+    }
+    timeoutMs = Math.round(minutos * 60_000);
+  }
+
+  const { tetoTimeoutTenantMs } = lerPadroesIaAmbiente(process.env);
+  const ds = await obterAppDataSource();
+  const r = await runInTenantContext(ds, ctx.tenant.id, (em) =>
+    atualizarConfigModeloIa(
+      em,
+      ctx.tenant.id,
+      { modelo, esforco: String(formData.get('ia_esforco') ?? ''), timeoutMs },
+      tetoTimeoutTenantMs,
+    ),
+  );
+  if (!r.ok) return { erro: r.erro };
+
+  revalidatePath('/app/config');
+  const personalizado = r.valor.ia_modelo || r.valor.ia_esforco || r.valor.ia_timeout_ms;
+  return {
+    sucesso: personalizado
+      ? 'Modelo, esforço e tempo limite da IA salvos. Valem para as próximas análises.'
+      : 'A IA voltou a usar o padrão da instalação.',
   };
 }
 

@@ -21,6 +21,7 @@ Monorepo TypeScript · Next.js App Router · PostgreSQL 16 + RLS · **TypeORM** 
 - status: `novo` `em_triagem` `aguardando_cliente` `em_atendimento` `resolvido` `fechado` `cancelado`
 - natureza: `problema` `alteracao` `duvida` (D-017) · prioridade: `baixa` `media` `alta` `urgente`
 - complexidade (interna): `facil` `medio` `dificil` · visibilidade de mensagem: `publica` `interna`
+- estimativa de custo (pública, só equipe define — D-043): `A` (R$ 50–100) `B` (100–200) `C` (200–400) `D` (400–600) `E` (600+) `I` (isento); faixas em `packages/shared/src/custo.ts`
 - papéis: `admin` `operador` `cliente` `agente_ia`
 
 ## UI (D-009)

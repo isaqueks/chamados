@@ -11,7 +11,7 @@
  * o serializer pronto e testado para quando os dados existirem.
  */
 import { VisibilidadeMensagem, TipoEvento } from './enums';
-import type { StatusChamado, Natureza, Prioridade, Complexidade } from './enums';
+import type { StatusChamado, Natureza, Prioridade, Complexidade, EstimativaCusto } from './enums';
 
 /** Forma "completa" (interna) de uma mensagem, como vive no banco (specs/02). */
 export interface MensagemInterna {
@@ -52,6 +52,10 @@ export interface ChamadoInterno {
   complexidade?: Complexidade | null;
   /** IA silenciada neste chamado (operador/admin — D-024). Interno: nunca vai ao cliente. */
   ia_silenciada?: boolean;
+  /** Faixa estimada pela equipe (D-043). PÚBLICA: o cliente vê. `null` = sem estimativa. */
+  estimativa_custo?: EstimativaCusto | null;
+  /** Custo final em BRL informado na resolução (D-043). PÚBLICO. `null` = não informado. */
+  custo_final?: number | null;
   resolvido_em?: Date | string | null;
   fechar_automaticamente_em?: Date | string | null;
   fechado_em?: Date | string | null;
@@ -60,7 +64,12 @@ export interface ChamadoInterno {
   updated_at: Date | string;
 }
 
-/** Projeção que o cliente pode ver de um chamado próprio. */
+/**
+ * Projeção que o cliente pode ver de um chamado — o PRÓPRIO ou, desde a D-037,
+ * qualquer outro do seu tenant (mesma allowlist: a leitura ampliada não relaxa
+ * nada). `cliente_id` identifica o solicitante e decide, na UI, se o cliente
+ * pode agir (dono) ou só acompanhar (somente leitura).
+ */
 export interface ChamadoCliente {
   id: string;
   numero: number | string;
@@ -73,6 +82,9 @@ export interface ChamadoCliente {
   status: StatusChamado;
   natureza: Natureza;
   prioridade: Prioridade;
+  /** D-043: estimativa e custo final são visíveis ao cliente (decisão do usuário). */
+  estimativa_custo: EstimativaCusto | null;
+  custo_final: number | null;
   resolvido_em?: Date | string | null;
   fechar_automaticamente_em?: Date | string | null;
   fechado_em?: Date | string | null;
@@ -134,6 +146,7 @@ export function eventoVisivelAoCliente(tipo: TipoEvento): boolean {
 /**
  * Serializa um chamado para o cliente. Exclui `complexidade` (campo interno) e
  * `operador_id` (atribuição de operador não é exposta ao cliente — specs/03 §7).
+ * Inclui `estimativa_custo` e `custo_final` (D-043: públicos por decisão do usuário).
  */
 export function serializarChamadoParaCliente(c: ChamadoInterno): ChamadoCliente {
   return {
@@ -148,6 +161,8 @@ export function serializarChamadoParaCliente(c: ChamadoInterno): ChamadoCliente 
     status: c.status,
     natureza: c.natureza,
     prioridade: c.prioridade,
+    estimativa_custo: c.estimativa_custo ?? null,
+    custo_final: c.custo_final ?? null,
     resolvido_em: c.resolvido_em ?? null,
     fechar_automaticamente_em: c.fechar_automaticamente_em ?? null,
     fechado_em: c.fechado_em ?? null,

@@ -35,17 +35,25 @@ Headers do teste: `x-chamados-event: teste` (assinatura normal, ver §4).
 
 ## 3. Eventos
 
-Os eventos notificáveis do catálogo (specs/06 §6) mapeiam para **7 categorias** de webhook (D-003). O tipo vai em `evento.tipo` no corpo e no header `x-chamados-event`:
+Os eventos notificáveis do catálogo (specs/06 §6) mapeiam para **11 categorias** de webhook (as 7 da D-003 + `aprovado`/`contestado` da D-042 + `estimativa_custo_alterada`/`custo_final_definido` da D-043). O tipo vai em `evento.tipo` no corpo e no header `x-chamados-event`:
 
-| `evento.tipo`         | Disparado quando…                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------------------ |
-| `criado`              | Chamado aberto.                                                                                  |
-| `mensagem_publica`    | Nova mensagem **pública** na timeline.                                                           |
-| `status_alterado`     | Transição de status — inclui **reabertura** e **cancelamento** (ambas são transições de status). |
-| `prioridade_alterada` | Prioridade do chamado alterada.                                                                  |
-| `atribuicao`          | Operador atribuído/desatribuído.                                                                 |
-| `resolvido`           | Chamado marcado como resolvido.                                                                  |
-| `fechado`             | Chamado fechado (manual ou automático).                                                          |
+| `evento.tipo`               | Disparado quando…                                                                                                                                                                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `criado`                    | Chamado aberto.                                                                                                                                                                                                                                                                  |
+| `mensagem_publica`          | Nova mensagem **pública** na timeline.                                                                                                                                                                                                                                           |
+| `status_alterado`           | Transição de status — inclui **reabertura** e **cancelamento** (ambas são transições de status).                                                                                                                                                                                 |
+| `prioridade_alterada`       | Prioridade do chamado alterada.                                                                                                                                                                                                                                                  |
+| `atribuicao`                | Operador atribuído/desatribuído.                                                                                                                                                                                                                                                 |
+| `resolvido`                 | Chamado marcado como resolvido — abre a janela de aprovação do cliente (D-042).                                                                                                                                                                                                  |
+| `fechado`                   | Chamado fechado **manualmente pela equipe** (`chamado_fechado`). Desde a D-042 não cobre mais o fechamento automático.                                                                                                                                                           |
+| `aprovado`                  | O cliente aprovou a resolução: `aprovacao.forma = "explicita"` (`chamado_aprovado`, com `autor`) ou `"tacita"` (prazo vencido sem resposta — `chamado_fechado_auto`, sem `autor`). Nunca acompanhado de `fechado`.                                                               |
+| `contestado`                | O cliente contestou a resolução com motivo (`chamado_contestado`): `autor`, `mensagem.trecho` (o motivo) e `mudanca` `resolvido → em_atendimento`. O motivo também gera um `mensagem_publica` separado.                                                                          |
+| `estimativa_custo_alterada` | D-043: a equipe definiu, alterou ou removeu a estimativa de custo. `mudanca` com os **códigos** da faixa (`{ "de": null, "para": "B" }`; `null` = sem estimativa).                                                                                                               |
+| `custo_final_definido`      | D-043: o custo final foi **corrigido** com o chamado em `resolvido`. `mudanca` com **números** em reais (`{ "de": 150, "para": 180.5 }`; `null` = sem custo). O custo informado **no ato de resolver** não gera este tipo — vem em `chamado.custo_final` do próprio `resolvido`. |
+
+**Janela de aprovação (D-042, specs/04 §8.1):** ao ir para `resolvido`, o cliente solicitante tem `tenant.dias_fechamento_automatico` dias (padrão 7) para aprovar ou contestar; sem resposta, o job `manutencao` fecha o chamado (aprovação tácita) e o webhook `aprovado` tácito sai **com entrega garantida**: a chave de idempotência deriva do id do `EventoChamado`, e a varredura reconcilia por 24 h os webhooks de aprovação tácita sem linha no `notificacao_log` (mesmo `x-chamados-event-id`; job na fila é deduplicado pelo `jobId`). Para integradores, "encerrado" = `aprovado` **ou** `fechado`.
+
+**Custo (D-043, specs/04 §3.4):** todo payload traz `chamado.estimativa_custo` e `chamado.custo_final` (estado **atual** no momento da entrega). Para saber o valor que o cliente aprovou, leia `chamado.custo_final` do `aprovado` (ou do `resolvido`, corrigido por eventuais `custo_final_definido`). Faixas: `A` R$ 50–100 · `B` R$ 100–200 · `C` R$ 200–400 · `D` R$ 400–600 · `E` acima de R$ 600 (`max: null`) · `I` isento (R$ 0). Repetir o mesmo valor não gera webhook.
 
 Nota interna, mudança de complexidade, anexos e eventos internos da IA (`ia_*`) **nunca** disparam webhook.
 
@@ -94,17 +102,88 @@ Rejeite (4xx) requisições com assinatura ausente ou inválida.
     "natureza": "problema",
     "sistema_alvo": "ERP Web", // nome, ou null
     "categoria": "Financeiro", // nome, ou null
+    // D-043 — SEMPRE presentes (públicos):
+    "estimativa_custo": { "codigo": "B", "rotulo": "B · R$ 100 a R$ 200", "min": 100, "max": 200 }, // ou null
+    "custo_final": 150.5, // reais, ou null
   },
-  // Só em mensagem_publica (autor e trecho PÚBLICO, HTML removido, máx. ~240 chars):
+  // Autor da ação: mensagem_publica, contestado e aprovado explícito (só o nome):
   "autor": { "nome": "Maria Silva" },
+  // Trecho PÚBLICO (HTML removido, máx. ~240 chars): mensagem_publica e contestado (o motivo):
   "mensagem": { "trecho": "Boa tarde! O erro acontece quando…" },
-  // Só em status_alterado / prioridade_alterada:
+  // status_alterado / prioridade_alterada / aprovado / contestado /
+  // estimativa_custo_alterada (códigos) / custo_final_definido (números):
   "mudanca": { "de": "em_triagem", "para": "em_atendimento" },
+  // Só em aprovado (D-042): { "forma": "explicita" | "tacita" }; null nos demais:
+  "aprovacao": null,
   "linkChamado": "https://<dominio-do-tenant>/portal/chamados/<id>",
 }
 ```
 
-Campos condicionais vêm `null` quando não se aplicam. Valores de `status`, `prioridade` e `natureza` usam os enums canônicos do Chamados (`novo`, `em_triagem`, `aguardando_cliente`, `em_atendimento`, `resolvido`, `fechado`, `cancelado` · `baixa`…`urgente` · `problema`/`alteracao`/`duvida`).
+Campos condicionais vêm `null` quando não se aplicam.
+
+Exemplo — **aprovação tácita** (D-042; `x-chamados-event: aprovado`):
+
+```json
+{
+  "evento": {
+    "tipo": "aprovado",
+    "id": "<id do EventoChamado>",
+    "timestamp": "2026-11-24T14:05:00.000Z"
+  },
+  "chamado": {
+    "id": "uuid",
+    "numero": "2026-000123",
+    "titulo": "Erro ao emitir nota",
+    "status": "fechado",
+    "prioridade": "alta",
+    "natureza": "problema",
+    "sistema_alvo": "ERP Web",
+    "categoria": null,
+    "estimativa_custo": { "codigo": "B", "rotulo": "B · R$ 100 a R$ 200", "min": 100, "max": 200 },
+    "custo_final": 150.5
+  },
+  "autor": null,
+  "mensagem": null,
+  "mudanca": { "de": "resolvido", "para": "fechado" },
+  "aprovacao": { "forma": "tacita" },
+  "linkChamado": "https://<dominio-do-tenant>/portal/chamados/<id>"
+}
+```
+
+Aprovação explícita: `aprovacao.forma = "explicita"` e `autor = { "nome": "<cliente>" }`. Contestação: `evento.tipo = "contestado"`, `aprovacao = null`, `autor` = cliente, `mensagem.trecho` = motivo, `mudanca.para = "em_atendimento"`.
+
+Exemplo — **correção do custo final** (D-043; `x-chamados-event: custo_final_definido`):
+
+```json
+{
+  "evento": {
+    "tipo": "custo_final_definido",
+    "id": "<id do EventoChamado>",
+    "timestamp": "2026-11-18T10:12:00.000Z"
+  },
+  "chamado": {
+    "id": "uuid",
+    "numero": "2026-000123",
+    "titulo": "Erro ao emitir nota",
+    "status": "resolvido",
+    "prioridade": "alta",
+    "natureza": "problema",
+    "sistema_alvo": "ERP Web",
+    "categoria": null,
+    "estimativa_custo": { "codigo": "B", "rotulo": "B · R$ 100 a R$ 200", "min": 100, "max": 200 },
+    "custo_final": 180.5
+  },
+  "autor": null,
+  "mensagem": null,
+  "mudanca": { "de": 150, "para": 180.5 },
+  "aprovacao": null,
+  "linkChamado": "https://<dominio-do-tenant>/portal/chamados/<id>"
+}
+```
+
+`estimativa_custo_alterada` tem a mesma forma, com `mudanca` de códigos (ex.: `{ "de": "A", "para": "B" }`) e `chamado.estimativa_custo` já com a faixa nova.
+
+Valores de `status`, `prioridade` e `natureza` usam os enums canônicos do Chamados (`novo`, `em_triagem`, `aguardando_cliente`, `em_atendimento`, `resolvido`, `fechado`, `cancelado` · `baixa`…`urgente` · `problema`/`alteracao`/`duvida`).
 
 ## 5. Entrega, retries e idempotência
 
@@ -141,4 +220,5 @@ A reativação é **manual**: o admin corrige o destino e salva/reativa no paine
 - Canal por tenant + circuito de falhas: `packages/db/src/notificacoes/canal-service.ts`
 - Adapter de envio (HMAC, timeout, classificação): `apps/worker/src/notificacoes/webhook-adapter.ts`
 - Processamento/idempotência/alerta ao admin: `apps/worker/src/notificacoes/processador.ts`
+- Aprovação tácita + reconciliação do webhook (D-042): `packages/db/src/chamados/manutencao-service.ts` (`fecharChamadosResolvidosVencidos`, `reconciliarWebhooksAprovacaoTacita`)
 - UI de configuração + evento de teste: `apps/web/src/app/app/config/actions.ts`

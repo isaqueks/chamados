@@ -16,7 +16,22 @@ import { deflateRawSync } from 'node:zlib';
  * dele, autofiltro na faixa e larguras de coluna proporcionais ao conteúdo.
  * Strings vão como `inlineStr` (sem tabela de strings compartilhadas) —
  * simplicidade acima de bytes, já que o teto de linhas é do chamador.
+ *
+ * Mora em `@chamados/db/planilha` (D-045) — subpath SERVER-ONLY (usa
+ * `node:zlib`), compartilhado pelo worker (extração por consulta, D-034) e pelo
+ * web (exportação da fila/portal). Nunca entra no índice de `@chamados/shared`,
+ * que também é empacotado para o browser (front da Forja).
+ *
+ * **Injeção de fórmula (CSV/formula injection — specs/09 §6):** o gerador NUNCA
+ * emite `<f>`; todo texto vai como `inlineStr`, que o Excel/LibreOffice exibem
+ * literalmente. Como defesa extra contra a reavaliação ao editar a célula
+ * (F2+Enter) ou ao salvar como CSV, textos que começam com `=` `+` `-` `@` (ou
+ * TAB/CR) recebem um estilo com `quotePrefix="1"` — o mesmo efeito do apóstrofo
+ * digitado à mão, sem alterar o conteúdo visível.
  */
+
+/** Formato numérico opcional por coluna (D-045). */
+export type FormatoColunaXlsx = 'moeda';
 
 export interface PlanilhaXlsx {
   /** Nome da aba (sanitizado; default `Dados`). */
@@ -24,7 +39,21 @@ export interface PlanilhaXlsx {
   colunas: string[];
   /** Matriz de valores na MESMA ordem de `colunas`. */
   linhas: unknown[][];
+  /**
+   * Como escrever valores `Date` (D-045). `texto` (default, D-034): string
+   * `AAAA-MM-DD HH:MM:SS` em UTC. `data`: data/hora NATIVA do Excel (número de
+   * série com formato `dd/mm/aaaa hh:mm`), convertida para o `fusoHorario` —
+   * ordena, filtra e calcula como data na planilha.
+   */
+  datas?: 'texto' | 'data';
+  /** Fuso IANA usado quando `datas: 'data'` (default `UTC`). */
+  fusoHorario?: string;
+  /** Formato por índice de coluna (ex.: `moeda` → `#,##0.00`). Só afeta números. */
+  formatos?: ReadonlyArray<FormatoColunaXlsx | undefined>;
 }
+
+/** MIME oficial do `.xlsx`. */
+export const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 // --------------------------------------------------------------------- CRC-32
 
@@ -175,10 +204,87 @@ export function sanitizarNomeAba(nome: string | undefined): string {
   return limpo.length > 0 ? limpo : 'Dados';
 }
 
-/** Célula: `n` (número), `b` (booleano) ou texto inline. `null` = célula omitida. */
-type Celula = { tipo: 'n' | 'b'; valor: string } | { tipo: 'texto'; valor: string } | null;
+/**
+ * Texto que uma planilha poderia interpretar como fórmula/comando DDE se a
+ * célula fosse reeditada ou o arquivo convertido para CSV (OWASP "CSV
+ * injection"): começa com `=`, `+`, `-`, `@`, TAB ou CR.
+ */
+export function pareceFormula(texto: string): boolean {
+  return /^[=+\-@\t\r]/.test(texto);
+}
 
-function converterCelula(valor: unknown): Celula {
+const MS_POR_DIA = 86_400_000;
+/** 1970-01-01 no sistema de datas 1900 do Excel (já com o bug do 29/02/1900). */
+const EPOCA_EXCEL_UNIX = 25_569;
+
+const cacheFormatadores = new Map<string, Intl.DateTimeFormat>();
+
+function formatadorFuso(fuso: string): Intl.DateTimeFormat {
+  let f = cacheFormatadores.get(fuso);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone: fuso,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    cacheFormatadores.set(fuso, f);
+  }
+  return f;
+}
+
+/**
+ * Número de série do Excel (dias desde 1899-12-30, fração = hora) para o
+ * instante `data` visto no relógio de parede do `fuso` (IANA). Exportado para teste.
+ */
+export function serialExcel(data: Date, fuso = 'UTC'): number {
+  const partes = Object.fromEntries(
+    formatadorFuso(fuso)
+      .formatToParts(data)
+      .map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  const localMs = Date.UTC(
+    Number(partes.year),
+    Number(partes.month) - 1,
+    Number(partes.day),
+    Number(partes.hour),
+    Number(partes.minute),
+    Number(partes.second),
+  );
+  // Precisão de segundo: o formato exibido é minuto; evita dízimas enormes no XML.
+  return Math.round((localMs / MS_POR_DIA + EPOCA_EXCEL_UNIX) * 86_400) / 86_400;
+}
+
+/** Célula: `n` (número), `b` (booleano) ou texto inline. `null` = célula omitida. */
+type Celula =
+  | { tipo: 'n' | 'b'; valor: string; estilo?: number }
+  | { tipo: 'texto'; valor: string; estilo?: number }
+  | null;
+
+/** Índices de `cellXfs` em `STYLES_XML`. */
+const ESTILO_NEGRITO = 1;
+const ESTILO_TEXTO_LITERAL = 2;
+const ESTILO_DATA_HORA = 3;
+const ESTILO_MOEDA = 4;
+
+interface OpcoesCelula {
+  datas: 'texto' | 'data';
+  fusoHorario: string;
+}
+
+function converterCelula(valor: unknown, opcoes: OpcoesCelula): Celula {
+  const celula = converterCelulaBruta(valor, opcoes);
+  if (celula && celula.tipo === 'texto' && pareceFormula(celula.valor)) {
+    return { ...celula, estilo: ESTILO_TEXTO_LITERAL };
+  }
+  return celula;
+}
+
+function converterCelulaBruta(valor: unknown, opcoes: OpcoesCelula): Celula {
   if (valor === null || valor === undefined) return null;
   if (typeof valor === 'number') {
     return Number.isFinite(valor)
@@ -194,9 +300,15 @@ function converterCelula(valor: unknown): Celula {
       : { tipo: 'texto', valor: valor.toString() };
   }
   if (valor instanceof Date) {
-    return Number.isNaN(valor.getTime())
-      ? { tipo: 'texto', valor: '' }
-      : { tipo: 'texto', valor: formatarDataPlanilha(valor) };
+    if (Number.isNaN(valor.getTime())) return { tipo: 'texto', valor: '' };
+    if (opcoes.datas === 'data') {
+      return {
+        tipo: 'n',
+        valor: String(serialExcel(valor, opcoes.fusoHorario)),
+        estilo: ESTILO_DATA_HORA,
+      };
+    }
+    return { tipo: 'texto', valor: formatarDataPlanilha(valor) };
   }
   if (typeof valor === 'object') {
     let texto: string;
@@ -227,12 +339,14 @@ const WORKBOOK_RELS = `${DECL}
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
 
 /**
- * Estilos MÍNIMOS válidos: 2 fontes (normal/negrito), os 2 fills obrigatórios
- * (`none` e `gray125`), 1 border, 1 `cellStyleXfs` e 2 `cellXfs` — índice 0
- * normal, índice 1 negrito (usado no cabeçalho via `s="1"`).
+ * Estilos MÍNIMOS válidos: 1 formato numérico próprio (`dd/mm/yyyy hh:mm`, id
+ * 164), 2 fontes (normal/negrito), os 2 fills obrigatórios (`none` e
+ * `gray125`), 1 border, 1 `cellStyleXfs` e 5 `cellXfs` — 0 normal, 1 negrito
+ * (cabeçalho), 2 texto literal (`quotePrefix`, anti-fórmula), 3 data/hora,
+ * 4 moeda (`#,##0.00`, formato embutido 4).
  */
 const STYLES_XML = `${DECL}
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy hh:mm"/></numFmts><fonts count="2"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" quotePrefix="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
 function coreXml(titulo: string): string {
   return `${DECL}
@@ -248,7 +362,15 @@ function workbookXml(nomeAba: string): string {
 const LARGURA_MIN = 8;
 const LARGURA_MAX = 60;
 
-function sheetXml(colunas: string[], linhas: unknown[][]): string {
+/** Largura que comporta `dd/mm/aaaa hh:mm` (o número de série é curto demais). */
+const LARGURA_DATA = 17;
+
+function sheetXml(
+  colunas: string[],
+  linhas: unknown[][],
+  opcoes: OpcoesCelula,
+  formatos: ReadonlyArray<FormatoColunaXlsx | undefined>,
+): string {
   const totalColunas = Math.max(colunas.length, 1);
   const larguras = new Array<number>(colunas.length).fill(LARGURA_MIN);
   const partes: string[] = [];
@@ -259,7 +381,7 @@ function sheetXml(colunas: string[], linhas: unknown[][]): string {
     const texto = colunas[c] ?? '';
     larguras[c] = Math.max(larguras[c] ?? LARGURA_MIN, texto.length + 2);
     cabecalho.push(
-      `<c r="${letraColuna(c)}1" s="1" t="inlineStr"><is><t xml:space="preserve">${escaparXml(texto)}</t></is></c>`,
+      `<c r="${letraColuna(c)}1" s="${ESTILO_NEGRITO}" t="inlineStr"><is><t xml:space="preserve">${escaparXml(texto)}</t></is></c>`,
     );
   }
   partes.push(`<row r="1">${cabecalho.join('')}</row>`);
@@ -269,14 +391,25 @@ function sheetXml(colunas: string[], linhas: unknown[][]): string {
     const numeroLinha = i + 2;
     const celulas: string[] = [];
     for (let c = 0; c < colunas.length; c++) {
-      const celula = converterCelula(origem[c]);
+      const celula = converterCelula(origem[c], opcoes);
       if (celula === null) continue; // null/undefined: célula OMITIDA
       const ref = `${letraColuna(c)}${numeroLinha}`;
-      larguras[c] = Math.max(larguras[c] ?? LARGURA_MIN, celula.valor.length + 2);
+      let estilo = celula.estilo;
+      if (estilo === undefined && celula.tipo === 'n' && formatos[c] === 'moeda') {
+        estilo = ESTILO_MOEDA;
+      }
+      const largura =
+        estilo === ESTILO_DATA_HORA
+          ? LARGURA_DATA
+          : estilo === ESTILO_MOEDA
+            ? celula.valor.length + 4 // separadores de milhar + casas decimais
+            : celula.valor.length + 2;
+      larguras[c] = Math.max(larguras[c] ?? LARGURA_MIN, largura);
+      const s = estilo === undefined ? '' : ` s="${estilo}"`;
       celulas.push(
         celula.tipo === 'texto'
-          ? `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escaparXml(celula.valor)}</t></is></c>`
-          : `<c r="${ref}" t="${celula.tipo}"><v>${celula.valor}</v></c>`,
+          ? `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escaparXml(celula.valor)}</t></is></c>`
+          : `<c r="${ref}"${s} t="${celula.tipo}"><v>${celula.valor}</v></c>`,
       );
     }
     partes.push(`<row r="${numeroLinha}">${celulas.join('')}</row>`);
@@ -309,6 +442,11 @@ export function gerarXlsx(planilha: PlanilhaXlsx): Buffer {
   const nomeAba = sanitizarNomeAba(planilha.nomeAba);
   const colunas = planilha.colunas ?? [];
   const linhas = planilha.linhas ?? [];
+  const opcoes: OpcoesCelula = {
+    datas: planilha.datas ?? 'texto',
+    fusoHorario: planilha.fusoHorario ?? 'UTC',
+  };
+  const sheet = sheetXml(colunas, linhas, opcoes, planilha.formatos ?? []);
 
   return escreverZip([
     { nome: '[Content_Types].xml', dados: Buffer.from(CONTENT_TYPES, 'utf8') },
@@ -318,6 +456,6 @@ export function gerarXlsx(planilha: PlanilhaXlsx): Buffer {
     { nome: 'xl/workbook.xml', dados: Buffer.from(workbookXml(nomeAba), 'utf8') },
     { nome: 'xl/_rels/workbook.xml.rels', dados: Buffer.from(WORKBOOK_RELS, 'utf8') },
     { nome: 'xl/styles.xml', dados: Buffer.from(STYLES_XML, 'utf8') },
-    { nome: 'xl/worksheets/sheet1.xml', dados: Buffer.from(sheetXml(colunas, linhas), 'utf8') },
+    { nome: 'xl/worksheets/sheet1.xml', dados: Buffer.from(sheet, 'utf8') },
   ]);
 }

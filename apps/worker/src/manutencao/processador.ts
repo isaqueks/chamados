@@ -15,7 +15,11 @@ import { escalarParaHumano } from '../triagem/aplicador';
  * Processador do job `manutencao` (M10 — specs/04 §8.1 + D-016): varreduras
  * periódicas de ciclo de vida, por TODOS os tenants ativos:
  *
- *  1. AUTO-FECHAMENTO de chamados `resolvido` vencidos (M10).
+ *  1. APROVAÇÃO TÁCITA (D-042; antes "auto-fechamento", M10): chamados
+ *     `resolvido` cujo prazo para o cliente aprovar ou contestar venceu são
+ *     fechados (evento `chamado_fechado_auto`, webhook `aprovado` tácito), e os
+ *     webhooks de aprovação tácita das últimas 24 h que nunca chegaram à fila
+ *     são reenfileirados (idempotente pela chave do evento).
  *  2. EXECUÇÕES ÓRFÃS (D-016): `ExecucaoIA` presa em `na_fila`/`executando` além
  *     do limiar (worker morto no meio — kill/crash) vira `falhou` (`execucao_orfa`)
  *     e o chamado associado é ESCALADO a um humano.
@@ -124,9 +128,15 @@ export async function executarManutencao(deps: DepsManutencao): Promise<Resultad
         await despachante.flush();
         if (res.fechados.length > 0) {
           fechados += res.fechados.length;
-          deps.log('manutencao: chamados auto-fechados', {
+          deps.log('manutencao: chamados aprovados tacitamente (prazo vencido)', {
             tenantId,
             quantidade: res.fechados.length,
+          });
+        }
+        if (res.webhooksReconciliados > 0) {
+          deps.log('manutencao: webhooks de aprovação tácita reenfileirados', {
+            tenantId,
+            quantidade: res.webhooksReconciliados,
           });
         }
 

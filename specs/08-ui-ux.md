@@ -26,14 +26,16 @@ O `agente_ia` não tem UI própria: ele atua como autor de mensagens e eventos, 
 ```mermaid
 graph TD
   subgraph Portal do cliente
-    LP[Login / Seleção de tenant] --> CH[Home: Meus chamados]
+    LP[Login / Seleção de tenant] --> CH[Home: Chamados — Meus / Todos]
     CH --> NOVO[Abrir chamado]
+    CH --> PXLSX[Exportar Excel .xlsx]
     CH --> DET[Detalhe do chamado + timeline]
     CH --> PERF[Perfil e preferências de notificação]
   end
   subgraph Painel operador/admin
     LP --> DASH[Dashboard / Métricas]
     DASH --> FILA[Fila de chamados]
+    FILA --> XLSX[Exportar Excel .xlsx]
     FILA --> ODET[Detalhe operador: timeline + notas internas + painel IA]
     DASH --> CFG[Configurações do tenant]
     DASH --> USR[Gestão de usuários]
@@ -44,25 +46,28 @@ graph TD
 
 ### 2.1 Telas do portal do cliente
 
-| Tela                      | Rota sugerida          | Conteúdo essencial                                                                               |
-| ------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------ |
-| Login / seleção de tenant | `/login`               | Resolução de tenant por subdomínio; e-mail/senha (ver `03-`)                                     |
-| Meus chamados             | `/portal`              | Lista com filtros por status/natureza/sistema-alvo; busca; botão primário "Abrir chamado"        |
-| Abrir chamado             | `/portal/novo`         | Formulário mínimo (§4.1)                                                                         |
-| Detalhe do chamado        | `/portal/chamados/:id` | Cabeçalho (status, prioridade, sistema-alvo), timeline de mensagens `publica`, caixa de resposta |
-| Perfil e notificações     | `/portal/perfil`       | Dados, canais e `PreferenciaNotificacao` (ver `06-notificacoes.md`)                              |
+| Tela                      | Rota sugerida          | Conteúdo essencial                                                                                                              |
+| ------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Login / seleção de tenant | `/login`               | Resolução de tenant por subdomínio; e-mail/senha (ver `03-`)                                                                    |
+| Chamados                  | `/portal`              | Recorte "Meus" (padrão) / "Todos" do tenant (D-037); abas e status; busca; "Abrir chamado"; "Exportar Excel" do recorte (D-045) |
+| Exportar lista (.xlsx)    | `/portal/exportar`     | Download do recorte atual do portal, só colunas da visão pública (D-045)                                                        |
+| Abrir chamado             | `/portal/novo`         | Formulário mínimo (§4.1)                                                                                                        |
+| Detalhe do chamado        | `/portal/chamados/:id` | Cabeçalho, timeline `publica`, caixa de resposta (só nos próprios — alheio é somente leitura)                                   |
+| Perfil e notificações     | `/portal/perfil`       | Dados, canais e `PreferenciaNotificacao` (ver `06-notificacoes.md`)                                                             |
 
 ### 2.2 Telas do painel operador/admin
 
-| Tela                    | Rota sugerida       | Conteúdo essencial                                                                                            | Papel mínimo |
-| ----------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------- | ------------ |
-| Dashboard               | `/app`              | KPIs, gráficos, filas por status, atalhos                                                                     | operador     |
-| Fila de chamados        | `/app/chamados`     | Tabela densa filtrável; ações em lote; salvamento de filtros                                                  | operador     |
-| Detalhe operador        | `/app/chamados/:id` | Timeline (públicas + internas), painel de ações da IA, controles de status/prioridade/atribuição/complexidade | operador     |
-| Configurações do tenant | `/app/config`       | Branding, prazo de auto-fechamento, guardrails de IA, canais de notificação                                   | admin        |
-| Gestão de usuários      | `/app/usuarios`     | Lista, convites, papéis                                                                                       | admin        |
-| Gestão de sistemas-alvo | `/app/sistemas`     | CRUD de `SistemaAlvo` (repo git, logs, conexão BD somente leitura)                                            | admin        |
-| Gestão de categorias    | `/app/categorias`   | CRUD de `Categoria` do tenant                                                                                 | admin        |
+| Tela                    | Rota sugerida            | Conteúdo essencial                                                                                                            | Papel mínimo |
+| ----------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Dashboard               | `/app`                   | KPIs, gráficos, filas por status, atalhos                                                                                     | operador     |
+| Fila de chamados        | `/app/chamados`          | Fila filtrável/ordenável com paginação, chips de filtros ativos, "Exportar Excel" e "Novo chamado" (§4.4, D-045)              | operador     |
+| Exportar fila (.xlsx)   | `/app/chamados/exportar` | Download (route handler, cookie de sessão) do recorte atual da fila — mesmos parâmetros de URL (D-045)                        | operador     |
+| Novo chamado            | `/app/chamados/novo`     | Abrir chamado em nome de um cliente ativo (§4.6, D-040)                                                                       | operador     |
+| Detalhe operador        | `/app/chamados/:id`      | Timeline (públicas + internas), painel de ações da IA, controles de status/prioridade/atribuição/complexidade                 | operador     |
+| Configurações do tenant | `/app/config`            | Branding, prazo de aprovação do cliente (D-042), guardrails, Assistente IA (instruções, modelo/esforço/timeout), notificações | admin        |
+| Gestão de usuários      | `/app/usuarios`          | Lista, convites, papéis                                                                                                       | admin        |
+| Gestão de sistemas-alvo | `/app/sistemas`          | CRUD de `SistemaAlvo` (repo git, logs, conexão BD somente leitura)                                                            | admin        |
+| Gestão de categorias    | `/app/categorias`        | CRUD de `Categoria` do tenant                                                                                                 | admin        |
 
 ---
 
@@ -88,7 +93,7 @@ Identidade visual default, aplicada quando o tenant não tem branding (ou quando
 
 ## 3. Layout e navegação (shell)
 
-**Portal do cliente** — conteúdo em coluna única de largura confortável (~880px) + **sidebar escura no desktop** (pedido do usuário em 2026-07-16; mesma linguagem visual da sidebar do painel — D-019 v2) com Meus chamados / Abrir chamado / Notificações. Header fixo com menu do usuário e ação primária "Abrir chamado" sempre visível (botão no header e FAB no mobile); no mobile a sidebar some e a marca volta ao header (o portal segue mobile-first). Números de chamado sempre integrados à linha do título (ex.: "#6 Alterações"), nunca órfãos em linha própria.
+**Portal do cliente** — conteúdo em coluna única de largura confortável (~880px) + **sidebar escura no desktop** (pedido do usuário em 2026-07-16; mesma linguagem visual da sidebar do painel — D-019 v2) com Chamados / Abrir chamado / Notificações. Header fixo com menu do usuário e ação primária "Abrir chamado" sempre visível (botão no header e FAB no mobile); no mobile a sidebar some e a marca volta ao header (o portal segue mobile-first). Números de chamado sempre integrados à linha do título (ex.: "#6 Alterações"), nunca órfãos em linha própria.
 
 **Painel operador/admin** — layout de app com:
 
@@ -173,7 +178,11 @@ Notas de implementação:
 └───────────────────────────────────────────────────────────┘
 ```
 
-O cliente vê **apenas** mensagens `visibilidade = publica` (do cliente, do `operador`/`admin` e do `agente_ia`). Notas `interna` nunca aparecem aqui. O rótulo do autor IA é "Assistente" (nome amigável do `agente_ia`, configurável no branding). Quando o status for `resolvido`, exibir banner com prazo de auto-fechamento e botão **Reabrir** (regra em `04-`).
+O cliente vê **apenas** mensagens `visibilidade = publica` (do cliente, do `operador`/`admin` e do `agente_ia`). Notas `interna` nunca aparecem aqui. O rótulo do autor IA é "Assistente" (nome amigável do `agente_ia`, configurável no branding). Quando o status for `resolvido` e o usuário é o **solicitante**, exibir o bloco de **aprovação** (D-042): "Este chamado foi resolvido. Você tem até <data> para aprovar ou contestar a solução; sem resposta, ele será considerado aprovado." com **Aprovar** (primário; encerra) e **Contestar** (outline; abre diálogo com **motivo obrigatório** — a mensagem vai para a conversa e o chamado volta para atendimento). Nesse estado a caixa de resposta some (falar = contestar) e não há "Reabrir" de um clique. Colega do tenant vê só "Este chamado foi resolvido — aguardando a aprovação de <nome>". Em `fechado`/`cancelado` a caixa de resposta dá lugar ao aviso "não recebe novas mensagens" com **Reabrir** (só para o solicitante — D-038; um clique, sem mensagem obrigatória) ao lado de **Abrir novo chamado**. A confirmação de cancelamento avisa que o chamado poderá ser reaberto depois. **Custo (D-043):** no cabeçalho, ao lado de status/prioridade/natureza, badges "Estimativa: B · R$ 100 a R$ 200" e, quando informado, "Custo final: R$ 150,00"; no bloco de aprovação, a linha "Custo final: R$ …" aparece junto do pedido — o cliente aprova sabendo o valor (o colega do tenant vê o valor no aviso "aguardando a aprovação"). Na timeline, "alterou a estimativa de custo (sem estimativa → B · R$ 100 a R$ 200)" e "informou o custo final (R$ 150,00)". Os cards da lista (`/portal`) mostram os mesmos badges.
+
+**Lista do portal — recorte e busca (D-037).** A home do portal abre em **"Meus chamados"** e um controle segmentado no topo troca para **"Todos os chamados"** do tenant (`?ver=todos`); as abas abertos/histórico e os chips de status valem nos dois recortes. No recorte "Todos" cada card mostra o **nome do solicitante** ("Você" nos próprios) e o selo "Aguardando você" só aparece nos chamados do próprio usuário — assim como o selo discreto (contorno verde) **"Aguardando sua aprovação"** nos `resolvido` do próprio cliente (D-042). A **busca** (número, título ou descrição — `04-` §10.4) fica logo abaixo, **respeita o recorte** e varre abertos + histórico; enquanto há termo, abas e chips dão lugar a "Resultados para …" com "Limpar busca".
+
+**Chamado alheio (D-037) — somente leitura.** Quando o cliente abre um chamado do tenant que não solicitou, o detalhe mostra o mesmo conteúdo público, com "Aberto por <nome>" na linha de metadados, **sem** caixa de resposta, **sem** Reabrir/Cancelar e **sem** o banner "Aguardando sua resposta"; no lugar do compositor, um aviso discreto: "Você está acompanhando um chamado de <nome>. Só o solicitante pode responder ou alterar este chamado." Mensagens de outro cliente levam o rótulo "Solicitante". A UI só esconde — a fronteira real é o servidor (`03-` §9).
 
 ### 4.3 Detalhe do chamado (operador) — timeline + notas internas + painel IA
 
@@ -211,33 +220,47 @@ Layout de três colunas em telas largas; empilha no mobile.
 
 Elementos-chave:
 
-- **Coluna de contexto**: controles de `status`, `prioridade`, `complexidade`, `natureza`, atribuição e link para o `SistemaAlvo`. Toda alteração gera `EventoChamado` (auditoria — ver `04-`).
+- **Coluna de contexto**: controles de `status`, `prioridade`, `complexidade`, `natureza`, atribuição e link para o `SistemaAlvo`. Toda alteração gera `EventoChamado` (auditoria — ver `04-`). Os botões de status vêm de `transicoesDoPapel`; a volta a `em_atendimento` a partir de `resolvido`, `fechado` ou `cancelado` se chama **Reabrir** (D-038) — num chamado encerrado é a única ação de status, e o aviso no lugar do compositor aponta para ela. Em **Detalhes**, a janela de aprovação do cliente (D-042): "Aprovação até <data>" enquanto `resolvido`; depois "Aprovado: <cliente> · <data>", "Aprovado: tacitamente · <data>" ou "Fechado: pela equipe · <data>". Na timeline, os eventos "aprovou a solução", "contestou a solução" e "encerrou por aprovação tácita (prazo sem resposta)".
+- **Custo (D-043):** seção **Custo** na coluna de contexto, no padrão dos selects vizinhos: select "Estimativa de custo" (Sem estimativa / A…E / Isento, cada opção com a faixa — `rotuloEstimativaCusto`), editável em qualquer status não encerrado; "Custo final (R$)" — campo com vírgula decimal e botão **Salvar** só com o chamado `resolvido` (validação pt-BR no cliente com a mesma regra do servidor, mensagem de erro sob o campo; em branco + Salvar remove), e texto somente leitura nos demais status ("Informado ao marcar como resolvido."). Nota "O cliente vê a estimativa e o custo final.". O cabeçalho mostra os badges de estimativa e custo final. **Marcar resolvido** (único caminho da equipe para `resolvido` na UI — o compositor não resolve) abre um diálogo de confirmação com o campo opcional "Custo final (R$)", pré-preenchido com o valor atual; em branco resolve sem mexer no custo (sem atrito). Toast: "Status alterado para "Resolvido" com custo final de R$ …".
 - **Timeline unificada**: mensagens `publica` e `interna` no mesmo fluxo, com as internas visualmente distintas (fundo âmbar, selo "interna"). O compositor tem toggle **Pública/Interna** — default **Interna** para operador, reduzindo risco de vazamento.
+- **Quem responde fica responsável (D-039):** com **Pública** selecionada e o chamado **não** atribuído ao usuário logado, o texto de ajuda sob o compositor acrescenta "Ao responder, você se torna responsável por este chamado." (some quando ele já é o responsável ou com Interna). Depois do envio, o toast diz "Resposta enviada. Você agora é o responsável por este chamado." e o seletor "Atribuído" da coluna de contexto já mostra o autor (revalidação da rota). Na timeline, o evento aparece como "<nome> assumiu o chamado ao responder" (atribuição a si mesmo pelo seletor: "assumiu o chamado").
 - **Painel da IA**: reflete a `ExecucaoIA` mais recente e o histórico (entrada, ações, custo, duração, resultado — ver `05-`). Botões de aprovação de PR aparecem só quando há guardrail pendente. "Reexecutar IA" reenfileira o job.
 
-### 4.4 Fila de chamados (operador)
+### 4.4 Fila de chamados (operador) — D-045 (evolui D-030)
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ Chamados        [🔎 buscar por número, título ou descrição…]                  │
-│  ( Em aberto 10 ) ( Encerrados 22 ) ( Todos 32 )                             │
-│  Atribuição▾ Status▾ Natureza▾ Prioridade▾ Complexidade▾ Sistema▾ Categoria▾  │
-├────┬────────────────────────────┬─────────┬──────────┬──────────┬───────────┤
-│ ☐  │ Chamado                    │ Status  │ Prior.   │ Complex. │ Atribuído │
-├────┼────────────────────────────┼─────────┼──────────┼──────────┼───────────┤
-│ ☐  │ #1042 2ª via boleto        │ Em atend│ 🔴 Alta  │ Fácil    │ Marina    │
-│ ☐  │ #1041 Erro no login  🤖    │ Triagem │ 🟠 Média │ —        │ —         │
-│ ☐  │ #1039 Novo relatório  ✎    │ Ag.clie.│ 🟡 Baixa │ Médio    │ João      │
-│ ☐  │ #1038 Timeout no checkout  │ Novo    │ 🔴 Urg.  │ —        │ —         │
-├────┴────────────────────────────┴─────────┴──────────┴──────────┴───────────┤
-│  2 selecionados:  [ Atribuir ▾ ]  [ Prioridade ▾ ]  [ Status ▾ ]            │
-└───────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│ Chamados                                               [⬇ Exportar Excel] [+ Novo]  │
+│ 312 chamados em aberto com os filtros aplicados · ordenados por atualizado · mais … │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌ Em aberto 10 │ Encerrados 22 │ Todos 32 ┐                [🔎 Buscar por número…  ]│
+│ [Responsável Meus ▾] [Status ▾] [Prioridade ▾] [⚙ Mais filtros ②]   Ordenar [Atual…▾]│
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ Filtrando por  (Responsável: Meus ✕) (Natureza: Problema ✕) (Período: Criado … ✕)  │
+│                Limpar tudo                                                           │
+├──────────────────────────────┬──────────┬─────────┬───────────────┬────────┬──────┬───┤
+│ CHAMADO ↕                    │ STATUS   │ PRIOR.↕ │ RESPONSÁVEL   │NATUREZA│CUSTO │AT.↓│
+├──────────────────────────────┼──────────┼─────────┼───────────────┼────────┼──────┼───┤
+│ #1042 2ª via de boleto  ⟲1   │ ● Em at. │ ● Alta  │ (MS) Marina   │Problema│[B] … │2 h│
+│ Cliente Um · ERP             │          │         │               │Fácil   │      │   │
+│ #1041 Erro no login  (IA ⃠)  │ ● Triag. │ ● Urg.  │ — [Assumir]   │Dúvida  │ —    │5 m│
+│ Cliente Dois · Financeiro    │          │         │               │Médio   │      │   │
+├──────────────────────────────┴──────────┴─────────┴───────────────┴────────┴──────┴───┤
+│ 1–25 de 312                          Por página [25▾]   [‹]  1 / 13  [›]            │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Ícones de linha: 🤖 = IA processando/aguardando; ✎ = `natureza = alteracao`.
-- **Um só nível de chips (D-030)**: os três filtros rápidos de situação — **Em aberto** (padrão), **Encerrados**, **Todos** —, cada um com contador. Nada mais vira chip; as demais dimensões (atribuição, status, natureza, prioridade, complexidade, sistema-alvo, categoria) são **dropdowns**, com o contador no rótulo da opção ("Meus (3)", "Fechado (22)"). O dropdown de status oferece só os status da situação escolhida — a fila não convida o operador para uma interseção vazia.
-- Filtros combinam-se com a busca full-text (ver `04-`); conjuntos de filtros salvos por usuário ficam fora do MVP.
-- Ordenação default: prioridade desc + atualização recente. Densidade compacta; virtualização para listas longas.
+- **Cabeçalho**: título, o **tamanho do recorte** ("312 chamados em aberto…", `ContadoresFila.filtrados`) e a ordenação em vigor; à direita as ações — **Exportar Excel** (secundária) e **Novo chamado** (primária, D-040).
+- **Uma superfície só** (cartão): barra de ferramentas → chips de filtros ativos → tabela → rodapé de paginação. Nada solto entre o título e os dados.
+- **Barra de ferramentas, na ordem das perguntas do operador**: (1) **situação** como controle segmentado com contadores — os três filtros rápidos de D-030 continuam valendo (padrão "Em aberto", `status`/`q` na URL ajustam, contadores ignoram o próprio filtro); (2) **busca** com ícone e botão de limpar; (3) os três filtros de uso diário como menus: **Responsável** (Qualquer / Atribuídos a mim / Não atribuídos / cada operador da equipe, todos com contador), **Status** (escopado pela situação, só opções com chamado — regra de D-030 — e com contador) e **Prioridade** (urgente → baixa, com o ponto de cor do badge); (4) **Mais filtros** (popover com contador de ativos): natureza, complexidade, **sistema ou categoria** num único campo (o "alvo", com grupos), solicitante, estimativa de custo e **período** (criado/atualizado, de/até inclusivos), com "Aplicar" e "Limpar estes filtros"; (5) **Ordenar** — seletor sempre visível (inclui "Criado", que não tem coluna).
+- **Filtros ativos** viram chips removíveis ("Responsável: Marina ✕") numa linha própria, com **Limpar tudo** (remove os chips; mantém a situação, a busca, a ordem e o tamanho de página — o "Limpar filtros" do estado vazio limpa também a busca). Busca e situação não viram chip: têm controle próprio sempre visível.
+- **Tabela** (≥ 1280 px — com a sidebar, abaixo disso o título ficaria estreito demais), `table-fixed`: **Chamado** (`#número` + título em peso maior; linha secundária discreta "solicitante · sistema/categoria" e, em `resolvido`, "⌛ aprovação até dd/mm" — D-042; sinais ao lado do título: IA silenciada e nº de reaberturas), **Status**, **Prioridade**, **Responsável** (iniciais + nome, "Você" quando é o próprio, "Não atribuído" discreto), **Custo** (custo final em destaque quando houver; senão selo da faixa + valores), **Natureza** + complexidade em texto pequeno a partir de 1536 px (antes disso a natureza vai na linha secundária), **Atualizado** (tempo relativo; data/hora absoluta no `title`). Ordenáveis pelo cabeçalho (com `aria-sort` e seta): Chamado (nº), Prioridade, Atualizado — clique inverte a direção.
+- **Linha inteira clicável**; o link acessível é o título (teclado/leitor de tela/nova aba). **Assumir** só aparece em chamado **em aberto** que não é do operador: sempre visível quando não atribuído; quando é de outra pessoa, surge no hover/foco da linha (sempre visível em telas de toque).
+- **< 1280 px**: a tabela vira **lista** dentro do mesmo cartão (título em até 2 linhas, solicitante · alvo, badges de status/prioridade/natureza e custo conforme a largura, responsável e "Assumir") — sem rolagem horizontal; a ordenação fica no seletor "Ordenar".
+- **Rodapé**: "26–50 de 312", **por página** 25/50/100, anterior/próxima com "página X / Y". Paginação por offset limitado (`04` §10.4 — D-045); além de 10.000 linhas a tela pede para refinar ou exportar.
+- **Estados**: vazio útil (D-030: "Nenhum chamado em aberto — veja Encerrados/Todos"; com filtros: "Limpar filtros"; página além do fim: "Ir para a primeira página"); skeleton (`loading.tsx`) com a mesma estrutura (cabeçalho, barra, linhas de duas alturas, rodapé).
+- **Exportar Excel**: baixa `.xlsx` com **todo** o recorte atual (não só a página), mesmas colunas e ordem — detalhes em `04` §10.3.1. Desabilitado com recorte vazio; o `title` avisa quando o recorte passa do teto de 10.000.
+- **URL é o estado** (`lib/fila-params.ts`): todo filtro, ordenação e página vão para a query string — links compartilháveis, botão voltar funciona, página server component. Conjuntos de filtros salvos e ações em lote seguem fora do MVP.
 
 ### 4.5 Dashboard (operador/admin)
 
@@ -264,6 +287,35 @@ Métricas exibidas alinham-se às de `00-visao-geral.md`. O bloco "Precisa de vo
 
 > DECISÃO PENDENTE: conjunto exato de KPIs do MVP e se há gráficos temporais (série histórica) já na fase 1 ou só cards agregados.
 
+### 4.6 Novo chamado (operador/admin) — em nome de um cliente (D-040)
+
+Entrada: botão primário **"Novo chamado"** no cabeçalho da fila (`/app/chamados`) e atalho no cabeçalho do dashboard. Coluna única (~768px) no padrão das telas de formulário do painel.
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  ‹ Voltar à fila                                            │
+│  Novo chamado                                               │
+│  Abra um chamado em nome de um cliente…                     │
+│ ┌───────────────────────────────────────────────────────┐ │
+│ │ Solicitante *  [ 🔎 Busque por nome ou e-mail   ✕ ▾ ] │ │  ← combobox: nome + e-mail
+│ │                  Maria Silva · maria@acme.com          │ │
+│ │ Sistema *      [ Portal de Vendas              ▾ ]    │ │  ← só se >1 SistemaAlvo
+│ │ Título *       [ …                               ]    │ │
+│ │ Descrição *    [ editor TipTap (prints colados)  ]    │ │
+│ │ Natureza [ Automático ▾ ]   Prioridade [ Média ▾ ]    │ │  ← à vista (equipe escolhe)
+│ │ Estimativa de custo (opcional) [ Sem estimativa ▾ ]   │ │  ← D-043
+│ │                         [ Cancelar ] [ Abrir chamado ]│ │
+│ └───────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────┘
+```
+
+- **Mesmos campos do portal** (§4.1), via componentes compartilhados (`components/chamado/campos-chamado.tsx`); a regra do sistema-alvo é a mesma.
+- **Solicitante** obrigatório: combobox pesquisável (primitivo `ui/combobox`, Base UI) com os clientes **ativos** do tenant; filtra por nome ou e-mail, sem acento/caixa. Foco inicial nele.
+- **Natureza** com "Automático — a IA classifica na triagem" (default, D-017) e **prioridade** Média, lado a lado (empilham no mobile).
+- A dica do editor lembra que a descrição é **pública** (o cliente a vê); detalhe interno vai em nota interna depois de abrir.
+- Envio desabilitado até solicitante + título (≥ 3) + descrição; erros do servidor em `Alert` no topo do formulário. No sucesso: toast "Chamado #N aberto em nome de <cliente>." e navegação ao detalhe (§4.3).
+- **Sem cliente ativo:** estado vazio ("Nenhum cliente ativo ainda") explicando que todo chamado pertence a um cliente; admin vê "Convidar cliente" (→ `/app/usuarios`), operador é orientado a pedir a um administrador.
+
 ---
 
 ## 5. Fluxos principais
@@ -287,7 +339,7 @@ Métricas exibidas alinham-se às de `00-visao-geral.md`. O bloco "Precisa de vo
 
 1. Autor escreve no compositor rich text (anexos opcionais).
 2. **Cliente**: só envia mensagem `publica`.
-3. **Operador**: escolhe toggle Pública/Interna (default Interna).
+3. **Operador**: escolhe toggle Pública/Interna (default Interna). Resposta **Pública** torna o autor o responsável pelo chamado (D-039; `04-` §7.1) — avisado no texto de ajuda e no toast.
 4. Envio otimista: a mensagem aparece na timeline em estado "enviando" e confirma ao persistir; falha oferece **repetir**.
 
 ### Fluxo 4 — Operador atende e resolve
@@ -295,8 +347,8 @@ Métricas exibidas alinham-se às de `00-visao-geral.md`. O bloco "Precisa de vo
 1. Operador abre o detalhe (§4.3), lê o diagnóstico da IA no painel lateral.
 2. Ajusta `prioridade`/`complexidade`/atribuição se necessário (gera `EventoChamado`).
 3. Se houver PR da IA pendente, **aprova/recusa** (guardrail — merge/deploy exige aprovação humana; ver `05-`).
-4. Publica resposta `publica` ao cliente e muda status para `resolvido`.
-5. Banner de auto-fechamento aparece ao cliente; após N dias (config. do tenant) o chamado vai para `fechado`, ou o cliente **reabre** (→ `em_atendimento`). Regras em `04-`.
+4. Publica resposta `publica` ao cliente e muda status para `resolvido` — no diálogo de confirmação, informa opcionalmente o **custo final** (D-043).
+5. O cliente recebe o e-mail de resolvido com o prazo e vê o bloco de aprovação no portal (D-042): **aprova** (→ `fechado`) ou **contesta** com motivo (→ `em_atendimento`); sem resposta em N dias (config. do tenant, padrão 7) o chamado é considerado aprovado e vai para `fechado` (webhook `aprovado` tácito). Depois de `fechado`, o cliente ainda pode **reabrir** (D-038). Regras em `04-` §8.
 
 ### Fluxo 5 — Admin cadastra sistema-alvo
 

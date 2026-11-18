@@ -1,27 +1,33 @@
 import type { DataSource, EntityManager } from 'typeorm';
-import { LessThanOrEqual, IsNull } from 'typeorm';
 import { StatusChamado, StatusExecucaoIA } from '@chamados/shared';
-import { ChamadoSchema, type Chamado } from '../entities/chamado';
+import { ChamadoSchema } from '../entities/chamado';
 import { ExecucaoIASchema } from '../entities/execucao-ia';
 import { atorSistema, transicionarStatus } from './chamado-service';
 import type { HooksChamado } from './auditoria';
+import { resolverJobs } from '../notificacoes/dispatcher';
+import { chaveIdempotencia } from '../notificacoes/tipos';
 
 /**
- * Manutenção automática do ciclo de vida do chamado (specs/04 §8.1): o
- * auto-fechamento de chamados `resolvido` cujo prazo (`fechar_automaticamente_em`)
- * já venceu. É a peça de DADOS que o job `manutencao` do worker orquestra POR
+ * Manutenção automática do ciclo de vida do chamado (specs/04 §8.1): a
+ * APROVAÇÃO TÁCITA (D-042) — o fechamento de chamados `resolvido` cujo prazo
+ * para o cliente aprovar ou contestar (`fechar_automaticamente_em`) já venceu
+ * sem resposta. É a peça de DADOS que o job `manutencao` do worker orquestra POR
  * TENANT (o worker enumera os tenants ativos e chama esta função dentro de
  * `runInTenantContext` de cada um).
  *
  * A transição `resolvido → fechado` é feita pelo ator `sistema` via
- * `transicionarStatus`, que já: (a) grava o evento `chamado_fechado_auto`
- * (specs/02 §tipo_evento); (b) preenche `fechado_em` e limpa
- * `fechar_automaticamente_em`; (c) dispara a notificação de fechamento ao cliente
- * (quando um despachante que captura notificações é injetado nos `hooks`).
+ * `transicionarStatus`, que já: (a) grava o evento `chamado_fechado_auto` com
+ * `dados.aprovacao = 'tacita'` (specs/02 §tipo_evento); (b) preenche `fechado_em`
+ * e limpa `fechar_automaticamente_em`; (c) traduz o evento em notificações —
+ * e-mail ao cliente/responsável e o WEBHOOK `aprovado` (`forma: 'tacita'`) —
+ * quando um despachante que captura notificações é injetado nos `hooks` (o
+ * worker sempre injeta).
  *
  * IDEMPOTENTE: só toca chamados ainda `resolvido` e vencidos — reexecutar não
- * re-fecha nada (já `fechado`, some do filtro). Concorrência entre instâncias do
- * worker é tratada por LOCK no orquestrador (ver worker `manutencao`).
+ * re-fecha nada (já `fechado`, some do filtro). As linhas são travadas com
+ * `FOR UPDATE SKIP LOCKED` (duas varreduras concorrentes nunca fecham — nem
+ * notificam — o mesmo chamado duas vezes), além do LOCK global no orquestrador.
+ * A ENTREGA do webhook é garantida por `reconciliarWebhooksAprovacaoTacita`.
  */
 
 /** Lista os `id` de tenants `ativo` via a função SECURITY DEFINER (fora de contexto RLS). */
@@ -31,13 +37,17 @@ export async function listarTenantsAtivos(ds: DataSource): Promise<string[]> {
 }
 
 export interface ResultadoAutoFechamento {
-  /** Ids dos chamados efetivamente fechados nesta varredura. */
+  /** Ids dos chamados efetivamente fechados (aprovação tácita) nesta varredura. */
   fechados: string[];
+  /** Webhooks `aprovado` (tácita) reenfileirados pela reconciliação (D-042). */
+  webhooksReconciliados: number;
 }
 
 /**
- * Fecha automaticamente os chamados `resolvido` vencidos do tenant corrente
- * (`em` já escopado por `runInTenantContext`). Retorna os ids fechados.
+ * Fecha automaticamente — APROVAÇÃO TÁCITA (D-042) — os chamados `resolvido`
+ * vencidos do tenant corrente (`em` já escopado por `runInTenantContext`) e
+ * reconcilia os webhooks de aprovação tácita das últimas 24 h. Retorna os ids
+ * fechados.
  *
  * @param agora Instante de referência (default `new Date()`); parametrizável para testes.
  */
@@ -47,17 +57,17 @@ export async function fecharChamadosResolvidosVencidos(
   hooks?: HooksChamado,
   agora: Date = new Date(),
 ): Promise<ResultadoAutoFechamento> {
-  const vencidos = await em.find(ChamadoSchema, {
-    where: {
-      status: StatusChamado.resolvido,
-      fechar_automaticamente_em: LessThanOrEqual(agora),
-      deleted_at: IsNull(),
-    },
-    select: { id: true },
-  });
+  // SQL cru para o `FOR UPDATE SKIP LOCKED` (RLS vale igual: mesma conexão).
+  const vencidos: Array<{ id: string }> = await em.query(
+    `SELECT id FROM chamado
+      WHERE status = $1 AND fechar_automaticamente_em <= $2 AND deleted_at IS NULL
+      ORDER BY fechar_automaticamente_em
+      FOR UPDATE SKIP LOCKED`,
+    [StatusChamado.resolvido, agora],
+  );
 
   const fechados: string[] = [];
-  for (const c of vencidos as Array<Pick<Chamado, 'id'>>) {
+  for (const c of vencidos) {
     const r = await transicionarStatus(
       em,
       atorSistema(tenantId),
@@ -68,7 +78,75 @@ export async function fecharChamadosResolvidosVencidos(
     );
     if (r.ok) fechados.push(c.id);
   }
-  return { fechados };
+  const webhooksReconciliados = await reconciliarWebhooksAprovacaoTacita(em, tenantId, hooks);
+  return { fechados, webhooksReconciliados };
+}
+
+/** Janela da reconciliação do webhook de aprovação tácita (D-042). */
+export const JANELA_RECONCILIACAO_APROVACAO_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Garantia de ENTREGA do webhook da aprovação tácita (D-042 — requisito
+ * explícito: "nenhuma resposta significa aprovação (deve enviar webhook)").
+ *
+ * O despacho normal é pós-commit e best-effort: se o Redis estiver fora no
+ * `flush`, o job se perde. Aqui, a cada varredura, cada `chamado_fechado_auto`
+ * com `dados.aprovacao = 'tacita'` das últimas 24 h cujo webhook NÃO tem linha
+ * em `notificacao_log` é re-resolvido e republicado. A chave de idempotência é
+ * DERIVADA do id do evento (`eventoNotifId = EventoChamado.id`), então:
+ *  - job ainda na fila → o `jobId` igual deduplica o enfileiramento;
+ *  - job já processado (entregue, aceito ou falha) → há linha no log → pula;
+ *  - webhook desativado/sem URL → `resolverJobs` não gera job → nada a fazer.
+ * Eventos desta mesma transação (`created_at = now()`) ficam de fora — acabaram
+ * de ser despachados. Só eventos com `aprovacao = 'tacita'` (pós-D-042) entram:
+ * fechamentos automáticos antigos nunca recebem um `aprovado` retroativo.
+ */
+export async function reconciliarWebhooksAprovacaoTacita(
+  em: EntityManager,
+  tenantId: string,
+  hooks?: HooksChamado,
+  janelaMs: number = JANELA_RECONCILIACAO_APROVACAO_MS,
+): Promise<number> {
+  const despachante = hooks?.despachante;
+  if (!despachante?.capturaNotificacoes) return 0;
+
+  const eventos: Array<{
+    id: string;
+    chamado_id: string;
+    dados: Record<string, unknown> | null;
+    created_at: Date;
+  }> = await em.query(
+    `SELECT id, chamado_id, dados, created_at FROM evento_chamado
+      WHERE tipo = 'chamado_fechado_auto' AND dados->>'aprovacao' = 'tacita'
+        AND created_at >= now() - ($1::double precision * interval '1 millisecond')
+        AND created_at < now()
+      ORDER BY created_at`,
+    [janelaMs],
+  );
+
+  let republicados = 0;
+  for (const e of eventos) {
+    const chave = chaveIdempotencia({ eventoNotifId: e.id, canal: 'webhook', tenantId });
+    const log: Array<{ ok: number }> = await em.query(
+      `SELECT 1 AS ok FROM notificacao_log WHERE idempotency_key = $1 LIMIT 1`,
+      [chave],
+    );
+    if (log.length > 0) continue;
+    const jobs = await resolverJobs(em, {
+      id: e.id,
+      ocorrido_em: new Date(e.created_at),
+      tipo: 'chamado_fechado_auto',
+      chamado_id: e.chamado_id,
+      ator_id: null,
+      dados: e.dados ?? {},
+    });
+    for (const job of jobs) {
+      if (job.canal !== 'webhook') continue; // e-mail não é reconciliado
+      despachante.publicar({ tipo: 'notificacao', job });
+      republicados += 1;
+    }
+  }
+  return republicados;
 }
 
 // --- Redes de segurança contra estado preso (D-016, specs/05 §8) -------------

@@ -1,5 +1,6 @@
 import type {
   Complexidade,
+  EstimativaCusto,
   Natureza,
   Papel,
   Prioridade,
@@ -75,6 +76,8 @@ export interface FiltrosListarChamados {
   sistema_alvo_id?: string;
   categoria_id?: string;
   busca?: string;
+  /** D-037: só os chamados em que o usuário autenticado é o solicitante. */
+  meus?: boolean;
   /** 1–100. */
   limite?: number;
   cursor?: string;
@@ -97,6 +100,13 @@ export interface ItemChamado {
   solicitante_nome: string | null;
   sistema_nome: string | null;
   categoria_nome: string | null;
+  /**
+   * D-043: faixa estimada — emitida para TODOS os papéis (`null` = sem
+   * estimativa). Opcional só porque servidores anteriores à D-043 não a emitem.
+   */
+  estimativa_custo?: EstimativaCusto | null;
+  /** D-043: custo final em BRL, todos os papéis (`null` = não informado). Opcional como acima. */
+  custo_final?: number | null;
   created_at: string | null;
   updated_at: string | null;
   /** D-036 L1 no item da lista (só equipe); no detalhe já existe hoje. */
@@ -173,6 +183,8 @@ export interface EntradaMensagem {
 export interface EntradaStatus {
   status: StatusChamado;
   motivo?: string;
+  /** D-043: só com `status = resolvido` (equipe). Reais, até 2 casas; `null` limpa. */
+  custo_final?: number | null;
 }
 
 /**
@@ -190,6 +202,8 @@ export interface EntradaCriarChamado {
   categoria_id?: string;
   solicitante_email?: string;
   solicitante_id?: string;
+  /** D-043: só equipe. */
+  estimativa_custo?: EstimativaCusto;
 }
 
 /** `POST /api/v1/chamados` → 201. */
@@ -206,6 +220,23 @@ export interface RespostaMensagem {
 /** `POST …/status` → 200. */
 export interface RespostaStatus {
   status: StatusChamado;
+  /** D-043: custo final após a transição. */
+  custo_final?: number | null;
+}
+
+/**
+ * D-043 — `POST …/custo`. Chave ausente não mexe; `null` limpa. Ao menos uma.
+ * `custo_final` só com o chamado em `resolvido` (`409 custo_fora_da_resolucao`).
+ */
+export interface EntradaCusto {
+  estimativa_custo?: EstimativaCusto | null;
+  custo_final?: number | null;
+}
+
+/** D-043 — `POST …/custo` → 200 (valores atuais). */
+export interface RespostaCusto {
+  estimativa_custo: EstimativaCusto | null;
+  custo_final: number | null;
 }
 
 /** D-036 L1 — `POST …/ia` → 200 (idempotente). */

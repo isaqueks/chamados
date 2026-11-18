@@ -32,6 +32,17 @@ export type EventoDominio =
     }
   | {
       /**
+       * CANCELAMENTO da triagem (D-041): a IA foi silenciada no chamado. Pós-
+       * commit, o `DespachanteFila` grava o sinal Redis que interrompe a execução
+       * em curso e remove os jobs pendentes do chamado. Os demais despachantes
+       * ignoram.
+       */
+      tipo: 'triagem_cancelamento_solicitado';
+      tenantId: string;
+      chamadoId: string;
+    }
+  | {
+      /**
        * NOTIFICAÇÃO (M9): um job já resolvido (destinatário × canal ou webhook)
        * traduzido de um `EventoChamado` pelo dispatcher, dentro da transação. O
        * `DespachanteNotificacoes` bufferiza e enfileira pós-commit.

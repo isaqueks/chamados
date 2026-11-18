@@ -51,6 +51,23 @@ export const Complexidade = {
 } as const;
 export type Complexidade = (typeof Complexidade)[keyof typeof Complexidade];
 
+/**
+ * Estimativa de custo do chamado (D-043): faixa em BRL definida pela EQUIPE
+ * (operador/admin) e VISÍVEL ao cliente. Códigos curtos e estáveis (vão para o
+ * banco, a API e o webhook); rótulo e faixa vivem em UM lugar só —
+ * `FAIXAS_ESTIMATIVA_CUSTO` em `custo.ts`. Faixas FIXAS da plataforma nesta
+ * versão (não configuráveis por tenant). `NULL` no banco = sem estimativa.
+ */
+export const EstimativaCusto = {
+  A: 'A',
+  B: 'B',
+  C: 'C',
+  D: 'D',
+  E: 'E',
+  I: 'I',
+} as const;
+export type EstimativaCusto = (typeof EstimativaCusto)[keyof typeof EstimativaCusto];
+
 /** Visibilidade de uma mensagem na timeline. */
 export const VisibilidadeMensagem = {
   publica: 'publica',
@@ -64,7 +81,14 @@ export type VisibilidadeMensagem = (typeof VisibilidadeMensagem)[keyof typeof Vi
  * vida têm evento próprio (`chamado_reaberto`, `chamado_resolvido`,
  * `chamado_fechado`, `chamado_fechado_auto`, `chamado_cancelado`) e NÃO emitem
  * também `status_alterado` (sem duplicidade). Atribuição usa o par
- * `operador_atribuido`/`operador_desatribuido`. Os tipos `ia_*` são gravados a
+ * `operador_atribuido`/`operador_desatribuido`. Janela de aprovação (D-042):
+ * `chamado_aprovado` (o cliente aprovou a resolução, `resolvido → fechado`),
+ * `chamado_contestado` (o cliente contestou com mensagem, `resolvido →
+ * em_atendimento` — substitui `chamado_reaberto` nesse caso) e
+ * `chamado_fechado_auto` = aprovação TÁCITA (prazo vencido). Custo (D-043):
+ * `estimativa_custo_alterada` (faixa definida/alterada/limpa pela equipe) e
+ * `custo_final_definido` (valor final em BRL, no ato de resolver ou corrigido
+ * depois, com o chamado em `resolvido`). Os tipos `ia_*` são gravados a
  * partir de M6+ (pipeline do agente_ia), mas o enum já os inclui.
  */
 export const TipoEvento = {
@@ -83,6 +107,10 @@ export const TipoEvento = {
   chamado_fechado: 'chamado_fechado',
   chamado_fechado_auto: 'chamado_fechado_auto',
   chamado_cancelado: 'chamado_cancelado',
+  chamado_aprovado: 'chamado_aprovado',
+  chamado_contestado: 'chamado_contestado',
+  estimativa_custo_alterada: 'estimativa_custo_alterada',
+  custo_final_definido: 'custo_final_definido',
   ia_iniciou: 'ia_iniciou',
   ia_pediu_info: 'ia_pediu_info',
   ia_diagnosticou: 'ia_diagnosticou',

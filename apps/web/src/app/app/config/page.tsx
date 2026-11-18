@@ -7,14 +7,16 @@ import {
   CATALOGO_NOTIFICACOES,
   CanalNotificacaoTipo,
 } from '@chamados/db';
-import { Papel } from '@chamados/shared';
+import { Papel, lerPadroesIaAmbiente } from '@chamados/shared';
 import { exigirPapel } from '@/lib/sessao';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
 import { urlLogo } from '@/lib/branding';
 import { BrandingForm } from './branding-form';
 import { LogoForm } from './logos-form';
 import { GeralForm } from './geral-form';
 import { IaForm } from './ia-form';
+import { IaModeloForm } from './ia-modelo-form';
 import { DominioForm } from './dominio-form';
 import { NotificacoesForm } from './notificacoes-form';
 
@@ -28,6 +30,9 @@ export default async function ConfigPage() {
   if (!t) return null;
 
   const b = t.config_branding ?? {};
+  // D-044: defaults da instalação (mesmo `.env` do worker) para rotular "Padrão
+  // da instalação" e o teto do tempo limite (derivado do limiar de execução órfã).
+  const padroesIa = lerPadroesIaAmbiente(process.env);
   const eventos = Object.values(CATALOGO_NOTIFICACOES).map((c) => ({
     rotulo: c.rotulo,
     descricao: c.descricao,
@@ -94,7 +99,9 @@ export default async function ConfigPage() {
       <Card>
         <CardHeader>
           <CardTitle>Configurações gerais</CardTitle>
-          <CardDescription>Prazo de fechamento automático e guardrails de IA.</CardDescription>
+          <CardDescription>
+            Prazo para o cliente aprovar ou contestar e guardrails de IA.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <GeralForm
@@ -109,11 +116,24 @@ export default async function ConfigPage() {
           <CardTitle>Assistente IA</CardTitle>
           <CardDescription>
             Instruções próprias da sua empresa para o {b.agente_ia_nome ?? 'Assistente'}: contexto
-            do negócio, tom das respostas e prioridades. Aplicadas em toda análise de chamado.
+            do negócio, tom das respostas e prioridades — e qual modelo, esforço e tempo limite ele
+            usa. Aplicados em toda análise de chamado.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-6">
           <IaForm instrucoes={t.ia_instrucoes} />
+          <Separator />
+          <IaModeloForm
+            modelo={t.ia_modelo}
+            esforco={t.ia_esforco}
+            timeoutMs={t.ia_timeout_ms}
+            padrao={{
+              modelo: padroesIa.modelo,
+              esforco: padroesIa.esforco,
+              timeoutMs: padroesIa.timeoutMs,
+            }}
+            tetoTimeoutMs={padroesIa.tetoTimeoutTenantMs}
+          />
         </CardContent>
       </Card>
 

@@ -11,7 +11,7 @@ import {
   type AIMapeamentoInput,
   type AIMapeamentoResult,
 } from '@chamados/shared';
-import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
+import { ErroProviderTimeout, ErroProviderBudget, ErroTriagemCancelada } from '../erros';
 
 /**
  * Provider FAKE, DETERMINÍSTICO — para dev, smokes e testes SEM rede nem custo
@@ -40,6 +40,10 @@ import { ErroProviderTimeout, ErroProviderBudget } from '../erros';
  *   [[falhar]]                      → lança Error genérico (→ status falhou)
  *   [[timeout]]                     → lança ErroProviderTimeout (→ erro='timeout')
  *   [[budget]]                      → lança ErroProviderBudget (→ erro='budget_excedido')
+ *   [[lento]]                       → "pensa" por até `FAKE_LENTO_MS` (default 20 s)
+ *                                     antes de responder, honrando `sinalCancelamento`
+ *                                     (D-041): abortado → lança ErroTriagemCancelada.
+ *                                     Usado pelo smoke de cancelamento por silêncio.
  * Sem marcadores: compreendido=true, confiança 0.9, complexidade 'facil',
  * diagnóstico curto. A telemetria é determinística (derivada do tamanho do texto),
  * exceto `duracaoMs`, medido de fato.
@@ -72,6 +76,8 @@ export class FakeProvider implements AIProvider {
     if (texto.includes('[[timeout]]')) throw new ErroProviderTimeout();
     if (texto.includes('[[budget]]')) throw new ErroProviderBudget();
     if (texto.includes('[[falhar]]')) throw new Error('falha simulada do provider fake');
+    if (texto.includes('[[lento]]')) await esperarOuCancelar(input.sinalCancelamento, inicio);
+    else if (input.sinalCancelamento?.aborted) throw new ErroTriagemCancelada();
 
     // Exercita uma ferramenta read-only (stub no M6): prova a injeção + o log.
     await input.ferramentas.repo_buscar('erro').catch(() => []);
@@ -279,4 +285,24 @@ function extrairNatureza(texto: string): Natureza | null {
 function extrairPrioridade(texto: string): Prioridade | null {
   const m = /\[\[prioridade:(baixa|media|alta|urgente)\]\]/.exec(texto);
   return m ? (m[1] as Prioridade) : null;
+}
+
+/** Espera `FAKE_LENTO_MS` (default 20 s) ou até o cancelamento externo (D-041). */
+async function esperarOuCancelar(sinal: AbortSignal | undefined, inicio: number): Promise<void> {
+  const ms = Number(process.env.FAKE_LENTO_MS ?? '20000');
+  await new Promise<void>((resolve, reject) => {
+    const cancelar = (): void => {
+      clearTimeout(timer);
+      reject(new ErroTriagemCancelada({ duracaoMs: Date.now() - inicio, custoUsd: 0 }));
+    };
+    const timer = setTimeout(
+      () => {
+        sinal?.removeEventListener('abort', cancelar);
+        resolve();
+      },
+      Number.isFinite(ms) && ms >= 0 ? ms : 20000,
+    );
+    if (sinal?.aborted) return cancelar();
+    sinal?.addEventListener('abort', cancelar, { once: true });
+  });
 }

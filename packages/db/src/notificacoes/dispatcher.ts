@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { EntityManager } from 'typeorm';
 import { IsNull } from 'typeorm';
-import type { TipoEvento } from '@chamados/shared';
+import { ORIGEM_CUSTO_RESOLUCAO, type TipoEvento } from '@chamados/shared';
 import { ChamadoSchema } from '../entities/chamado';
 import { CanalNotificacaoSchema } from '../entities/canal-notificacao';
 import { PreferenciaNotificacaoSchema } from '../entities/preferencia-notificacao';
@@ -13,6 +13,7 @@ import {
   eObrigatorio,
   defaultDoEvento,
   eventoNotificavelDe,
+  type ContextoNotificacao,
   type EventoNotificavel,
   type JobNotificacao,
   type PapelDestinatario,
@@ -31,6 +32,14 @@ import {
 
 /** Forma estrutural do evento de auditoria (evita ciclo com `auditoria.ts`). */
 export interface EventoAuditavel {
+  /**
+   * Id do `EventoChamado` correspondente. Quando presente, vira o
+   * `eventoNotifId` (chaves de idempotência derivadas do evento auditado —
+   * reenfileirar o mesmo evento nunca gera outra entrega). Ausente → UUID novo.
+   */
+  id?: string;
+  /** Quando o evento ocorreu (default: agora) — vai em `evento.timestamp`. */
+  ocorrido_em?: Date;
   tipo: TipoEvento;
   chamado_id: string;
   ator_id: string | null;
@@ -76,6 +85,9 @@ export async function resolverJobs(
 
   // Mensagem: só a PÚBLICA notifica (defesa extra além do tipo do evento).
   if (evento === 'mensagem_publica' && ev.dados?.visibilidade === 'interna') return [];
+  // D-043: custo informado NO ATO de resolver é só trilha — o `resolvido` (e-mail
+  // e webhook) já leva o valor; notificar de novo seria duplicata.
+  if (evento === 'custo_final' && ev.dados?.origem === ORIGEM_CUSTO_RESOLUCAO) return [];
 
   const chamado: ChamadoMin | null = await em.findOne(ChamadoSchema, {
     where: { id: ev.chamado_id, deleted_at: IsNull() },
@@ -83,15 +95,24 @@ export async function resolverJobs(
   if (!chamado) return [];
 
   const cat = CATALOGO_NOTIFICACOES[evento];
-  const eventoNotifId = randomUUID();
-  const eventoTs = new Date().toISOString();
+  const eventoNotifId = ev.id ?? randomUUID();
+  const eventoTs = (ev.ocorrido_em ?? new Date()).toISOString();
   const jobs: JobNotificacao[] = [];
 
-  const contexto = {
+  const aprovacao = ev.dados?.aprovacao;
+  const texto = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  const numero = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+  const contexto: ContextoNotificacao = {
     autorId: ev.ator_id,
-    mensagemId: (ev.dados?.mensagem_id as string | undefined) ?? null,
-    de: (ev.dados?.de as string | undefined) ?? null,
-    para: (ev.dados?.para as string | undefined) ?? null,
+    mensagemId: texto(ev.dados?.mensagem_id),
+    de: texto(ev.dados?.de),
+    para: texto(ev.dados?.para),
+    // D-042: forma da aprovação (só em `aprovado`).
+    ...(aprovacao === 'explicita' || aprovacao === 'tacita' ? { aprovacao } : {}),
+    // D-043: valores do custo final são números (BRL), não strings.
+    ...(evento === 'custo_final'
+      ? { custo: { de: numero(ev.dados?.de), para: numero(ev.dados?.para) } }
+      : {}),
   };
 
   // --- Destinatários humanos (e-mail) --------------------------------------

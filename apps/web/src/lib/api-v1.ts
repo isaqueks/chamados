@@ -46,6 +46,10 @@ export type CodigoErro =
   | 'estado_terminal'
   | 'transicao_invalida'
   | 'sistema_alvo_obrigatorio'
+  /** D-042: contestação de `resolvido` sem o motivo (mensagem pública). */
+  | 'motivo_obrigatorio'
+  /** D-043: custo final só com o chamado em `resolvido` (ou no ato de resolver). */
+  | 'custo_fora_da_resolucao'
   | 'conflito'
   | 'muitas_tentativas';
 
@@ -215,7 +219,7 @@ export function respostaDeMotivo(motivo: MotivoDominio): Response {
       return jsonErro(
         409,
         'estado_terminal',
-        'Chamado encerrado (fechado/cancelado): não aceita mensagens nem transições.',
+        'Chamado encerrado (fechado/cancelado): não aceita mensagens, alterações nem transições — só a reabertura (→ em_atendimento) por operador/admin ou pelo cliente solicitante.',
       );
     case 'mesmo_status':
       return jsonErro(409, 'transicao_invalida', 'O chamado já está nesse status.');
@@ -227,6 +231,29 @@ export function respostaDeMotivo(motivo: MotivoDominio): Response {
       );
     case 'papel_nao_autorizado':
       return jsonErro(403, 'sem_permissao', 'Seu papel não pode fazer esta transição.');
+    // D-042: contestar a resolução (cliente, resolvido → em_atendimento) exige o
+    // motivo — publique-o como mensagem pública, que já reabre o chamado.
+    case 'motivo_obrigatorio':
+      return jsonErro(
+        409,
+        'motivo_obrigatorio',
+        'Para contestar a solução, envie o motivo como mensagem pública (POST /api/v1/chamados/{ref}/mensagens): ela reabre o chamado. Para aprovar, use {"status":"fechado"}.',
+      );
+    // --- Custo (specs/11 §4.10, D-043) -------------------------------------
+    case 'custo_fora_da_resolucao':
+      return jsonErro(
+        409,
+        'custo_fora_da_resolucao',
+        'O custo final só pode ser informado com o chamado em "resolvido" — ou no próprio ato de resolver (POST …/status com "custo_final").',
+      );
+    case 'valor_invalido':
+      return jsonErro(400, 'parametro_invalido', 'Valor inválido para este campo.');
+    case 'estimativa_invalida':
+      return jsonErro(
+        400,
+        'parametro_invalido',
+        'Estimativa de custo inválida. Valores: A, B, C, D, E, I.',
+      );
     case 'visibilidade_invalida':
       return jsonErro(400, 'parametro_invalido', 'Visibilidade deve ser "publica" ou "interna".');
     case 'corpo_vazio':

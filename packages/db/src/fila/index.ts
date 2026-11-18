@@ -8,9 +8,22 @@ export {
   opcoesJobTriagem,
   debounceSegundos,
   DespachanteFila,
+  cancelarTriagemDoChamado,
   type JobTriagem,
   type OpcoesEnfileirar,
 } from './triagem-fila';
+export {
+  PREFIXO_CHAVE_CANCELAMENTO_TRIAGEM,
+  TTL_SINAL_CANCELAMENTO_MS,
+  MOTIVO_CANCELAMENTO_IA_SILENCIADA,
+  chaveCancelamentoTriagem,
+  sinalizarCancelamentoTriagem,
+  cancelamentoSinalizado,
+  limparSinalCancelamento,
+  removerTriagensPendentes,
+  type RedisSinalCancelamento,
+  type FilaComJobs,
+} from './cancelamento-triagem';
 export {
   NOME_FILA_MAPEAMENTO,
   NOME_JOB_MAPEAMENTO,

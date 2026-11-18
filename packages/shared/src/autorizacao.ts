@@ -43,6 +43,7 @@ export type Acao =
   | 'atribuir'
   | 'classificar_complexidade'
   | 'silenciar_ia'
+  | 'definir_custo'
   | 'fechar'
   | 'cancelar'
   | 'enviar'
@@ -90,7 +91,11 @@ type Decisao = boolean | ((ator: Ator, alvo: Alvo) => boolean);
 type RegraPorPapel = Partial<Record<Papel, Decisao>>;
 type Matriz = Record<Recurso, Partial<Record<Acao, RegraPorPapel>>>;
 
-/** Cliente só age sobre o que é dele (autor da mensagem ou solicitante do chamado). */
+/**
+ * Cliente só AGE sobre o que é dele (autor da mensagem ou solicitante do
+ * chamado). Desde a D-037, ownership vale só para ESCRITA/AÇÃO: a LEITURA do
+ * cliente é o tenant inteiro (ver `clienteLeTenant`).
+ */
 function clienteDono(ator: Ator, alvo: Alvo): boolean {
   if (alvo.autor_id !== undefined) return alvo.autor_id === ator.id;
   if (alvo.cliente_id !== undefined) return alvo.cliente_id === ator.id;
@@ -104,6 +109,16 @@ function mesmoTenant(ator: Ator, alvo: Alvo): boolean {
   return alvo.tenant_id === undefined || alvo.tenant_id === ator.tenant_id;
 }
 
+/**
+ * LEITURA do cliente (D-037, decisão do usuário): qualquer chamado DO SEU
+ * TENANT, sempre na visão pública — o que ele enxerga continua limitado pelo
+ * serializer allowlist (specs/03 §7) e pelos filtros de visibilidade nos
+ * repositórios (nota interna, eventos internos, ExecucaoIA nunca chegam). A
+ * fronteira entre tenants é a mesma de sempre (RLS + esta checagem). Separado de
+ * `mesmoTenant` só por legibilidade da matriz: "ler" (tenant) × "agir" (dono).
+ */
+const clienteLeTenant = mesmoTenant;
+
 const { admin, operador, cliente, agente_ia } = Papel;
 
 /**
@@ -114,9 +129,11 @@ const MATRIZ: Matriz = {
   chamado: {
     // Cliente sempre pode criar o PRÓPRIO chamado (será o solicitante).
     criar: { [operador]: true, [cliente]: true, [agente_ia]: false },
+    // LER × AGIR (D-037): o cliente LÊ qualquer chamado do tenant (visão
+    // pública), mas só AGE (status, mensagem, anexo) nos que solicitou.
     ler: {
       [operador]: mesmoTenant,
-      [cliente]: clienteDono,
+      [cliente]: clienteLeTenant,
       [agente_ia]: mesmoTenant,
     },
     mudar_status: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
@@ -133,12 +150,16 @@ const MATRIZ: Matriz = {
     // Silenciar/reativar a IA no chamado (D-024): decisão HUMANA da equipe — a
     // agente_ia nunca silencia/reativa a si mesma; cliente não gere a triagem.
     silenciar_ia: { [operador]: true, [cliente]: false, [agente_ia]: false },
+    // Estimativa de custo e custo final (D-043): decisão comercial HUMANA da
+    // equipe. O cliente VÊ os dois (serializer), mas nunca define; a agente_ia
+    // não estima nem informa custo (fora do escopo da triagem).
+    definir_custo: { [operador]: mesmoTenant, [cliente]: false, [agente_ia]: false },
     fechar: { [operador]: true, [cliente]: false, [agente_ia]: false },
     cancelar: { [operador]: true, [cliente]: false, [agente_ia]: false },
   },
   mensagem_publica: {
     escrever: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
-    ler: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
+    ler: { [operador]: true, [cliente]: clienteLeTenant, [agente_ia]: true },
   },
   mensagem_interna: {
     // Fronteira inegociável: cliente NUNCA lê/escreve nota interna (specs/03 §7).
@@ -147,10 +168,13 @@ const MATRIZ: Matriz = {
   },
   anexo: {
     enviar: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
-    baixar: { [operador]: true, [cliente]: clienteDono, [agente_ia]: true },
+    // Baixar acompanha a LEITURA (D-037); anexo de nota interna continua
+    // barrado por `mensagem_interna · ler` em `autorizarDownloadAnexo`.
+    baixar: { [operador]: true, [cliente]: clienteLeTenant, [agente_ia]: true },
   },
   evento_chamado: {
-    ler: { [operador]: true, [cliente]: clienteDono, [agente_ia]: mesmoTenant },
+    // Cliente lê só os eventos PÚBLICOS (filtro no repositório — specs/03 §7).
+    ler: { [operador]: true, [cliente]: clienteLeTenant, [agente_ia]: mesmoTenant },
   },
   execucao_ia: {
     // Cliente nunca vê ExecucaoIA (nem existência). agente_ia só as próprias.

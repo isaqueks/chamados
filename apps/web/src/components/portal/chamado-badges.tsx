@@ -1,4 +1,11 @@
-import type { StatusChamado, Natureza, Prioridade } from '@chamados/shared';
+import {
+  formatarBrl,
+  rotuloEstimativaCusto,
+  type StatusChamado,
+  type Natureza,
+  type Prioridade,
+  type EstimativaCusto,
+} from '@chamados/shared';
 import { Badge } from '@/components/ui/badge';
 import {
   ROTULO_STATUS_CHAMADO,
@@ -20,4 +27,18 @@ export function NaturezaBadge({ natureza }: { natureza: Natureza }) {
 /** Badge de prioridade (visível ao cliente — specs/04 §3.2). */
 export function PrioridadeBadge({ prioridade }: { prioridade: Prioridade }) {
   return <Badge variant="muted">Prioridade: {ROTULO_PRIORIDADE[prioridade]}</Badge>;
+}
+
+/** Estimativa de custo definida pela equipe (D-043 — visível ao cliente). */
+export function EstimativaCustoBadge({ estimativa }: { estimativa: EstimativaCusto }) {
+  return <Badge variant="outline">Estimativa: {rotuloEstimativaCusto(estimativa)}</Badge>;
+}
+
+/** Custo final informado na resolução (D-043 — visível ao cliente). */
+export function CustoFinalBadge({ valor }: { valor: number }) {
+  return (
+    <Badge variant="secondary" className="tabular-nums">
+      Custo final: {formatarBrl(valor)}
+    </Badge>
+  );
 }

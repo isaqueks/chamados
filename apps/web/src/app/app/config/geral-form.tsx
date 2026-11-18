@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { DIAS_APROVACAO_MAX, DIAS_APROVACAO_MIN } from '@chamados/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,19 +31,27 @@ export function GeralForm({ diasFechamento, iaResolucaoAuto }: Props) {
         </Alert>
       )}
 
-      <div className="flex max-w-xs flex-col gap-2">
-        <Label htmlFor="dias_fechamento_automatico">Dias até o fechamento automático</Label>
+      <div className="flex max-w-sm flex-col gap-2">
+        <Label htmlFor="dias_fechamento_automatico">
+          Prazo para o cliente aprovar ou contestar (dias)
+        </Label>
         <Input
           id="dias_fechamento_automatico"
           name="dias_fechamento_automatico"
           type="number"
-          min={1}
-          max={365}
+          inputMode="numeric"
+          min={DIAS_APROVACAO_MIN}
+          max={DIAS_APROVACAO_MAX}
+          step={1}
           defaultValue={diasFechamento}
           required
+          className="max-w-32"
         />
         <p className="text-xs text-muted-foreground">
-          Um chamado em “resolvido” fecha sozinho após este prazo.
+          Quando um chamado é resolvido, o cliente tem este prazo para aprovar a solução ou
+          contestá-la. Sem resposta, o chamado é considerado aprovado e fechado (com aviso por
+          e-mail e webhook). De {DIAS_APROVACAO_MIN} a {DIAS_APROVACAO_MAX} dias; vale para as
+          próximas resoluções.
         </p>
       </div>
 

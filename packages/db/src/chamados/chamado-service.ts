@@ -4,6 +4,10 @@ import {
   autorizar,
   transicaoValida,
   ehTerminal,
+  ehReabertura,
+  ehAprovacaoDoCliente,
+  ehContestacao,
+  calcularPrazoAprovacao,
   ATOR_SISTEMA,
   StatusChamado,
   Natureza,
@@ -12,6 +16,12 @@ import {
   Papel,
   StatusUsuario,
   GatilhoIA,
+  EstimativaCusto,
+  ehEstimativaCusto,
+  custoDoBanco,
+  custoParaBanco,
+  validarCustoFinal,
+  ORIGEM_CUSTO_RESOLUCAO,
   serializarChamadoParaCliente,
   type Ator,
   type PapelTransicao,
@@ -102,6 +112,8 @@ export function toChamadoInterno(c: Chamado): ChamadoInterno {
     prioridade: c.prioridade,
     complexidade: c.complexidade,
     ia_silenciada: c.ia_silenciada,
+    estimativa_custo: c.estimativa_custo ?? null,
+    custo_final: custoDoBanco(c.custo_final),
     resolvido_em: c.resolvido_em,
     fechar_automaticamente_em: c.fechar_automaticamente_em,
     fechado_em: c.fechado_em,
@@ -137,6 +149,12 @@ export interface EntradaCriarChamado {
   categoria_id?: string | null;
   /** Solicitante quando operador/admin abre "em nome de" (specs/04 §2). */
   cliente_id?: string;
+  /**
+   * Estimativa de custo já na abertura (D-043) — só a EQUIPE (`chamado ·
+   * definir_custo`); vinda de cliente é `sem_permissao`. Vai no evento
+   * `chamado_criado` (o webhook `criado` já carrega o campo no objeto `chamado`).
+   */
+  estimativa_custo?: EstimativaCusto | null;
 }
 
 export type MotivoCriar =
@@ -153,7 +171,8 @@ export type MotivoCriar =
   | 'prioridade_invalida'
   | 'sistema_alvo_obrigatorio'
   | 'sistema_alvo_invalido'
-  | 'categoria_invalida';
+  | 'categoria_invalida'
+  | 'estimativa_invalida';
 
 /** Mapeia o motivo do pipeline de rich text para o motivo de criação/mensagem. */
 export function motivoRichParaCriar(m: MotivoRichText): MotivoCriar {
@@ -229,8 +248,16 @@ export async function criarChamado(
     cliente_id = ator.id;
   } else {
     if (!entrada.cliente_id) return { ok: false, motivo: 'solicitante_obrigatorio' };
+    // Solicitante = conta `cliente` ATIVA do tenant (RLS escopa o tenant: id de
+    // outro tenant simplesmente não é encontrado). Suspenso/pendente → inválido
+    // (D-040; mesmo universo do seletor do painel e do `solicitante_email` da API).
     const solicitante = await em.findOne(UsuarioSchema, {
-      where: { id: entrada.cliente_id, papel: Papel.cliente, deleted_at: IsNull() },
+      where: {
+        id: entrada.cliente_id,
+        papel: Papel.cliente,
+        status: StatusUsuario.ativo,
+        deleted_at: IsNull(),
+      },
     });
     if (!solicitante) return { ok: false, motivo: 'solicitante_invalido' };
     cliente_id = solicitante.id;
@@ -249,6 +276,18 @@ export async function criarChamado(
   if (!ehValorEnum(Natureza, entrada.natureza)) return { ok: false, motivo: 'natureza_invalida' };
   const prioridade = entrada.prioridade ?? Prioridade.media;
   if (!ehValorEnum(Prioridade, prioridade)) return { ok: false, motivo: 'prioridade_invalida' };
+
+  // Estimativa de custo na abertura (D-043): decisão da equipe, nunca do cliente.
+  let estimativa_custo: EstimativaCusto | null = null;
+  if (entrada.estimativa_custo !== undefined && entrada.estimativa_custo !== null) {
+    if (!autorizar(ator, 'chamado', 'definir_custo', { tenant_id: ator.tenant_id })) {
+      return { ok: false, motivo: 'sem_permissao' };
+    }
+    if (!ehEstimativaCusto(entrada.estimativa_custo)) {
+      return { ok: false, motivo: 'estimativa_invalida' };
+    }
+    estimativa_custo = entrada.estimativa_custo;
+  }
 
   const alvo = await resolverAlvo(em, ator.tenant_id, entrada);
   if (!alvo.ok) return alvo;
@@ -271,6 +310,7 @@ export async function criarChamado(
     status: StatusChamado.novo,
     natureza: entrada.natureza,
     prioridade,
+    estimativa_custo,
     reaberto_count: 0,
   });
   const id = res.identifiers[0]!.id as string;
@@ -292,7 +332,12 @@ export async function criarChamado(
     tipo: 'chamado_criado',
     chamado_id: id,
     ator_id: ator.id,
-    dados: { numero, natureza: entrada.natureza, prioridade },
+    dados: {
+      numero,
+      natureza: entrada.natureza,
+      prioridade,
+      ...(estimativa_custo ? { estimativa_custo } : {}),
+    },
   });
 
   // Gatilho de triagem (specs/05 §2 "Chamado criado → enfileira triagem"). A
@@ -354,7 +399,11 @@ async function proximoNumero(em: EntityManager, tenantId: string): Promise<strin
 // Leitura
 // ---------------------------------------------------------------------------
 
-/** Obtém um chamado com projeção por papel (cliente nunca vê campos internos). */
+/**
+ * Obtém um chamado com projeção por papel (cliente nunca vê campos internos). O
+ * cliente lê qualquer chamado do tenant (D-037); agir continua exigindo ser o
+ * solicitante (checado em cada mutação).
+ */
 export async function obterChamado(
   em: EntityManager,
   ator: AtorChamado,
@@ -363,7 +412,7 @@ export async function obterChamado(
   const c = await carregar(em, id);
   if (!c) return null;
   if (!autorizar(ator, 'chamado', 'ler', { cliente_id: c.cliente_id, tenant_id: c.tenant_id })) {
-    return null; // cliente pedindo chamado de outro: trata como inexistente.
+    return null; // fora do escopo de leitura (ex.: outro tenant): trata como inexistente.
   }
   return serializarPorPapel(ator.papel, c);
 }
@@ -412,8 +461,17 @@ export interface FiltrosChamado {
    * `403`. Presente, chamados com complexidade `null` ficam de fora.
    */
   complexidade?: Complexidade | Complexidade[];
-  /** Equipe pode filtrar por autor; para cliente é ignorado (escopo é sempre o próprio). */
+  /**
+   * Filtra pelo solicitante (autor). Vale para qualquer papel: desde a D-037 o
+   * cliente LÊ todo o tenant, então filtrar por autor não amplia nada.
+   */
   cliente_id?: string;
+  /**
+   * Recorte "Meus chamados" (D-037): só os chamados em que o ATOR é o
+   * solicitante. Tem precedência sobre `cliente_id`. É o padrão do portal; na
+   * API é o parâmetro `meus=true` (specs/11 §4.1).
+   */
+  meus?: boolean;
   /**
    * Busca textual simples (specs/04 §10.4). Reutiliza a mesma interpretação da
    * fila (`busca.ts`): número → prefixo; texto → full-text sobre `busca_tsv`
@@ -450,10 +508,11 @@ function decodeCursor(cursor: string): { updated_at: string; id: string } | null
 }
 
 /**
- * Lista chamados com filtros (specs/04 §10), escopo por papel e keyset pagination
- * por `(updated_at DESC, id DESC)`. O `cliente` só vê os PRÓPRIOS; a equipe vê
- * todos do tenant (RLS já garante o isolamento). Complexidade nunca é exposta
- * ao cliente (serializer).
+ * Lista chamados com filtros (specs/04 §10) e keyset pagination por
+ * `(updated_at DESC, id DESC)`. Todo papel enxerga os chamados do tenant (RLS
+ * garante o isolamento) — o `cliente` também, desde a D-037, mas SEMPRE na
+ * projeção pública (serializer allowlist: sem complexidade, operador, flag da
+ * IA). O recorte "só os meus" é opcional (`filtros.meus`).
  */
 export async function listarChamados(
   em: EntityManager,
@@ -464,8 +523,9 @@ export async function listarChamados(
 
   const qb = em.createQueryBuilder(ChamadoSchema, 'c').where('c.deleted_at IS NULL');
 
-  // Escopo por papel: cliente só os próprios.
-  if (ator.papel === Papel.cliente) {
+  // Recorte por solicitante (D-037): "meus" (o ator) ou um autor específico. Sem
+  // recorte, todos os chamados do tenant — inclusive para o cliente.
+  if (filtros.meus) {
     qb.andWhere('c.cliente_id = :autor', { autor: ator.id });
   } else if (filtros.cliente_id) {
     qb.andWhere('c.cliente_id = :autor', { autor: filtros.cliente_id });
@@ -495,12 +555,16 @@ export async function listarChamados(
     if (arr.length > 0) qb.andWhere('c.complexidade IN (:...cx)', { cx: arr });
   }
 
-  if (filtros.atribuicao === 'nao_atribuido') {
+  // Atribuição é interna (specs/03 §7): com a leitura do tenant inteiro (D-037),
+  // filtrar por ela revelaria ao cliente quais chamados têm responsável (e quem).
+  // Mesmo tratamento de `complexidade`: ignorado para o cliente (a API recusa antes).
+  const atribuicao = ator.papel === Papel.cliente ? undefined : filtros.atribuicao;
+  if (atribuicao === 'nao_atribuido') {
     qb.andWhere('c.operador_id IS NULL');
-  } else if (filtros.atribuicao === 'atribuido') {
+  } else if (atribuicao === 'atribuido') {
     qb.andWhere('c.operador_id IS NOT NULL');
-  } else if (typeof filtros.atribuicao === 'object' && filtros.atribuicao) {
-    qb.andWhere('c.operador_id = :op', { op: filtros.atribuicao.operador_id });
+  } else if (typeof atribuicao === 'object' && atribuicao) {
+    qb.andWhere('c.operador_id = :op', { op: atribuicao.operador_id });
   }
 
   if (filtros.cursor) {
@@ -533,45 +597,101 @@ export async function listarChamados(
 // Transição de status (máquina de estados)
 // ---------------------------------------------------------------------------
 
-export type MotivoTransicionar = 'inexistente' | 'sem_permissao' | MotivoNegacao;
+/**
+ * `motivo_obrigatorio` (D-042): o cliente tentou CONTESTAR (`resolvido →
+ * em_atendimento`) sem uma mensagem pública na mesma transação — a contestação
+ * exige o motivo (use `contestarResolucao` ou publique a mensagem).
+ */
+export type MotivoTransicionar =
+  | 'inexistente'
+  | 'sem_permissao'
+  | 'motivo_obrigatorio'
+  /** D-043: `custo_final` informado ao resolver é inválido (negativo, > 2 casas…). */
+  | 'valor_invalido'
+  | MotivoNegacao;
 
 export type ResultadoTransicionar =
   { ok: true; chamado: ChamadoInterno } | { ok: false; motivo: MotivoTransicionar };
 
 /**
  * Tipo de evento canônico (specs/02) associado a uma transição. As transições
- * notáveis têm evento próprio; as demais caem em `status_alterado`.
+ * notáveis têm evento próprio; as demais caem em `status_alterado`. Na janela de
+ * aprovação (D-042) o papel do ator decide: cliente em `resolvido → fechado` =
+ * `chamado_aprovado`; cliente em `resolvido → em_atendimento` =
+ * `chamado_contestado` (no lugar de `chamado_reaberto`); `sistema` em
+ * `resolvido → fechado` = `chamado_fechado_auto` (aprovação tácita).
  */
-function tipoEventoTransicao(
+export function tipoEventoTransicao(
+  ator: PapelTransicao,
   de: StatusChamado,
   para: StatusChamado,
-  atorSistema: boolean,
 ): TipoEvento {
   if (para === StatusChamado.resolvido) return 'chamado_resolvido';
   if (para === StatusChamado.cancelado) return 'chamado_cancelado';
-  if (para === StatusChamado.em_atendimento && de === StatusChamado.resolvido)
-    return 'chamado_reaberto';
+  if (ehContestacao(ator, de, para)) return 'chamado_contestado';
+  // Reabertura de resolvido (pela equipe)/fechado/cancelado (specs/04 §8.2, D-038).
+  if (ehReabertura(de, para)) return 'chamado_reaberto';
+  if (ehAprovacaoDoCliente(ator, de, para)) return 'chamado_aprovado';
   if (para === StatusChamado.fechado)
-    return atorSistema ? 'chamado_fechado_auto' : 'chamado_fechado';
+    return ator === ATOR_SISTEMA ? 'chamado_fechado_auto' : 'chamado_fechado';
   return 'status_alterado';
+}
+
+/**
+ * Mensagem pública do cliente gravada NESTA transação no chamado — o motivo da
+ * contestação (D-042). `now()` é constante dentro da transação e é o default de
+ * `mensagem.created_at`, então "criada agora" = "criada nesta transação" (o
+ * `criarMensagem` insere a mensagem ANTES de reabrir). Todo serviço roda em
+ * `runInTenantContext` (transação), condição desta checagem.
+ */
+async function mensagemDeContestacao(
+  em: EntityManager,
+  chamadoId: string,
+  autorId: string | null,
+): Promise<string | null> {
+  if (!autorId) return null;
+  const linhas: Array<{ id: string }> = await em.query(
+    `SELECT id FROM mensagem
+      WHERE chamado_id = $1 AND autor_id = $2 AND visibilidade = 'publica'
+        AND deleted_at IS NULL AND created_at = now()
+      ORDER BY id DESC LIMIT 1`,
+    [chamadoId, autorId],
+  );
+  return linhas[0]?.id ?? null;
 }
 
 /**
  * Aplica uma transição de status (specs/04 §1): valida ownership/papel via
  * `autorizar()`, aplica a máquina de estados pura e registra os timestamps de
- * resolução/fechamento (agendando `fechar_automaticamente_em` conforme
- * `dias_fechamento_automatico` do tenant). Transições inválidas são rejeitadas
- * SEM tocar no banco (erro de domínio).
+ * resolução/fechamento (agendando `fechar_automaticamente_em` — o PRAZO DE
+ * APROVAÇÃO do cliente, D-042 — conforme `dias_fechamento_automatico` do
+ * tenant). Transições inválidas são rejeitadas SEM tocar no banco (erro de
+ * domínio). A contestação do cliente exige mensagem na mesma transação.
+ *
+ * `opts.custo_final` (D-043): ao RESOLVER, a equipe pode informar o custo final
+ * no mesmo ato (`null` limpa; ausente = não mexe). Exige `chamado ·
+ * definir_custo` — cliente/IA/sistema que o enviem recebem `sem_permissao` (sem
+ * tocar no banco). Fora de `→ resolvido` é ignorado (a API recusa antes, 400).
+ * Mudou o valor → evento `custo_final_definido` com `origem: 'resolucao'` (só
+ * auditoria/timeline: não notifica nem dispara webhook próprio — o webhook
+ * `resolvido` já leva `custo_final` no objeto `chamado`).
  */
 export async function transicionarStatus(
   em: EntityManager,
   ator: AtorTransicao,
   id: string,
   novoStatus: StatusChamado,
-  opts: { motivo?: string } = {},
+  opts: { motivo?: string; custo_final?: number | null } = {},
   hooks?: HooksChamado,
 ): Promise<ResultadoTransicionar> {
-  const c = await carregar(em, id);
+  // Trava a linha (FOR UPDATE): duas transições concorrentes do mesmo chamado
+  // (duplo clique em "Aprovar", cliente × job de aprovação tácita — D-042) são
+  // serializadas; a segunda relê o status JÁ alterado e é recusada pela máquina
+  // de estados, em vez de gravar por cima e duplicar evento/webhook.
+  const c = await em.findOne(ChamadoSchema, {
+    where: { id, deleted_at: IsNull() },
+    lock: { mode: 'pessimistic_write' },
+  });
   if (!c) return { ok: false, motivo: 'inexistente' };
 
   // Ownership/papel (coarse): o `sistema` é contexto confiável (jobs).
@@ -591,20 +711,55 @@ export async function transicionarStatus(
   const val = transicaoValida(ator.papel, c.status, novoStatus);
   if (!val.ok) return { ok: false, motivo: val.motivo };
 
+  // D-043: custo final no ato de resolver — só a equipe, valor validado ANTES
+  // de qualquer escrita.
+  let custoNovo: number | null | undefined;
+  if (opts.custo_final !== undefined && novoStatus === StatusChamado.resolvido) {
+    const atorU: Ator | null =
+      ator.papel === ATOR_SISTEMA
+        ? null
+        : { id: ator.id ?? '', tenant_id: ator.tenant_id, papel: ator.papel };
+    if (!atorU || !autorizar(atorU, 'chamado', 'definir_custo', { tenant_id: c.tenant_id })) {
+      return { ok: false, motivo: 'sem_permissao' };
+    }
+    if (opts.custo_final === null) {
+      custoNovo = null;
+    } else {
+      const v = validarCustoFinal(opts.custo_final);
+      if (!v.ok) return { ok: false, motivo: 'valor_invalido' };
+      custoNovo = v.valor;
+    }
+  }
+
+  // D-042: contestar a resolução exige o motivo (mensagem pública do cliente).
+  let mensagemContestacaoId: string | null = null;
+  if (ehContestacao(ator.papel, c.status, novoStatus)) {
+    mensagemContestacaoId = await mensagemDeContestacao(em, id, ator.id);
+    if (!mensagemContestacaoId) return { ok: false, motivo: 'motivo_obrigatorio' };
+  }
+
   const agora = new Date();
   const patch: Partial<Chamado> = { status: novoStatus };
 
   if (novoStatus === StatusChamado.resolvido) {
+    // Abre a janela de aprovação do cliente (D-042): prazo materializado agora.
     const tenant = await em.findOne(TenantSchema, { where: { id: ator.tenant_id } });
-    const dias = tenant?.dias_fechamento_automatico ?? 3;
     patch.resolvido_em = agora;
-    patch.fechar_automaticamente_em = new Date(agora.getTime() + dias * 86_400_000);
+    patch.fechar_automaticamente_em = calcularPrazoAprovacao(
+      agora,
+      tenant?.dias_fechamento_automatico,
+    );
     patch.fechado_em = null;
-  } else if (novoStatus === StatusChamado.em_atendimento && c.status === StatusChamado.resolvido) {
-    // Reabertura (specs/04 §8.2, specs/02 soft delete): limpa janela e conta.
+    if (custoNovo !== undefined) patch.custo_final = custoParaBanco(custoNovo);
+  } else if (ehReabertura(c.status, novoStatus)) {
+    // Reabertura (specs/04 §8.2, D-038) de resolvido/fechado/cancelado — inclui a
+    // CONTESTAÇÃO do cliente (D-042): conta e limpa a janela de resolução e o
+    // fechamento — o chamado volta a ser trabalho em aberto. NÃO dispara triagem
+    // aqui; só a resposta pública do cliente re-enfileira (specs/05 §2).
     patch.reaberto_count = c.reaberto_count + 1;
     patch.resolvido_em = null;
     patch.fechar_automaticamente_em = null;
+    patch.fechado_em = null;
   } else if (novoStatus === StatusChamado.fechado) {
     patch.fechado_em = agora;
     patch.fechar_automaticamente_em = null;
@@ -612,12 +767,34 @@ export async function transicionarStatus(
 
   await em.update(ChamadoSchema, { id }, patch);
 
+  const tipo = tipoEventoTransicao(ator.papel, c.status, novoStatus);
   await auditorDe(hooks)(em, {
-    tipo: tipoEventoTransicao(c.status, novoStatus, ator.papel === ATOR_SISTEMA),
+    tipo,
     chamado_id: id,
     ator_id: ator.id,
-    dados: { de: c.status, para: novoStatus, ...(opts.motivo ? { motivo: opts.motivo } : {}) },
+    dados: {
+      de: c.status,
+      para: novoStatus,
+      ...(opts.motivo ? { motivo: opts.motivo } : {}),
+      // D-042: forma da aprovação (explícita pelo cliente / tácita pelo prazo) e
+      // a mensagem que motivou a contestação — consumidos pelo webhook/timeline.
+      ...(tipo === 'chamado_aprovado' ? { aprovacao: 'explicita' } : {}),
+      ...(tipo === 'chamado_fechado_auto' ? { aprovacao: 'tacita' } : {}),
+      ...(mensagemContestacaoId ? { mensagem_id: mensagemContestacaoId } : {}),
+    },
   });
+
+  // D-043: trilha do custo informado no ato de resolver (depois do evento de
+  // resolução, para a timeline ler "resolveu → definiu o custo").
+  const custoAnterior = custoDoBanco(c.custo_final);
+  if (custoNovo !== undefined && custoNovo !== custoAnterior) {
+    await auditorDe(hooks)(em, {
+      tipo: 'custo_final_definido',
+      chamado_id: id,
+      ator_id: ator.id,
+      dados: { de: custoAnterior, para: custoNovo, origem: ORIGEM_CUSTO_RESOLUCAO },
+    });
+  }
 
   const atualizado = (await carregar(em, id))!;
   return { ok: true, chamado: toChamadoInterno(atualizado) };
@@ -638,6 +815,10 @@ export type ResultadoMutacao = { ok: true } | { ok: false; motivo: MotivoMutacao
  * seletor do painel oferece (`listarOperadoresDoTenant`); fora disso o motivo é
  * `operador_invalido`. A busca do alvo roda sob RLS: um usuário de outro tenant
  * simplesmente não é encontrado (specs/11 §4.9, D-036 L4).
+ *
+ * `opts.motivo` (opcional) vai para `dados.motivo` do evento — a auto-atribuição
+ * por resposta pública (D-039, `criarMensagem`) grava `resposta_publica`, para a
+ * timeline dizer "assumiu o chamado ao responder".
  */
 export async function atribuirOperador(
   em: EntityManager,
@@ -645,6 +826,7 @@ export async function atribuirOperador(
   id: string,
   operadorId: string,
   hooks?: HooksChamado,
+  opts: { motivo?: string } = {},
 ): Promise<ResultadoMutacao> {
   const c = await carregar(em, id);
   if (!c) return { ok: false, motivo: 'inexistente' };
@@ -667,7 +849,11 @@ export async function atribuirOperador(
     tipo: 'operador_atribuido',
     chamado_id: id,
     ator_id: ator.id,
-    dados: { operador_anterior: c.operador_id, operador_novo: operadorId },
+    dados: {
+      operador_anterior: c.operador_id,
+      operador_novo: operadorId,
+      ...(opts.motivo ? { motivo: opts.motivo } : {}),
+    },
   });
   return { ok: true };
 }
@@ -764,6 +950,12 @@ export async function definirComplexidade(
  * silencia/reativa a si mesma). Idempotente: repetir o mesmo valor é no-op sem
  * evento. Auditado como `ia_silenciada`/`ia_reativada` (interno — o cliente
  * não vê).
+ *
+ * D-041: silenciar também CANCELA a triagem em curso — publica no despachante o
+ * evento `triagem_cancelamento_solicitado`, que pós-commit grava o sinal Redis
+ * (o worker aborta a execução) e remove os jobs pendentes do chamado. Devolve
+ * `triagemEmAndamento` (havia `ExecucaoIA` `na_fila`/`executando`) para a UI
+ * avisar que ela foi cancelada.
  */
 export async function definirSilencioIa(
   em: EntityManager,
@@ -771,7 +963,7 @@ export async function definirSilencioIa(
   id: string,
   silenciada: boolean,
   hooks?: HooksChamado,
-): Promise<ResultadoMutacao> {
+): Promise<ResultadoMutacao & { triagemEmAndamento?: boolean }> {
   const c = await carregar(em, id);
   if (!c) return { ok: false, motivo: 'inexistente' };
   if (!autorizar(ator, 'chamado', 'silenciar_ia', { tenant_id: c.tenant_id })) {
@@ -787,7 +979,20 @@ export async function definirSilencioIa(
     ator_id: ator.id,
     dados: { de: c.ia_silenciada, para: silenciada },
   });
-  return { ok: true };
+  if (!silenciada) return { ok: true };
+  hooks?.despachante?.publicar({
+    tipo: 'triagem_cancelamento_solicitado',
+    tenantId: c.tenant_id,
+    chamadoId: id,
+  });
+  // Mesma consulta de `existeTriagemEmAndamento` (execucao-ia-service), inline
+  // para não acoplar este serviço ao de ExecucaoIA.
+  const ativas: Array<{ existe: boolean }> = await em.query(
+    `SELECT EXISTS (SELECT 1 FROM execucao_ia
+       WHERE chamado_id = $1 AND status IN ('na_fila', 'executando')) AS existe`,
+    [id],
+  );
+  return { ok: true, triagemEmAndamento: ativas[0]?.existe === true };
 }
 
 /** Altera a natureza (specs/04 §3.1). Gera evento (M4). */
@@ -819,4 +1024,99 @@ export async function alterarNatureza(
     dados: { de: c.natureza, para: natureza },
   });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Custo (D-043): estimativa e custo final
+// ---------------------------------------------------------------------------
+
+/**
+ * `custo_fora_da_resolucao`: o custo FINAL só é informado/corrigido com o
+ * chamado em `resolvido` (ou no próprio ato de resolver — `transicionarStatus`).
+ */
+export type MotivoCusto = MotivoMutacao | 'custo_fora_da_resolucao';
+
+export type ResultadoCusto = { ok: true; alterado: boolean } | { ok: false; motivo: MotivoCusto };
+
+/**
+ * Define/altera/limpa (`null`) a ESTIMATIVA DE CUSTO (D-043, specs/04 §3.4). Só
+ * operador/admin (`chamado · definir_custo`); vale em qualquer status não
+ * encerrado — inclusive `resolvido` —, recusada em fechado/cancelado
+ * (`estado_terminal`, como as demais propriedades). Idempotente: o mesmo valor
+ * não grava evento (`alterado: false`). Mudou → `estimativa_custo_alterada`
+ * `{ de, para }` (visível ao cliente; notifica opt-in e dispara o webhook
+ * `estimativa_custo_alterada`).
+ */
+export async function definirEstimativaCusto(
+  em: EntityManager,
+  ator: AtorChamado,
+  id: string,
+  estimativa: EstimativaCusto | null,
+  hooks?: HooksChamado,
+): Promise<ResultadoCusto> {
+  const c = await carregar(em, id);
+  if (!c) return { ok: false, motivo: 'inexistente' };
+  if (!autorizar(ator, 'chamado', 'definir_custo', { tenant_id: c.tenant_id })) {
+    return { ok: false, motivo: 'sem_permissao' };
+  }
+  if (ehTerminal(c.status)) return { ok: false, motivo: 'estado_terminal' };
+  if (estimativa !== null && !ehEstimativaCusto(estimativa)) {
+    return { ok: false, motivo: 'valor_invalido' };
+  }
+  const anterior = c.estimativa_custo ?? null;
+  if (anterior === estimativa) return { ok: true, alterado: false };
+
+  await em.update(ChamadoSchema, { id }, { estimativa_custo: estimativa });
+  await auditorDe(hooks)(em, {
+    tipo: 'estimativa_custo_alterada',
+    chamado_id: id,
+    ator_id: ator.id,
+    dados: { de: anterior, para: estimativa },
+  });
+  return { ok: true, alterado: true };
+}
+
+/**
+ * Informa/corrige/limpa (`null`) o CUSTO FINAL em BRL (D-043) de um chamado em
+ * `resolvido` — o valor que o cliente vê ao aprovar ou contestar. No ato de
+ * resolver, use `transicionarStatus(..., { custo_final })`. Só operador/admin;
+ * fechado/cancelado → `estado_terminal`; outros status →
+ * `custo_fora_da_resolucao`. Valor negativo, com mais de 2 casas ou acima do
+ * `numeric(12,2)` → `valor_invalido`. Idempotente (mesmo valor → sem evento).
+ * Mudou → `custo_final_definido` `{ de, para }` (números em BRL), que notifica o
+ * cliente e dispara o webhook `custo_final_definido`.
+ */
+export async function definirCustoFinal(
+  em: EntityManager,
+  ator: AtorChamado,
+  id: string,
+  valor: number | null,
+  hooks?: HooksChamado,
+): Promise<ResultadoCusto> {
+  const c = await carregar(em, id);
+  if (!c) return { ok: false, motivo: 'inexistente' };
+  if (!autorizar(ator, 'chamado', 'definir_custo', { tenant_id: c.tenant_id })) {
+    return { ok: false, motivo: 'sem_permissao' };
+  }
+  if (ehTerminal(c.status)) return { ok: false, motivo: 'estado_terminal' };
+  if (c.status !== StatusChamado.resolvido) {
+    return { ok: false, motivo: 'custo_fora_da_resolucao' };
+  }
+  let novo: number | null = null;
+  if (valor !== null) {
+    const v = validarCustoFinal(valor);
+    if (!v.ok) return { ok: false, motivo: 'valor_invalido' };
+    novo = v.valor;
+  }
+  const anterior = custoDoBanco(c.custo_final);
+  if (anterior === novo) return { ok: true, alterado: false };
+
+  await em.update(ChamadoSchema, { id }, { custo_final: custoParaBanco(novo) });
+  await auditorDe(hooks)(em, {
+    tipo: 'custo_final_definido',
+    chamado_id: id,
+    ator_id: ator.id,
+    dados: { de: anterior, para: novo },
+  });
+  return { ok: true, alterado: true };
 }

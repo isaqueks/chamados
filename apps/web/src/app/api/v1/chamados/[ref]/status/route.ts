@@ -9,7 +9,7 @@ import {
   respostaDeMotivo,
   textoDe,
 } from '@/lib/api-v1';
-import { valorEnum } from '@/lib/api-chamados';
+import { parsearCustoDaTransicao, valorEnum } from '@/lib/api-chamados';
 import { comDespacho } from '@/lib/despacho';
 
 export const runtime = 'nodejs';
@@ -19,9 +19,20 @@ export const dynamic = 'force-dynamic';
  * Transiciona o status do chamado (specs/11 §4.4).
  *
  * Quem decide é a MÁQUINA DE ESTADOS (specs/04 §1.3) dentro de
- * `transicionarStatus`, com o papel do token: um `cliente` só reabre um
- * `resolvido`; o guardrail humano-no-circuito continua valendo. A rota apenas
+ * `transicionarStatus`, com o papel do token: um `cliente` só age nos PRÓPRIOS
+ * chamados — reabre `fechado`/`cancelado` (→ `em_atendimento`, D-038), cancela,
+ * e, na janela de aprovação de um `resolvido` (D-042), APROVA com
+ * `{"status":"fechado"}` (evento `chamado_aprovado`, webhook `aprovado`
+ * explícito). Contestar (`resolvido → em_atendimento`) exige motivo: sem uma
+ * mensagem pública na mesma operação, o domínio responde `409
+ * motivo_obrigatorio` — o caminho é `POST /mensagens`, que reabre. `agente_ia`
+ * nunca reabre nem aprova; o guardrail humano-no-circuito continua valendo. A rota apenas
  * traduz o motivo de domínio em HTTP (409 para regra de negócio, 403 para papel).
+ *
+ * `custo_final` (D-043, opcional): SÓ com `status = resolvido` — a equipe
+ * informa o custo final no mesmo ato (número em reais ou `null`). Em outra
+ * transição → `400`; vindo de cliente/agente_ia → `403` (o domínio nega antes
+ * de escrever). O webhook `resolvido` já leva `chamado.custo_final`.
  *
  * O `motivo` opcional entra no payload do `EventoChamado`, como em qualquer
  * mudança feita pela UI — a trilha de auditoria não distingue origem, mas o ator
@@ -52,6 +63,12 @@ export async function POST(req: Request, ctxRota: { params: Promise<{ ref: strin
     );
   }
   const motivo = textoDe(corpoReq.motivo) ?? undefined;
+  const custo = parsearCustoDaTransicao(corpoReq, status);
+  if (!custo.ok) return jsonErro(400, custo.codigo, custo.erro);
+  const opts = {
+    motivo,
+    ...(custo.custoFinal !== undefined ? { custo_final: custo.custoFinal } : {}),
+  };
 
   const { ref } = await ctxRota.params;
   const ds = await obterAppDataSource();
@@ -59,9 +76,9 @@ export async function POST(req: Request, ctxRota: { params: Promise<{ ref: strin
   const r = await comDespacho(ds, ctx.tenant.id, async (em, hooks) => {
     const id = await resolverIdChamado(em, decodeURIComponent(ref));
     if (!id) return { ok: false as const, motivo: 'inexistente' };
-    return transicionarStatus(em, atorDe(ctx), id, status, { motivo }, hooks);
+    return transicionarStatus(em, atorDe(ctx), id, status, opts, hooks);
   });
 
   if (!r.ok) return respostaDeMotivo(r.motivo);
-  return jsonOk({ status: r.chamado.status });
+  return jsonOk({ status: r.chamado.status, custo_final: r.chamado.custo_final ?? null });
 }

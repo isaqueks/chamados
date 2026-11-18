@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { Papel, StatusChamado, Natureza, Prioridade, Complexidade } from '@chamados/shared';
+import {
+  Papel,
+  StatusChamado,
+  Natureza,
+  Prioridade,
+  Complexidade,
+  EstimativaCusto,
+} from '@chamados/shared';
 import type {
   ChamadoInterno,
   ChamadoCliente,
@@ -16,6 +23,9 @@ import {
   parsearFormato,
   parsearSilencioIa,
   parsearAtribuicao,
+  parsearCusto,
+  parsearCustoDaTransicao,
+  lerCustoFinalApi,
   projetarCorpo,
   projetarAnexo,
   agruparAnexos,
@@ -53,6 +63,8 @@ const BASE = {
   status: StatusChamado.em_atendimento,
   natureza: Natureza.problema,
   prioridade: Prioridade.alta,
+  estimativa_custo: null,
+  custo_final: null,
   resolvido_em: null,
   fechar_automaticamente_em: null,
   fechado_em: null,
@@ -100,6 +112,17 @@ describe('parsearFiltros', () => {
     expect(porOp.ok && porOp.filtros.atribuicao).toEqual({ operador_id: uuid });
 
     expect(parsearFiltros(sp('atribuicao=marina')).ok).toBe(false);
+  });
+
+  it('meus (D-037): true recorta para o solicitante; false/ausente lista o tenant; resto é erro', () => {
+    const sim = parsearFiltros(sp('meus=true'));
+    expect(sim.ok && sim.filtros.meus).toBe(true);
+    const nao = parsearFiltros(sp('meus=false'));
+    expect(nao.ok && nao.filtros.meus).toBeUndefined();
+    const ausente = parsearFiltros(sp(''));
+    expect(ausente.ok && ausente.filtros.meus).toBeUndefined();
+    expect(parsearFiltros(sp('meus=sim')).ok).toBe(false);
+    expect(parsearFiltros(sp('meus=1')).ok).toBe(false);
   });
 
   it('valida a faixa do limite', () => {
@@ -398,5 +421,78 @@ describe('silêncio da IA e atribuição (D-036 L1/L4)', () => {
     expect(parsearAtribuicao({}).ok).toBe(false);
     expect(parsearAtribuicao({ operador_id: 'marina' }).ok).toBe(false);
     expect(parsearAtribuicao({ operador_id: 42 }).ok).toBe(false);
+  });
+});
+
+describe('custo do chamado (D-043)', () => {
+  it('parsearEntradaCriar aceita estimativa_custo válida e recusa código desconhecido', () => {
+    const base = { titulo: 'Erro', descricao: 'Tela branca' };
+    const ok = parsearEntradaCriar({ ...base, estimativa_custo: 'A' });
+    expect(ok.ok && ok.entrada.estimativa_custo).toBe('A');
+    const sem = parsearEntradaCriar(base);
+    expect(sem.ok && 'estimativa_custo' in sem.entrada).toBe(false);
+    expect(parsearEntradaCriar({ ...base, estimativa_custo: 'X' }).ok).toBe(false);
+  });
+
+  it('lista e detalhe trazem estimativa_custo e custo_final para TODOS os papéis', () => {
+    const equipe = projetarItemLista(
+      { ...CHAMADO_EQUIPE, estimativa_custo: EstimativaCusto.C, custo_final: 320 },
+      NOMES,
+    );
+    expect(equipe.estimativa_custo).toBe('C');
+    expect(equipe.custo_final).toBe(320);
+
+    const cliente = projetarDetalhe(
+      { ...CHAMADO_CLIENTE, estimativa_custo: EstimativaCusto.I, custo_final: 0 },
+      NOMES,
+    );
+    expect(cliente.estimativa_custo).toBe('I');
+    expect(cliente.custo_final).toBe(0);
+    expect('complexidade' in cliente).toBe(false);
+  });
+
+  it('sem estimativa/custo, os campos vêm como null (presentes)', () => {
+    const item = projetarItemLista(CHAMADO_CLIENTE, NOMES);
+    expect(item.estimativa_custo).toBeNull();
+    expect(item.custo_final).toBeNull();
+  });
+
+  it('lerCustoFinalApi: número válido, null limpa; string/negativo/3 casas recusados', () => {
+    expect(lerCustoFinalApi(150.5)).toEqual({ ok: true, valor: 150.5 });
+    expect(lerCustoFinalApi(0)).toEqual({ ok: true, valor: 0 });
+    expect(lerCustoFinalApi(null)).toEqual({ ok: true, valor: null });
+    expect(lerCustoFinalApi('150,00').ok).toBe(false);
+    expect(lerCustoFinalApi(-1).ok).toBe(false);
+    expect(lerCustoFinalApi(1.234).ok).toBe(false);
+    expect(lerCustoFinalApi(1e11).ok).toBe(false);
+  });
+
+  it('parsearCusto: exige ao menos uma chave; ausente não mexe; null limpa', () => {
+    expect(parsearCusto({}).ok).toBe(false);
+    expect(parsearCusto({ estimativa_custo: 'B' })).toEqual({ ok: true, estimativa: 'B' });
+    expect(parsearCusto({ estimativa_custo: null, custo_final: 99.9 })).toEqual({
+      ok: true,
+      estimativa: null,
+      custoFinal: 99.9,
+    });
+    expect(parsearCusto({ custo_final: null })).toEqual({ ok: true, custoFinal: null });
+  });
+
+  it('parsearCusto: código fora do domínio (ou minúsculo) é erro explícito', () => {
+    expect(parsearCusto({ estimativa_custo: 'b' }).ok).toBe(false);
+    expect(parsearCusto({ estimativa_custo: 'F' }).ok).toBe(false);
+    expect(parsearCusto({ estimativa_custo: 'B', custo_final: '10' }).ok).toBe(false);
+  });
+
+  it('custo_final no POST …/status só com status = resolvido', () => {
+    expect(parsearCustoDaTransicao({ status: 'resolvido' }, StatusChamado.resolvido)).toEqual({
+      ok: true,
+    });
+    expect(parsearCustoDaTransicao({ custo_final: 200 }, StatusChamado.resolvido)).toEqual({
+      ok: true,
+      custoFinal: 200,
+    });
+    expect(parsearCustoDaTransicao({ custo_final: 200 }, StatusChamado.fechado).ok).toBe(false);
+    expect(parsearCustoDaTransicao({ custo_final: -5 }, StatusChamado.resolvido).ok).toBe(false);
   });
 });

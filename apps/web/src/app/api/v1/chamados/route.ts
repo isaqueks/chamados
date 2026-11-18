@@ -29,9 +29,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Lista/filtra chamados (specs/11 §4.1). Delega a `listarChamados`, que já aplica
- * o ESCOPO POR PAPEL (cliente → só os próprios; equipe → o tenant) e o serializer
- * de specs/03 §7 — a API não reimplementa nada disso. RLS isola o tenant.
+ * Lista/filtra chamados (specs/11 §4.1). Delega a `listarChamados`: todo papel
+ * lista o tenant (o cliente também, desde a D-037, sempre pela projeção pública do
+ * serializer de specs/03 §7); `meus=true` recorta para os chamados em que o
+ * usuário é o solicitante. A API não reimplementa nada disso. RLS isola o tenant.
  *
  * Filtro com valor fora do domínio é rejeitado (400), nunca ignorado: devolver
  * "tudo" quando o cliente pediu `status=aberto` seria mentir sobre o resultado.
@@ -49,6 +50,11 @@ export async function GET(req: Request): Promise<Response> {
   // ignorar — o mesmo princípio do filtro que não mente.
   if (parse.filtros.complexidade && !ehEquipe(ctx.usuario.papel)) {
     return jsonErro(403, 'sem_permissao', 'O filtro "complexidade" é exclusivo da equipe.');
+  }
+  // Mesma razão para `atribuicao`: o responsável é interno (specs/03 §7) e, com a
+  // leitura do tenant inteiro (D-037), o filtro o revelaria pelo conjunto.
+  if (parse.filtros.atribuicao && !ehEquipe(ctx.usuario.papel)) {
+    return jsonErro(403, 'sem_permissao', 'O filtro "atribuicao" é exclusivo da equipe.');
   }
 
   const ds = await obterAppDataSource();
@@ -80,6 +86,9 @@ export async function GET(req: Request): Promise<Response> {
  * escolha) e valida limites. `comDespacho` liga a criação aos MESMOS efeitos da
  * UI: evento de auditoria, notificação e enfileiramento da triagem — um chamado
  * aberto pela API não é de segunda classe.
+ *
+ * `estimativa_custo` (D-043, opcional): só a equipe — vinda de `cliente`, o
+ * domínio recusa com `403`.
  *
  * O solicitante da equipe pode vir por `solicitante_email` (o que um assistente
  * conhece) ou `solicitante_id`; a resolução por e-mail é escopada ao tenant pela
@@ -131,6 +140,7 @@ export async function POST(req: Request): Promise<Response> {
         sistema_alvo_id: entrada.sistema_alvo_id,
         categoria_id: entrada.categoria_id,
         cliente_id,
+        estimativa_custo: entrada.estimativa_custo,
       },
       hooks,
     );

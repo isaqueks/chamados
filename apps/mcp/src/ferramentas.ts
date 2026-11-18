@@ -30,6 +30,32 @@ const NATUREZAS = ['problema', 'alteracao', 'duvida'] as const;
 const PRIORIDADES = ['baixa', 'media', 'alta', 'urgente'] as const;
 const FORMATOS = ['texto', 'markdown', 'html'] as const;
 
+/**
+ * Corpo do `POST …/status` (specs/11 §4.4). `custo_final` (D-043) só viaja
+ * junto de `resolvido` — em outra transição a API recusaria com 400, então nem
+ * enviamos (o modelo recebe a recusa explícita da ferramenta, não da API).
+ */
+export function montarCorpoStatus(args: {
+  status: string;
+  motivo?: string;
+  custo_final?: number;
+}): { ok: true; corpo: Record<string, unknown> } | { ok: false; erro: string } {
+  if (args.custo_final !== undefined && args.status !== 'resolvido') {
+    return {
+      ok: false,
+      erro: '"custo_final" só pode ser informado ao marcar o chamado como "resolvido".',
+    };
+  }
+  return {
+    ok: true,
+    corpo: {
+      status: args.status,
+      ...(args.motivo ? { motivo: args.motivo } : {}),
+      ...(args.custo_final !== undefined ? { custo_final: args.custo_final } : {}),
+    },
+  };
+}
+
 /** Resultado de uma ferramenta: texto e/ou imagem (anexos — specs/11 §7.2). */
 type ConteudoFerramenta =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
@@ -74,6 +100,8 @@ export interface ArgsListar {
   prioridade?: string;
   atribuicao?: string;
   busca?: string;
+  /** D-037: só os chamados em que o usuário autenticado é o solicitante. */
+  meus?: boolean;
   limite?: number;
   cursor?: string;
 }
@@ -87,6 +115,8 @@ export function montarQueryListar(args: ArgsListar): Record<string, string | und
     prioridade: args.prioridade,
     atribuicao: args.atribuicao,
     busca: args.busca,
+    // Só viaja quando `true`: ausente já significa "todos do escopo" na API.
+    meus: args.meus ? 'true' : undefined,
     limite: args.limite !== undefined ? String(args.limite) : undefined,
     cursor: args.cursor,
   };
@@ -253,7 +283,8 @@ export function registrarFerramentas(
       description:
         'Lista os chamados do helpdesk Chamados, com filtros. Retorna itens compactos ' +
         '(sem a descrição — use chamado_obter para o conteúdo). O escopo é o do usuário ' +
-        'autenticado: operador/admin veem os chamados do tenant; cliente vê só os próprios. ' +
+        'autenticado: operador/admin veem os chamados do tenant com bastidores; cliente vê ' +
+        'todos os chamados do tenant só na visão pública (use `meus: true` para os dele). ' +
         'Use `cursor` (devolvido em `proximo_cursor`) para paginar.',
       inputSchema: {
         status: z
@@ -262,18 +293,24 @@ export function registrarFerramentas(
           .describe(
             'Filtra por um ou mais status. novo=recém-criado; em_triagem=IA analisando; ' +
               'aguardando_cliente=falta resposta do cliente; em_atendimento=equipe tratando; ' +
-              'resolvido=solução entregue; fechado/cancelado=terminais.',
+              'resolvido=solução entregue; fechado/cancelado=encerrados (só saem por reabertura).',
           ),
         natureza: z.enum(NATUREZAS).optional().describe('problema | alteracao | duvida'),
         prioridade: z.enum(PRIORIDADES).optional().describe('baixa | media | alta | urgente'),
         atribuicao: z
           .string()
           .optional()
-          .describe('"atribuido", "nao_atribuido" ou o UUID de um operador.'),
+          .describe(
+            '"atribuido", "nao_atribuido" ou o UUID de um operador. Só equipe (cliente recebe 403).',
+          ),
         busca: z
           .string()
           .optional()
           .describe('Texto (busca no título/descrição) ou número do chamado.'),
+        meus: z
+          .boolean()
+          .optional()
+          .describe('true = só os chamados em que o usuário autenticado é o solicitante.'),
         limite: z
           .number()
           .int()
@@ -303,6 +340,9 @@ export function registrarFerramentas(
         'ANEXOS: `chamado.anexos` (da descrição) e `mensagens[].anexos` listam cada arquivo ' +
         'e imagem (inclusive as coladas no texto, `inline: true`) com `id`, nome, tipo e ' +
         'tamanho — use anexo_obter com o `id` para VER a imagem ou ler o arquivo. ' +
+        'CUSTO (visível também ao cliente): `estimativa_custo` é a faixa estimada pela equipe — ' +
+        'A=R$ 50–100, B=R$ 100–200, C=R$ 200–400, D=R$ 400–600, E=acima de R$ 600, I=isento ' +
+        '(null = sem estimativa); `custo_final` é o valor em reais informado na resolução. ' +
         '`formato` controla o corpo: "texto" (default, compacto, sem as imagens), ' +
         '"markdown" (estrutura preservada e imagens como ![alt](url) no lugar onde o ' +
         'autor as colou) ou "html" (o HTML sanitizado).',
@@ -447,7 +487,9 @@ export function registrarFerramentas(
         'linguagem dele, sem jargão técnico, sem caminhos de arquivo nem nomes de tabela; ' +
         '"interna" é nota da equipe, invisível ao cliente, onde o detalhe técnico deve ficar. ' +
         'O corpo aceita markdown (listas, negrito, tabelas). Chamados fechados/cancelados ' +
-        'não aceitam mensagens.',
+        'não aceitam mensagens. Uma mensagem "publica" de operador/admin torna o usuário ' +
+        'autenticado o RESPONSÁVEL pelo chamado (substitui quem estava atribuído); ' +
+        'nota "interna" não muda a atribuição.',
       inputSchema: {
         ref: z.string().min(1).describe('Número do chamado (ex.: "12") ou o UUID.'),
         visibilidade: z
@@ -480,8 +522,14 @@ export function registrarFerramentas(
       description:
         'Transiciona o status do chamado. A transição precisa ser válida a partir do status ' +
         'atual e permitida ao papel do usuário — uma recusa volta como "transicao_invalida". ' +
-        'Fechado e cancelado são terminais (nada sai deles). Marcar como "resolvido" inicia o ' +
-        'prazo de fechamento automático e o cliente é notificado.',
+        'Fechado e cancelado são encerrados: a única saída é reabrir (status "em_atendimento"), ' +
+        'permitido a operador/admin e ao cliente solicitante. ' +
+        'Marcar como "resolvido" abre o prazo para o cliente aprovar ou contestar (padrão 7 dias) ' +
+        'e o cliente é notificado; sem resposta no prazo, o chamado é considerado aprovado e fechado. ' +
+        'O cliente solicitante aprova com "fechado"; contestar exige motivo — publique uma mensagem ' +
+        'pública (chamado_publicar_mensagem), que reabre o chamado. ' +
+        'Ao marcar "resolvido", operador/admin podem informar `custo_final` (valor em reais, ' +
+        'visível ao cliente junto do pedido de aprovação).',
       inputSchema: {
         ref: z.string().min(1).describe('Número do chamado (ex.: "12") ou o UUID.'),
         status: z.enum(STATUS).describe('Status de destino.'),
@@ -489,6 +537,14 @@ export function registrarFerramentas(
           .string()
           .optional()
           .describe('Motivo curto, registrado no histórico de auditoria do chamado.'),
+        custo_final: z
+          .number()
+          .min(0)
+          .optional()
+          .describe(
+            'Só com status "resolvido" (operador/admin): custo final em reais, até 2 casas ' +
+              '(ex.: 150.5). O cliente vê o valor. Omita para não informar.',
+          ),
       },
       annotations: {
         readOnlyHint: false,
@@ -497,14 +553,16 @@ export function registrarFerramentas(
         openWorldHint: true,
       },
     },
-    async ({ ref, status, motivo }) =>
-      comErro(async () =>
-        texto(
+    async ({ ref, status, motivo, custo_final }) =>
+      comErro(async () => {
+        const corpo = montarCorpoStatus({ status, motivo, custo_final });
+        if (!corpo.ok) return { content: [{ type: 'text', text: corpo.erro }], isError: true };
+        return texto(
           await cliente.requisitar(caminhoChamado(ref, '/status'), {
             metodo: 'POST',
-            corpo: { status, ...(motivo ? { motivo } : {}) },
+            corpo: corpo.corpo,
           }),
-        ),
-      ),
+        );
+      }),
   );
 }

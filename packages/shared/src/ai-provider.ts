@@ -20,6 +20,18 @@ import type {
   Papel,
   VisibilidadeMensagem,
 } from './enums';
+import type { EsforcoIA } from './ia-config';
+
+/**
+ * Modelo/esforço de UMA execução (D-044): override por tenant, já validado e
+ * resolvido pelo worker. Campo ausente = default do provider (`IA_MODELO`/
+ * `IA_ESFORCO` → `MODELO_IA_PADRAO`/`ESFORCO_IA_PADRAO`). Providers sem esses
+ * conceitos (ex.: fake) ignoram.
+ */
+export interface ParametrosModelo {
+  modelo?: string;
+  esforco?: EsforcoIA;
+}
 
 /**
  * Cap (caracteres) das instruções do tenant para a IA (`tenant.ia_instrucoes`,
@@ -312,10 +324,26 @@ export interface AIProviderInput {
   } & Partial<FerramentasEscrita>;
 
   limites: {
+    /** Timeout EFETIVO desta triagem: o do tenant (D-044) quando definido, senão `IA_TIMEOUT_MS`. */
     timeoutMs: number;
     budgetUsd: number;
     maxTurnos: number;
   };
+
+  /**
+   * Sinal de CANCELAMENTO externo (D-041): abortado pelo worker quando a IA é
+   * silenciada no chamado durante a execução. O provider o encadeia ao MESMO
+   * mecanismo de abort do timeout e, se foi ele que abortou, lança o erro de
+   * cancelamento (`ia_silenciada`) — não `timeout`. Opcional (provider sem
+   * suporte só não interrompe; a Tx2 do worker ainda descarta os efeitos).
+   */
+  sinalCancelamento?: AbortSignal;
+
+  /**
+   * Modelo/esforço desta triagem (D-044) — override do tenant já resolvido pelo
+   * worker. Ausente = default do provider.
+   */
+  parametrosModelo?: ParametrosModelo;
 
   /**
    * Ferramentas NATIVAS de exploração (D-014). Preenchido pelo worker para o
@@ -414,6 +442,11 @@ export interface AIMapeamentoInput {
   /** Teto de caracteres do resumo (env `IA_MAPA_MAX_CHARS`). */
   maxChars: number;
   /**
+   * Modelo/esforço do mapeamento (D-044) — mesmo override do tenant da triagem.
+   * Os LIMITES do mapeamento continuam os próprios (`IA_MAPA_*`).
+   */
+  parametrosModelo?: ParametrosModelo;
+  /**
    * Ferramentas NATIVAS de exploração (D-014): habilita `Read`/`Grep`/`Glob`
    * escopadas ao checkout também no MAPEAMENTO. Preenchido pelo worker; ignorado
    * pelo provider fake.
@@ -434,8 +467,15 @@ export interface AIMapeamentoResult {
 export interface AIProvider {
   /** ex.: "claude-agent-sdk" | "fake" */
   nome: string;
-  /** ex.: "claude-opus-5" */
+  /** Modelo DEFAULT do provider, ex.: "claude-opus-5" (env `IA_MODELO`). */
   modelo: string;
+
+  /**
+   * Modelo que o provider EFETIVAMENTE usará com estes parâmetros (D-044) — é o
+   * que o worker grava em `ExecucaoIA.modelo`. Opcional: provider que ignora
+   * overrides (fake) não implementa, e o worker usa `modelo`.
+   */
+  modeloEfetivo?(parametros?: ParametrosModelo): string;
 
   executarTriagem(input: AIProviderInput): Promise<AIProviderResult>;
 

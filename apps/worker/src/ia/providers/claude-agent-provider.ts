@@ -14,12 +14,18 @@ import {
   type FormatoArtefatoConsulta,
   type ImagemContexto,
   type TelemetriaIA,
+  type EsforcoIA,
+  type ParametrosModelo,
+  ESFORCO_IA_PADRAO,
+  MODELO_IA_PADRAO,
+  IA_MAPA_TIMEOUT_CONCLUSAO_MS,
 } from '@chamados/shared';
 import {
   ErroProviderBudget,
   ErroProviderLimite,
   ErroProviderMaxTurnos,
   ErroProviderTimeout,
+  ErroTriagemCancelada,
   type TelemetriaParcial,
 } from '../erros';
 
@@ -36,6 +42,9 @@ import {
  *    isso o modelo NÃO chama nenhuma ferramenta (a falha de produção de D-013);
  *  - honra os LIMITES (`timeoutMs` via AbortController; `budgetUsd`→maxBudgetUsd;
  *    `maxTurnos`→maxTurns) — abort no timeout;
+ *  - honra o CANCELAMENTO externo (`input.sinalCancelamento`, D-041): encadeado
+ *    ao MESMO AbortController do timeout (o SDK mata o subprocesso); se foi ele
+ *    que abortou, lança `ErroTriagemCancelada` (não `timeout`);
  *  - extrai o `AIProviderResult` da saída estruturada / última mensagem e a
  *    TELEMETRIA real (SOMA de tokens de TODOS os turnos, inclusive cache).
  *  - `mapearSistema` (D-013): execução dedicada que explora o repo e devolve um
@@ -222,17 +231,16 @@ interface TokensAcumulados {
 }
 
 /**
- * Nível de esforço de raciocínio do modelo (D-031). Mapeia 1:1 no `options.effort`
- * do Agent SDK; níveis acima do que o modelo suporta caem para o mais alto que ele
- * tenha (o SDK rebaixa em silêncio).
+ * Nível de esforço de raciocínio do modelo (D-031). A lista canônica vive em
+ * @chamados/shared (`ESFORCOS_IA`, D-044) — reexportada aqui por compatibilidade.
  */
-export type EsforcoIA = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type { EsforcoIA } from '@chamados/shared';
 
 /** Esforço default da triagem (D-031): raciocínio profundo, sem entrar no xhigh. */
-export const ESFORCO_PADRAO: EsforcoIA = 'high';
+export const ESFORCO_PADRAO: EsforcoIA = ESFORCO_IA_PADRAO;
 
-/** Modelo default do provider real (D-031). */
-export const MODELO_PADRAO = 'claude-opus-5';
+/** Modelo default do provider real (D-031). Fonte única: `MODELO_IA_PADRAO`. */
+export const MODELO_PADRAO = MODELO_IA_PADRAO;
 
 /** Parâmetros entregues à fronteira do SDK (triagem). */
 export interface ParametrosQuery {
@@ -265,9 +273,9 @@ export type QueryFn = (params: ParametrosQuery) => AsyncIterable<MensagemSdk>;
 export type QueryMapFn = (params: ParametrosQueryMapeamento) => AsyncIterable<MensagemSdk>;
 
 export interface OpcoesClaudeProvider {
-  /** Modelo default (env `IA_MODELO`). */
+  /** Modelo default (env `IA_MODELO`); o tenant sobrescreve por execução (D-044). */
   modelo?: string;
-  /** Esforço de raciocínio (env `IA_ESFORCO`). Default: `high` (D-031). */
+  /** Esforço default (env `IA_ESFORCO`; `high` — D-031); o tenant sobrescreve (D-044). */
   esforco?: EsforcoIA;
   /** Chave de API (env `ANTHROPIC_API_KEY`); só usada pelo transporte real. */
   apiKey?: string;
@@ -337,20 +345,39 @@ export class ClaudeAgentProvider implements AIProvider {
     this.queryMapFn = opts.queryMapFn ?? ((p) => queryMapeamentoReal(obterTransporte())(p));
   }
 
+  /**
+   * Modelo EFETIVO (D-044): override do tenant quando presente, senão o default
+   * do provider (`IA_MODELO` → `MODELO_PADRAO`). É o que o worker grava em
+   * `ExecucaoIA.modelo` e o que chega ao `options.model` do SDK.
+   */
+  modeloEfetivo(parametros?: ParametrosModelo): string {
+    return parametros?.modelo || this.modelo;
+  }
+
+  /** Esforço EFETIVO (D-044): override do tenant, senão o default do provider. */
+  esforcoEfetivo(parametros?: ParametrosModelo): EsforcoIA {
+    return parametros?.esforco ?? this.esforco;
+  }
+
   async executarTriagem(input: AIProviderInput): Promise<AIProviderResult> {
     const inicio = Date.now();
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), input.limites.timeoutMs);
+    // D-041: o cancelamento externo (IA silenciada) usa o MESMO abort do timeout.
+    const externo = input.sinalCancelamento;
+    const aoCancelar = (): void => abortController.abort();
+    externo?.addEventListener('abort', aoCancelar, { once: true });
     const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
     let resultado: MensagemSdk | undefined;
 
     try {
+      if (externo?.aborted) throw new ErroTriagemCancelada(telemetriaParcialDe(inicio, acumulado));
       const stream = this.queryFn({
         prompt: montarPrompt(input),
         systemPrompt: montarSystemPrompt(input.contexto.instrucoesTenant),
         input,
-        modelo: this.modelo,
-        esforco: this.esforco,
+        modelo: this.modeloEfetivo(input.parametrosModelo),
+        esforco: this.esforcoEfetivo(input.parametrosModelo),
         abortController,
       });
       for await (const msg of stream) {
@@ -363,11 +390,14 @@ export class ClaudeAgentProvider implements AIProvider {
       // D-033: todo corte por limite — timeout (abort), budget/turnos (result de
       // erro ou a exceção que o SDK lança ao fechar o subprocesso) — carrega a
       // telemetria já apurada; sem isto o gasto dessas execuções sumia do registro.
+      if (err instanceof ErroTriagemCancelada) throw err;
       const parcial = telemetriaParcialDe(inicio, acumulado, resultado);
+      if (externo?.aborted) throw new ErroTriagemCancelada(parcial);
       if (abortController.signal.aborted) throw new ErroProviderTimeout(parcial);
       throw comTelemetria(err, parcial);
     } finally {
       clearTimeout(timer);
+      externo?.removeEventListener('abort', aoCancelar);
     }
   }
 
@@ -377,7 +407,12 @@ export class ClaudeAgentProvider implements AIProvider {
     const timer = setTimeout(() => abortController.abort(), input.limites.timeoutMs);
     const systemPrompt = montarSystemPromptMapeamento(input.maxChars, input.limites.maxTurnos);
     const acumulado: TokensAcumulados = { entrada: 0, saida: 0 };
-    const base = { systemPrompt, input, modelo: this.modelo, esforco: this.esforco };
+    const base = {
+      systemPrompt,
+      input,
+      modelo: this.modeloEfetivo(input.parametrosModelo),
+      esforco: this.esforcoEfetivo(input.parametrosModelo),
+    };
 
     // ---- Fase 1: exploração (Read/Grep/Glob no checkout) ---------------------
     let sessionId: string | undefined;
@@ -471,7 +506,7 @@ export class ClaudeAgentProvider implements AIProvider {
 }
 
 /** Janela extra para o turno de conclusão do mapeamento (D-033). */
-const TIMEOUT_CONCLUSAO_MS = 180_000;
+const TIMEOUT_CONCLUSAO_MS = IA_MAPA_TIMEOUT_CONCLUSAO_MS;
 
 /** Pedido do turno de conclusão (sem ferramentas): escreva o resumo com o que tem. */
 export const PROMPT_CONCLUSAO_MAPEAMENTO = [

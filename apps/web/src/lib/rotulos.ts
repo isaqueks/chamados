@@ -86,8 +86,14 @@ export const ROTULO_TIPO_EVENTO: Record<TipoEvento, string> = {
   [TipoEvento.chamado_reaberto]: 'reabriu o chamado',
   [TipoEvento.chamado_resolvido]: 'marcou como resolvido',
   [TipoEvento.chamado_fechado]: 'fechou o chamado',
-  [TipoEvento.chamado_fechado_auto]: 'fechou automaticamente',
+  // D-042: o fechamento automático é a APROVAÇÃO TÁCITA (prazo sem resposta).
+  [TipoEvento.chamado_fechado_auto]: 'encerrou por aprovação tácita (prazo sem resposta)',
   [TipoEvento.chamado_cancelado]: 'cancelou o chamado',
+  [TipoEvento.chamado_aprovado]: 'aprovou a solução',
+  [TipoEvento.chamado_contestado]: 'contestou a solução',
+  // D-043: visíveis ao cliente (o detalhe — faixa/valor — é montado na timeline).
+  [TipoEvento.estimativa_custo_alterada]: 'alterou a estimativa de custo',
+  [TipoEvento.custo_final_definido]: 'informou o custo final',
   [TipoEvento.ia_iniciou]: 'IA iniciou a triagem',
   [TipoEvento.ia_pediu_info]: 'IA pediu informações',
   [TipoEvento.ia_diagnosticou]: 'IA publicou diagnóstico',

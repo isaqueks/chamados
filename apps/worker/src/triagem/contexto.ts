@@ -3,6 +3,7 @@ import { IsNull } from 'typeorm';
 import { obterObjeto } from '@chamados/storage';
 import {
   Papel,
+  IA_TIMEOUT_TENANT_MAX_MS,
   type AIProviderInput,
   type ImagemContexto,
   type MensagemTimeline,
@@ -25,6 +26,7 @@ import {
 } from './ferramentas';
 import type { ConfigRepo } from './ferramentas/repo';
 import { portaResolucaoAberta } from './resolucao';
+import { resolverParametrosIaTenant } from '../ia/parametros-tenant';
 
 /**
  * Monta o `AIProviderInput` (specs/05 §3.1 passo 3, §4.1): metadados do chamado +
@@ -43,6 +45,11 @@ export interface DepsContexto {
   acoes: unknown[];
   log: (msg: string, extra?: Record<string, unknown>) => void;
   limites: { timeoutMs: number; budgetUsd: number; maxTurnos: number };
+  /**
+   * Teto do timeout configurável por tenant (D-044, `iaConfig.tetoTimeoutTenantMs`).
+   * Ausente → `IA_TIMEOUT_TENANT_MAX_MS` (derivado dos defaults).
+   */
+  tetoTimeoutTenantMs?: number;
 }
 
 /**
@@ -233,6 +240,19 @@ export async function montarInput(
     chamado.sistema_alvo_id,
   );
   const tenant = await carregarTenant(em, chamado.tenant_id);
+  // D-044: modelo/esforço/timeout do TENANT (precedência tenant > env > default).
+  // Valor inválido no banco cai no padrão da instalação — nunca derruba a triagem.
+  const ia = resolverParametrosIaTenant(tenant, {
+    timeoutMs: deps.limites.timeoutMs,
+    tetoTimeoutMs: deps.tetoTimeoutTenantMs ?? IA_TIMEOUT_TENANT_MAX_MS,
+  });
+  if (ia.descartados.length > 0 || ia.timeoutRebaixado) {
+    deps.log('config de IA do tenant ajustada — usando o padrão da instalação no que é inválido', {
+      chamadoId,
+      descartados: ia.descartados,
+      timeoutRebaixado: ia.timeoutRebaixado,
+    });
+  }
   const solicitanteUsuario = await em.findOne(UsuarioSchema, {
     where: { id: chamado.cliente_id },
   });
@@ -282,7 +302,10 @@ export async function montarInput(
         instrucoesTenant: tenant?.ia_instrucoes ?? null,
       },
       ferramentas: reais.ferramentas,
-      limites: deps.limites,
+      // D-044: timeout EFETIVO (tenant, com teto) — budget/turnos seguem o env.
+      limites: { ...deps.limites, timeoutMs: ia.timeoutMs },
+      // D-044: override de modelo/esforço do tenant (ausente = default do provider).
+      parametrosModelo: ia.parametrosModelo,
       // D-014: exploração NATIVA (Read/Grep/Glob). `checkoutDir` é preenchido pelo
       // processador APÓS o git sync (aqui a working copy ainda não existe); a
       // `auditar` é o mesmo registrador da trilha `acoes`.

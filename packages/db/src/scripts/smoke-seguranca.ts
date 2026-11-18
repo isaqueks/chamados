@@ -9,7 +9,8 @@
  *   3. Sessão: o login ROTACIONA o token (dois logins → tokens distintos e
  *      independentes — anti-fixation); ambos resolvem e são revogáveis.
  *   4. Anexo cross-tenant: anexo de nota interna negado ao cliente; anexo de
- *      outro tenant é inexistente (RLS).
+ *      outro tenant é inexistente (RLS); D-037 — outro cliente do MESMO tenant
+ *      baixa o anexo PÚBLICO do chamado alheio, nunca o da nota interna.
  *
  * Requer Postgres + Redis de pé. Sai com 0 se passa; 1 caso contrário.
  */
@@ -188,7 +189,7 @@ async function main(): Promise<void> {
     // 4) Anexo cross-tenant + visibilidade interna
     // ---------------------------------------------------------------------
     console.log('\n[4] Anexo — autorização e isolamento');
-    const { clienteA, operadorA } = await runInTenantContext(ds, tenantA, async (em) => {
+    const { clienteA, clienteA2, operadorA } = await runInTenantContext(ds, tenantA, async (em) => {
       const clienteA = await criarUsuarioAtivoComSenha(em, {
         tenant_id: tenantA,
         email: `cli.${sufixo}@a.dev`,
@@ -203,7 +204,15 @@ async function main(): Promise<void> {
         papel: Papel.operador,
         senha: SENHA,
       });
-      return { clienteA, operadorA };
+      // D-037: colega do clienteA no mesmo tenant (lê chamado alheio, visão pública).
+      const clienteA2 = await criarUsuarioAtivoComSenha(em, {
+        tenant_id: tenantA,
+        email: `cli2.${sufixo}@a.dev`,
+        nome: 'Cliente A2',
+        papel: Papel.cliente,
+        senha: SENHA,
+      });
+      return { clienteA, clienteA2, operadorA };
     });
     const clienteB = await runInTenantContext(ds, tenantB, (em) =>
       criarUsuarioAtivoComSenha(em, {
@@ -216,6 +225,7 @@ async function main(): Promise<void> {
     );
 
     const atorCliA = { id: clienteA, tenant_id: tenantA, papel: Papel.cliente };
+    const atorCliA2 = { id: clienteA2, tenant_id: tenantA, papel: Papel.cliente };
     const atorOpA = { id: operadorA, tenant_id: tenantA, papel: Papel.operador };
     const atorCliB = { id: clienteB, tenant_id: tenantB, papel: Papel.cliente };
 
@@ -271,6 +281,11 @@ async function main(): Promise<void> {
       ok(!intCli.ok, 'cliente NÃO baixa anexo de NOTA INTERNA (403/404)');
       const intOp = await autorizarDownloadAnexo(em, atorOpA, anexoInternoId);
       ok(intOp.ok, 'operador BAIXA anexo de nota interna');
+      // D-037: leitura do cliente é o tenant; a fronteira interna não relaxa.
+      const pubOutro = await autorizarDownloadAnexo(em, atorCliA2, anexoPublicoId);
+      ok(pubOutro.ok, 'outro cliente do MESMO tenant BAIXA anexo público do chamado alheio');
+      const intOutro = await autorizarDownloadAnexo(em, atorCliA2, anexoInternoId);
+      ok(!intOutro.ok, 'outro cliente do mesmo tenant NÃO baixa anexo de NOTA INTERNA');
     });
 
     await runInTenantContext(ds, tenantB, async (em) => {

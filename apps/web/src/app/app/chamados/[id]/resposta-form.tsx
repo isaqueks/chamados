@@ -17,14 +17,18 @@ const INICIAL: EstadoChamado = {};
  * compartilhado com o portal do cliente (`@/components/editor`) — o pipeline
  * server-side (sanitização, anexos inline) é o mesmo. Operador/admin alternam
  * Pública/Interna com DEFAULT INTERNA (reduz risco de vazamento — specs/08).
- * Cliente sempre publica.
+ * Cliente sempre publica. Resposta pública da equipe torna o autor o responsável
+ * pelo chamado (D-039): quando ele ainda não é, o texto de ajuda avisa.
  */
 export function RespostaForm({
   chamadoId,
   podeInterna,
+  souResponsavel = false,
 }: {
   chamadoId: string;
   podeInterna: boolean;
+  /** O usuário logado já é o operador responsável (`chamado.operador_id`)? */
+  souResponsavel?: boolean;
 }) {
   const [estado, acao, pendente] = useActionState(acaoResponder, INICIAL);
   const formRef = useRef<HTMLFormElement>(null);
@@ -125,7 +129,9 @@ export function RespostaForm({
         <p className="text-xs text-muted-foreground">
           {interna
             ? 'Nota interna: visível apenas para a equipe. O cliente nunca a vê.'
-            : 'Mensagem pública: será visível ao cliente na timeline.'}
+            : souResponsavel
+              ? 'Mensagem pública: será visível ao cliente na timeline.'
+              : 'Mensagem pública: será visível ao cliente na timeline. Ao responder, você se torna responsável por este chamado.'}
         </p>
       )}
     </form>

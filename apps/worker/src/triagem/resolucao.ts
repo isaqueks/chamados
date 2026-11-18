@@ -13,6 +13,7 @@ import {
 import { urlComCredencial } from './ferramentas/repo';
 import { arquivosModificados } from './ferramentas/escrita';
 import { detectarGithub, tokenDaCredencial, abrirPrGithub, type FetchImpl } from './github-pr';
+import { ErroTriagemCancelada } from '../ia/erros';
 
 /**
  * Orquestração da RESOLUÇÃO AUTOMÁTICA (specs/05 §6) — a parte feita pelo WORKER,
@@ -103,6 +104,13 @@ export interface DepsResolucao {
   /** Fronteira HTTP do cliente GitHub (injetável no smoke/teste). */
   githubFetch?: FetchImpl;
   webhookTimeoutMs?: number;
+  /**
+   * Checagem de CANCELAMENTO (D-041 — IA silenciada durante a triagem): consultada
+   * antes do commit e antes do PUSH (o ponto sem volta). Cancelado → lança
+   * `ErroTriagemCancelada` sem publicar nada. Depois do push a tentativa segue
+   * até o fim (a nota de cancelamento registra branch/PR já publicados).
+   */
+  deveCancelar?: () => Promise<boolean>;
 }
 
 /** Identidade do committer (o agente_ia). Sem PII de humano. */
@@ -127,6 +135,8 @@ export async function executarResolucao(
 
   const branch = nomeBranchResolucao(e.chamado.numero, e.chamado.titulo);
 
+  if (await deps.deveCancelar?.()) throw new ErroTriagemCancelada();
+
   // 2) Prepara commit na branch de resolução (a partir do default já em HEAD).
   try {
     await git.addConfig('user.name', AUTOR_COMMIT.nome);
@@ -144,6 +154,9 @@ export async function executarResolucao(
   } catch {
     throw new Error('commit_falhou'); // nunca ecoa caminho/segredo cru
   }
+
+  // D-041: última checagem antes do ponto sem volta (o push publica a branch).
+  if (await deps.deveCancelar?.()) throw new ErroTriagemCancelada();
 
   // 3) PUSH com a credencial SÓ na URL (nunca logada; nunca gravada no .git/config).
   const authed = urlComCredencial(e.repoUrl, e.credencial);

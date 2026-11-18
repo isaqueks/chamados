@@ -16,10 +16,12 @@ import {
   enfileirarMapeamento,
   salvarConhecimentoSistema,
   SistemaAlvoSchema,
+  carregarTenant,
   type SistemaAlvo,
 } from '@chamados/db';
 import { criarHandlesRepo, commitAtual } from '../triagem/ferramentas/repo';
 import { motivoErro, telemetriaDoErro } from '../ia/erros';
+import { modeloEfetivoDe, resolverParametrosModeloTenant } from '../ia/parametros-tenant';
 
 /**
  * MAPA DE CONHECIMENTO por sistema-alvo (D-013). Uma execução de IA DEDICADA
@@ -94,6 +96,16 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
   const prep = await runInTenantContext(ds, tenantId, async (em) => {
     const s = await em.findOne(SistemaAlvoSchema, { where: { id: sistemaAlvoId } });
     if (!s) throw new Error('sistema_alvo_inexistente');
+    // D-044: o mapeamento usa o MESMO modelo/esforço do tenant que a triagem
+    // (explora o mesmo repo); os limites seguem os próprios (`IA_MAPA_*`).
+    const tenant = await carregarTenant(em, tenantId);
+    const { parametrosModelo, descartados } = resolverParametrosModeloTenant(tenant);
+    if (descartados.length > 0) {
+      log('config de IA do tenant inválida no mapeamento — usando o padrão da instalação', {
+        sistemaAlvoId,
+        descartados,
+      });
+    }
     const execucaoId = await criarExecucao(
       em,
       { tenant_id: tenantId },
@@ -101,12 +113,17 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
         sistema_alvo_id: sistemaAlvoId,
         gatilho: GatilhoIA.mapeamento,
         provider: provider.nome,
-        modelo: provider.modelo,
-        entrada: { gatilho: GatilhoIA.mapeamento, sistema_alvo_id: sistemaAlvoId, commit },
+        modelo: modeloEfetivoDe(provider, parametrosModelo),
+        entrada: {
+          gatilho: GatilhoIA.mapeamento,
+          sistema_alvo_id: sistemaAlvoId,
+          commit,
+          parametros_modelo: parametrosModelo,
+        },
       },
     );
     await marcarExecutando(em, execucaoId);
-    return { execucaoId, meta: metadadosDe(s) };
+    return { execucaoId, meta: metadadosDe(s), parametrosModelo };
   });
 
   log('mapeamento iniciado', { sistemaAlvoId, execucaoId: prep.execucaoId, commit });
@@ -121,6 +138,7 @@ export async function executarMapeamento(deps: DepsMapeamento): Promise<Conhecim
         maxTurnos: limites.maxTurnos,
       },
       maxChars: limites.maxChars,
+      parametrosModelo: prep.parametrosModelo,
       // D-014: exploração NATIVA (Read/Grep/Glob) escopada ao checkout já
       // sincronizado; a `auditar` alimenta a mesma trilha `acoes`.
       exploracao: { checkoutDir, auditar: registrar },

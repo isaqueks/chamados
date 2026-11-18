@@ -26,10 +26,21 @@ export interface Tenant {
   nome_exibicao: string;
   status: StatusTenant;
   config_branding: ConfigBranding;
+  /**
+   * Prazo (dias) para o cliente APROVAR ou CONTESTAR um chamado `resolvido`
+   * (D-042); sem resposta, o job de manutenção fecha (aprovação tácita). Nome
+   * histórico mantido. Default 7; faixa 1–365 validada na gravação.
+   */
   dias_fechamento_automatico: number;
   ia_resolucao_automatica_habilitada: boolean;
   /** Instruções adicionais do admin para a IA (D-020) — system prompt da triagem. */
   ia_instrucoes: string | null;
+  /** Modelo da IA do tenant (D-044). `null` = padrão da instalação (`IA_MODELO`). */
+  ia_modelo: string | null;
+  /** Esforço de raciocínio do tenant (D-044). `null` = `IA_ESFORCO`. Texto livre no banco: o worker revalida. */
+  ia_esforco: string | null;
+  /** Timeout da triagem do tenant em ms (D-044). `null` = `IA_TIMEOUT_MS`. */
+  ia_timeout_ms: number | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -55,9 +66,13 @@ export const TenantSchema = new EntitySchema<Tenant>({
       default: StatusTenant.em_provisionamento,
     },
     config_branding: { type: 'jsonb', default: {} },
-    dias_fechamento_automatico: { type: 'int', default: 3 },
+    // D-042: prazo (dias) para o cliente aprovar ou contestar um `resolvido`; default 7.
+    dias_fechamento_automatico: { type: 'int', default: 7 },
     ia_resolucao_automatica_habilitada: { type: 'boolean', default: true },
     ia_instrucoes: { type: 'text', nullable: true },
+    ia_modelo: { type: 'text', nullable: true },
+    ia_esforco: { type: 'text', nullable: true },
+    ia_timeout_ms: { type: 'int', nullable: true },
     created_at: { type: 'timestamptz', createDate: true },
     updated_at: { type: 'timestamptz', updateDate: true },
     deleted_at: { type: 'timestamptz', deleteDate: true, nullable: true },

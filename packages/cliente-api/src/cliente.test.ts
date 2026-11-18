@@ -531,6 +531,9 @@ describe('ClienteChamados — métodos tipados', () => {
     });
     expect(queryDeFiltros({ status: 'novo' }).status).toBe('novo');
     expect(queryDeFiltros({ status: [] }).status).toBeUndefined();
+    // D-037: `meus` só viaja quando true (ausente = todo o escopo do papel).
+    expect(queryDeFiltros({ meus: true }).meus).toBe('true');
+    expect(queryDeFiltros({ meus: false }).meus).toBeUndefined();
   });
 
   it('listarTodosChamados pagina até proximo_cursor = null', async () => {
@@ -583,6 +586,8 @@ describe('ClienteChamados — métodos tipados', () => {
     await cliente.criarChamado({ titulo: 'T', descricao: 'D', natureza: 'problema' });
     await cliente.definirSilencioIa('u1', true);
     await cliente.atribuir('u1', null);
+    await cliente.definirCusto('u1', { estimativa_custo: 'B', custo_final: null });
+    await cliente.mudarStatus('u1', { status: 'resolvido', custo_final: 150.5 });
 
     const ver = chamadas.map((c) => [
       c.init?.method,
@@ -595,6 +600,9 @@ describe('ClienteChamados — métodos tipados', () => {
       ['POST', '/api/v1/chamados', { titulo: 'T', descricao: 'D', natureza: 'problema' }],
       ['POST', '/api/v1/chamados/u1/ia', { silenciada: true }],
       ['POST', '/api/v1/chamados/u1/atribuicao', { operador_id: null }],
+      // D-043
+      ['POST', '/api/v1/chamados/u1/custo', { estimativa_custo: 'B', custo_final: null }],
+      ['POST', '/api/v1/chamados/u1/status', { status: 'resolvido', custo_final: 150.5 }],
     ]);
     for (const c of chamadas) {
       expect((c.init?.headers as Record<string, string>)['content-type']).toBe('application/json');

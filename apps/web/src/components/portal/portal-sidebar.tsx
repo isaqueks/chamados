@@ -13,12 +13,12 @@ import { LinhaNav } from '@/components/app-shell/nav-links';
  */
 
 const ITENS = [
-  { href: '/portal', rotulo: 'Meus chamados', icone: Inbox },
+  { href: '/portal', rotulo: 'Chamados', icone: Inbox },
   { href: '/portal/novo', rotulo: 'Abrir chamado', icone: Plus },
   { href: '/portal/preferencias', rotulo: 'Notificações', icone: Bell },
 ];
 
-/** O detalhe do chamado (/portal/chamados/:id) pertence a "Meus chamados". */
+/** O detalhe do chamado (/portal/chamados/:id) pertence a "Chamados". */
 function itemAtivo(pathname: string, href: string): boolean {
   if (href === '/portal') {
     return pathname === '/portal' || pathname.startsWith('/portal/chamados');
