@@ -2,9 +2,11 @@ import { ArmazenamentoTokenMemoria, type ArmazenamentoToken } from './armazename
 import { ErroApi, ErroRede, lerErro } from './erros';
 import type {
   ArquivoBaixado,
+  ArquivoParaEnvio,
   EntradaCriarChamado,
   EntradaCusto,
   EntradaMensagem,
+  EntradaMensagemComArquivos,
   EntradaStatus,
   FiltrosListarChamados,
   FormatoCorpo,
@@ -53,7 +55,7 @@ export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
 /** Prazo padrão das requisições JSON (07 §2.2). */
 export const TIMEOUT_JSON_MS = 30_000;
-/** Prazo padrão do download de anexo (07 §2.2). */
+/** Prazo padrão de anexo — download (07 §2.2) e upload multipart (D-046). */
 export const TIMEOUT_ANEXO_MS = 120_000;
 
 export interface ConfigCliente {
@@ -76,7 +78,7 @@ export interface ConfigCliente {
   tenantSlug: string | null;
   /** Prazo das requisições JSON (padrão `TIMEOUT_JSON_MS`). */
   timeoutMs?: number;
-  /** Prazo do download de anexo (padrão `TIMEOUT_ANEXO_MS`). */
+  /** Prazo de anexo — download e upload (padrão `TIMEOUT_ANEXO_MS`). */
   timeoutAnexoMs?: number;
 }
 
@@ -95,6 +97,10 @@ export interface OpcoesChamada {
 export interface OpcoesRequisicao extends OpcoesChamada {
   metodo?: 'GET' | 'POST' | 'DELETE';
   query?: Record<string, string | undefined>;
+  /**
+   * Corpo: objeto → JSON; `FormData` → `multipart/form-data` (o `fetch` define o
+   * boundary — D-046). O mesmo `FormData` é reenviado na repetição após 401.
+   */
   corpo?: unknown;
 }
 
@@ -137,6 +143,32 @@ export function queryDeFiltros(f: FiltrosListarChamados): Record<string, string 
     cursor: f.cursor,
     complexidade: csv(f.complexidade),
   };
+}
+
+/**
+ * Monta o `FormData` de um envio multipart (D-046): campos de texto (vazios e
+ * `undefined` não viajam) + cada arquivo como parte `arquivos`. Puro, testável.
+ */
+export function montarFormulario(
+  campos: Record<string, string | number | undefined>,
+  arquivos: ArquivoParaEnvio[],
+): FormData {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(campos)) {
+    if (v !== undefined && String(v) !== '') form.append(k, String(v));
+  }
+  for (const a of arquivos) {
+    // Cópia para um ArrayBuffer próprio: o Blob não pode depender de um Buffer
+    // do pool do Node (que outro código reaproveitaria).
+    const bytes = new Uint8Array(new ArrayBuffer(a.conteudo.byteLength));
+    bytes.set(a.conteudo);
+    form.append(
+      'arquivos',
+      new Blob([bytes], { type: a.contentType ?? 'application/octet-stream' }),
+      a.nome,
+    );
+  }
+  return form;
 }
 
 /** `/api/v1/chamados/{ref}[sufixo]` com o ref codificado (`#12` exige escape). */
@@ -329,6 +361,31 @@ export class ClienteChamados {
   }
 
   /**
+   * D-046 — `POST …/mensagens` em `multipart/form-data`, com arquivos. Imagens
+   * aparecem na conversa (marcador `![x](anexo:<nome>)` no corpo ou ao fim);
+   * os demais tipos viram anexos. Prazo de anexo (`timeoutAnexoMs`). Erros
+   * próprios: `415 tipo_arquivo_nao_permitido`, `413 arquivo_muito_grande` /
+   * `requisicao_muito_grande`, `400 arquivos_demais` — nada é publicado.
+   * Antes do deploy da D-046 o servidor responde `400 corpo_invalido`.
+   */
+  publicarMensagemComArquivos(
+    ref: string,
+    entrada: EntradaMensagemComArquivos,
+    opts: OpcoesChamada = {},
+  ): Promise<RespostaMensagem> {
+    const form = montarFormulario(
+      { visibilidade: entrada.visibilidade, corpo: entrada.corpo },
+      entrada.arquivos,
+    );
+    return this.requisitar<RespostaMensagem>(caminhoChamado(ref, '/mensagens'), {
+      timeoutMs: this.cfg.timeoutAnexoMs ?? TIMEOUT_ANEXO_MS,
+      ...opts,
+      metodo: 'POST',
+      corpo: form,
+    });
+  }
+
+  /**
    * `POST /api/v1/chamados/{ref}/status`. NÃO idempotente: repetir o mesmo status
    * dá `409 transicao_invalida` — leia antes de escrever (07 §1.5).
    */
@@ -369,6 +426,25 @@ export class ClienteChamados {
       ...opts,
       metodo: 'POST',
       corpo: entrada,
+    });
+  }
+
+  /**
+   * D-046 — `POST /api/v1/chamados` em multipart, com IMAGENS na descrição
+   * (marcador `![x](anexo:<nome>)` ou ao fim). Na abertura só imagens: outro
+   * tipo → `415 tipo_arquivo_nao_permitido` (envie-o numa mensagem depois).
+   */
+  criarChamadoComImagens(
+    entrada: EntradaCriarChamado,
+    imagens: ArquivoParaEnvio[],
+    opts: OpcoesChamada = {},
+  ): Promise<RespostaCriarChamado> {
+    const form = montarFormulario({ ...entrada }, imagens);
+    return this.requisitar<RespostaCriarChamado>('/api/v1/chamados', {
+      timeoutMs: this.cfg.timeoutAnexoMs ?? TIMEOUT_ANEXO_MS,
+      ...opts,
+      metodo: 'POST',
+      corpo: form,
     });
   }
 
@@ -536,13 +612,21 @@ export class ClienteChamados {
       ...this.headersBase(),
       authorization: `Bearer ${token}`,
     };
-    if (opts.corpo !== undefined) headers['content-type'] = 'application/json';
+    // FormData: o `fetch` monta o `multipart/form-data; boundary=…` sozinho.
+    const multipart = opts.corpo instanceof FormData;
+    if (opts.corpo !== undefined && !multipart) headers['content-type'] = 'application/json';
+    const body =
+      opts.corpo === undefined
+        ? undefined
+        : multipart
+          ? (opts.corpo as FormData)
+          : JSON.stringify(opts.corpo);
 
     return this.comPrazo(prazo, opts.sinal, async (sinal): Promise<Tentativa<T>> => {
       const resp = await this.fetchImpl(url.toString(), {
         method: opts.metodo ?? 'GET',
         headers,
-        ...(opts.corpo !== undefined ? { body: JSON.stringify(opts.corpo) } : {}),
+        ...(body !== undefined ? { body } : {}),
         signal: sinal,
       });
       if (!resp.ok) return { ok: false, status: resp.status, ...(await lerErro(resp)) };

@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   const cliente = new ClienteChamados(configCliente(cfg));
 
   const server = new McpServer(
-    { name: 'chamados', version: '0.3.0' },
+    { name: 'chamados', version: '0.4.0' },
     {
       instructions:
         'Helpdesk Chamados: leitura e atendimento de chamados de suporte. Use chamados_listar ' +
@@ -32,11 +32,16 @@ async function main(): Promise<void> {
         'pertence a notas "interna". chamado_criar abre um chamado novo: com usuário ' +
         'operador/admin exige o e-mail do cliente solicitante (pergunte se não souber). ' +
         'Anexos e imagens do chamado estão listados em chamado_obter; use anexo_obter ' +
-        'para ver a imagem ou ler o arquivo.',
+        'para ver a imagem ou ler o arquivo. Para ENVIAR capturas de tela ou arquivos, use o ' +
+        'parâmetro `arquivos` (caminhos locais) de chamado_publicar_mensagem — imagens ' +
+        'aparecem na conversa; o que vai em mensagem "publica" chega ao cliente.',
     },
   );
 
-  registrarFerramentas(server, cliente, { somenteLeitura: cfg.somenteLeitura });
+  registrarFerramentas(server, cliente, {
+    somenteLeitura: cfg.somenteLeitura,
+    dirsAnexos: cfg.dirsAnexos,
+  });
 
   await server.connect(new StdioServerTransport());
   log(
@@ -44,7 +49,10 @@ async function main(): Promise<void> {
       (cfg.tenantSlug ? ` (tenant ${cfg.tenantSlug})` : '') +
       // Só o MODO de credencial — o token em si nunca vai para log (specs/11 §7.1).
       (cfg.token ? (cfg.senha ? ' [token de sessão + senha]' : ' [token de sessão]') : '') +
-      (cfg.somenteLeitura ? ' [somente leitura]' : ''),
+      (cfg.somenteLeitura ? ' [somente leitura]' : '') +
+      (!cfg.somenteLeitura && cfg.dirsAnexos
+        ? ` [envio de arquivos só de: ${cfg.dirsAnexos.join(', ')}]`
+        : ''),
   );
 }
 

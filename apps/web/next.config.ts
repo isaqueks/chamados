@@ -120,6 +120,12 @@ const nextConfig: NextConfig = {
     // `descricao`) e os anexos vão por multipart no MESMO server action — o limite
     // padrão (1mb) estoura com facilidade.
     serverActions: { bodySizeLimit: '32mb' },
+    // O proxy (src/proxy.ts) roda em TODAS as rotas e, por isso, o Next clona e
+    // bufferiza o corpo de cada requisição até este limite (padrão 10mb) — acima
+    // dele o corpo chega TRUNCADO ao handler, sem erro. Alinhado ao teto de
+    // upload (server actions acima e `LIMITE_REQUISICAO_UPLOAD_BYTES` da API
+    // multipart, D-046): sem isto, anexos de 10–25 MB quebravam em silêncio.
+    proxyClientMaxBodySize: '32mb',
   },
   // Cabeçalhos de segurança (specs/09 §6). Aplicam a páginas, rotas /api e assets.
   async headers() {
