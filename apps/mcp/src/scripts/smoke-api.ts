@@ -45,6 +45,14 @@
  *     `custo_final` só em `resolvido` (400 em outra transição); lista e detalhe
  *     trazem `estimativa_custo`/`custo_final` para o cliente; correção grava
  *     evento; o token de B não alcança A e vice-versa (404).
+ * 17. upload multipart (D-046): cliente abre chamado com print (imagem na
+ *     descrição); operador responde com 1 imagem posicionada por marcador +
+ *     1 PDF (imagem aparece no `formato=markdown` apontando para
+ *     `/api/v1/anexos/…`, PDF como anexo comum); SVG/EXE → 415 e NADA publicado
+ *     (nem mensagem nem linha de anexo); arquivo > 25 MB → 413; cliente dono
+ *     anexa no próprio chamado; cliente NÃO-dono → 403 em chamado alheio, sem
+ *     efeito; o token de B não baixa o anexo nem publica em A (404); o
+ *     `ClienteChamados.publicarMensagemComArquivos` funciona contra a API real.
  *
  * Requer também o MinIO de pé (os anexos vão para o storage).
  *
@@ -1605,6 +1613,234 @@ async function main(): Promise<void> {
       custoAemB.status === 404 &&
         (await lerCusto(tenantBId, massaB.chamadoBId)).estimativa_custo === null,
       'D-043: token de A não define custo no chamado de B (404)',
+    );
+
+    // --- 17) Upload multipart (D-046, specs/11 §4.3/§4.5) -------------------
+    /** POST multipart cru (o `fetch` monta o boundary e o Content-Length). */
+    async function enviar<T = Record<string, unknown>>(
+      slugAlvo: string,
+      caminho: string,
+      token: string,
+      campos: Record<string, string>,
+      arquivos: Array<{ nome: string; bytes: Buffer }>,
+    ): Promise<Resposta<T>> {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(campos)) form.append(k, v);
+      for (const a of arquivos)
+        form.append('arquivos', new Blob([new Uint8Array(a.bytes)]), a.nome);
+      const resp = await fetch(`${BASE}${caminho}`, {
+        method: 'POST',
+        headers: { 'x-tenant-slug': slugAlvo, authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const texto = await resp.text();
+      let corpo: unknown = texto;
+      try {
+        corpo = JSON.parse(texto);
+      } catch {
+        /* mantém texto */
+      }
+      return { status: resp.status, corpo: corpo as T };
+    }
+    const contarNoChamado = async (
+      chamado: string,
+    ): Promise<{ mensagens: number; anexos: number }> =>
+      runInTenantContext(ds, tenantId, async (em) => {
+        const m: Array<{ n: string }> = await em.query(
+          'SELECT count(*)::text AS n FROM mensagem WHERE chamado_id = $1',
+          [chamado],
+        );
+        const a: Array<{ n: string }> = await em.query(
+          `SELECT count(*)::text AS n FROM anexo
+            WHERE chamado_id = $1 OR mensagem_id IN (SELECT id FROM mensagem WHERE chamado_id = $1)`,
+          [chamado],
+        );
+        return { mensagens: Number(m[0]!.n), anexos: Number(a[0]!.n) };
+      });
+    type AnxUp = { id: string; nome_arquivo: string; content_type: string; inline: boolean };
+    const PDF_UP = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
+    const SVG_UP = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
+    const EXE_UP = Buffer.from('MZ\x90\x00\x03\x00\x00\x00', 'latin1');
+
+    // Cliente abre chamado com print na descrição (imagem → descrição inline).
+    const abrir = await enviar<{ id: string; numero: number; anexos: AnxUp[] }>(
+      slug,
+      '/api/v1/chamados',
+      tokenCli,
+      { titulo: 'Erro com print (multipart)', descricao: 'A tela mostra isto:' },
+      [{ nome: 'erro.png', bytes: PNG }],
+    );
+    ok(
+      abrir.status === 201 &&
+        abrir.corpo.anexos.length === 1 &&
+        abrir.corpo.anexos[0]!.inline === true &&
+        abrir.corpo.anexos[0]!.nome_arquivo === 'erro.png',
+      'D-046: cliente abre chamado com print — imagem vira anexo inline da descrição',
+    );
+    const chUpId = abrir.corpo.id;
+    const abrirPdf = await enviar(
+      slug,
+      '/api/v1/chamados',
+      tokenCli,
+      { titulo: 'Abertura com PDF', descricao: 'x' },
+      [{ nome: 'r.pdf', bytes: PDF_UP }],
+    );
+    ok(
+      abrirPdf.status === 415 && abrirPdf.corpo.codigo === 'tipo_arquivo_nao_permitido',
+      'D-046: na abertura só imagens (PDF → 415)',
+    );
+
+    // Operador responde com imagem posicionada + PDF.
+    const resp1 = await enviar<{ id: string; anexos: AnxUp[] }>(
+      slug,
+      `/api/v1/chamados/${chUpId}/mensagens`,
+      tokenOp,
+      {
+        visibilidade: 'publica',
+        corpo: 'Corrigido. Antes:\n\n![tela corrigida](anexo:depois.png)\n\nRelatório em anexo.',
+      },
+      [
+        { nome: 'depois.png', bytes: PNG },
+        { nome: 'relatorio.pdf', bytes: PDF_UP },
+      ],
+    );
+    const inlineUp = resp1.corpo.anexos?.find((a) => a.inline);
+    const pdfUp = resp1.corpo.anexos?.find((a) => !a.inline);
+    ok(
+      resp1.status === 201 &&
+        resp1.corpo.anexos.length === 2 &&
+        inlineUp?.content_type === 'image/png' &&
+        pdfUp?.content_type === 'application/pdf' &&
+        pdfUp.nome_arquivo === 'relatorio.pdf',
+      'D-046: operador responde com 1 imagem (inline) + 1 PDF (anexo) — 201 com os anexos',
+    );
+    const detUp = await chamar<Det>(slug, `/api/v1/chamados/${chUpId}?formato=markdown`, {
+      token: tokenCli,
+    });
+    const msgUp = detUp.corpo.mensagens.find((m) => m.anexos.some((a) => a.id === inlineUp?.id));
+    ok(
+      !!msgUp && msgUp.corpo.includes(`![tela corrigida](/api/v1/anexos/${inlineUp!.id})`),
+      'D-046: a imagem APARECE na conversa (markdown com a rota Bearer), no lugar do marcador',
+    );
+    const bytesUp = await fetch(`${BASE}/api/v1/anexos/${pdfUp!.id}`, {
+      headers: { 'x-tenant-slug': slug, authorization: `Bearer ${tokenCli}` },
+    });
+    ok(
+      bytesUp.status === 200 &&
+        Buffer.from(await bytesUp.arrayBuffer()).equals(PDF_UP) &&
+        (bytesUp.headers.get('content-disposition') ?? '').startsWith('attachment'),
+      'D-046: o cliente baixa o PDF publicado (attachment, bytes íntegros)',
+    );
+
+    // Tipo proibido: nada é publicado.
+    const antesProibido = await contarNoChamado(chUpId);
+    for (const [nome, bytes] of [
+      ['logo.svg', SVG_UP],
+      ['setup.exe', EXE_UP],
+    ] as const) {
+      const r = await enviar(
+        slug,
+        `/api/v1/chamados/${chUpId}/mensagens`,
+        tokenOp,
+        { visibilidade: 'interna', corpo: 'tentativa' },
+        [
+          { nome: 'ok.png', bytes: PNG },
+          { nome, bytes },
+        ],
+      );
+      ok(
+        r.status === 415 && r.corpo.codigo === 'tipo_arquivo_nao_permitido',
+        `D-046: ${nome} → 415 tipo_arquivo_nao_permitido`,
+      );
+    }
+    const grande = await enviar(
+      slug,
+      `/api/v1/chamados/${chUpId}/mensagens`,
+      tokenOp,
+      { visibilidade: 'interna', corpo: 'grande' },
+      [{ nome: 'grande.png', bytes: Buffer.concat([PNG, Buffer.alloc(25 * 1024 * 1024)]) }],
+    );
+    ok(
+      grande.status === 413 && grande.corpo.codigo === 'arquivo_muito_grande',
+      'D-046: arquivo acima de 25 MB → 413 arquivo_muito_grande',
+    );
+    const depoisProibido = await contarNoChamado(chUpId);
+    ok(
+      depoisProibido.mensagens === antesProibido.mensagens &&
+        depoisProibido.anexos === antesProibido.anexos,
+      'D-046: recusas não publicam NADA (nem mensagem nem anexo)',
+    );
+
+    // Cliente dono anexa no próprio chamado; não-dono é recusado.
+    const doDono = await enviar<{ anexos: AnxUp[] }>(
+      slug,
+      `/api/v1/chamados/${chUpId}/mensagens`,
+      tokenCli,
+      { visibilidade: 'publica' },
+      [{ nome: 'mais-um-print.png', bytes: PNG }],
+    );
+    ok(
+      doDono.status === 201 && doDono.corpo.anexos[0]?.inline === true,
+      'D-046: cliente dono anexa print no próprio chamado (corpo vazio + imagem)',
+    );
+    const antesAlheio = await contarNoChamado(chamadoAlheioId);
+    const alheioUp = await enviar(
+      slug,
+      `/api/v1/chamados/${chamadoAlheioId}/mensagens`,
+      tokenCli,
+      { visibilidade: 'publica', corpo: 'anexo intruso' },
+      [{ nome: 'intruso.png', bytes: PNG }],
+    );
+    const depoisAlheio = await contarNoChamado(chamadoAlheioId);
+    ok(
+      alheioUp.status === 403 &&
+        alheioUp.corpo.codigo === 'sem_permissao' &&
+        depoisAlheio.anexos === antesAlheio.anexos &&
+        depoisAlheio.mensagens === antesAlheio.mensagens,
+      'D-046: cliente NÃO-dono → 403 ao anexar em chamado alheio (lê, mas não anexa — D-037)',
+    );
+
+    // Cross-tenant (regra 6).
+    const tokenOpB = loginOpB.corpo.token;
+    const baixarDeB = await fetch(`${BASE}/api/v1/anexos/${inlineUp!.id}`, {
+      headers: { 'x-tenant-slug': `${slug}-b`, authorization: `Bearer ${tokenOpB}` },
+    });
+    ok(baixarDeB.status === 404, 'D-046: token do tenant B não baixa o anexo enviado em A (404)');
+    const tokenAemB = await fetch(`${BASE}/api/v1/anexos/${inlineUp!.id}`, {
+      headers: { 'x-tenant-slug': `${slug}-b`, authorization: `Bearer ${tokenOp}` },
+    });
+    ok(tokenAemB.status === 401, 'D-046: token de A apresentado no host de B não autentica (401)');
+    const antesB = await contarNoChamado(chUpId);
+    const publicarDeB = await enviar(
+      `${slug}-b`,
+      `/api/v1/chamados/${chUpId}/mensagens`,
+      tokenOpB,
+      { visibilidade: 'interna', corpo: 'de B' },
+      [{ nome: 'b.png', bytes: PNG }],
+    );
+    ok(
+      publicarDeB.status === 404 && (await contarNoChamado(chUpId)).anexos === antesB.anexos,
+      'D-046: operador de B não anexa no chamado de A (404, nada gravado)',
+    );
+
+    // Cliente tipado (MCP/Forja) contra a API real.
+    const clienteUp = new ClienteChamados({
+      baseUrl: BASE,
+      email: operadorEmail,
+      obterSenha: () => SENHA,
+      tenantSlug: slug,
+    });
+    const viaCliente = await clienteUp.publicarMensagemComArquivos(chUpId, {
+      visibilidade: 'interna',
+      corpo: 'Evidências da Forja.',
+      arquivos: [
+        { nome: 'antes.png', conteudo: PNG },
+        { nome: 'depois.png', conteudo: PNG },
+      ],
+    });
+    ok(
+      (viaCliente.anexos ?? []).filter((a) => a.inline).length === 2,
+      'D-046: ClienteChamados.publicarMensagemComArquivos publica nota interna com 2 prints',
     );
 
     // --- 9) Cliente MCP sobre a mesma API ----------------------------------

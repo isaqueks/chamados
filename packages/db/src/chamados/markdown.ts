@@ -21,6 +21,24 @@ import { textoParaDoc, type DocRico, type MarcaRichText, type NoRichText } from 
  * Falha de parse NUNCA quebra a mensagem: cai no `textoParaDoc` (texto plano).
  */
 
+/**
+ * Opções do conversor. `srcImagem` (D-046) decide o destino de cada imagem do
+ * markdown: devolve a `src` com que o nó `image` deve nascer, ou `null` para o
+ * comportamento padrão (vira o texto alternativo). Só a API multipart o usa,
+ * para resolver marcadores `![legenda](anexo:arquivo.png)` em imagens enviadas
+ * no mesmo request — a `src` devolvida ainda passa por `validarDocRico`.
+ */
+export interface OpcoesMarkdownParaDoc {
+  srcImagem?: (href: string, alt: string) => string | null;
+}
+
+/**
+ * Opções da conversão EM CURSO. O conversor é síncrono e não reentrante, então
+ * um estado de módulo (sempre restaurado no `finally`) evita passar `opts` por
+ * toda a árvore de funções recursivas.
+ */
+let opcoesAtuais: OpcoesMarkdownParaDoc = {};
+
 /** Desfaz as entidades básicas que o lexer do marked escapa em `text`. */
 function desescapar(texto: string): string {
   return texto
@@ -83,6 +101,12 @@ function inline(tokens: Token[] | undefined, marcas: MarcaRichText[] = []): NoRi
       }
       case 'image': {
         const img = t as Tokens.Image;
+        const alt = desescapar(img.text);
+        const src = opcoesAtuais.srcImagem?.(img.href, alt) ?? null;
+        if (src !== null) {
+          out.push({ type: 'image', attrs: { src, ...(alt ? { alt } : {}) } });
+          break;
+        }
         // Imagem de URL externa não sobrevive à allowlist — preserva o alt como texto.
         const no = textoComMarcas(desescapar(img.text || img.href), marcas);
         if (no) out.push(no);
@@ -225,7 +249,8 @@ function blocosDe(tokens: Token[]): NoRichText[] {
  * (`validarDocRico` + materialização). Nunca lança: qualquer erro de parse cai
  * no texto plano (`textoParaDoc`).
  */
-export function markdownParaDoc(markdown: string): DocRico {
+export function markdownParaDoc(markdown: string, opts: OpcoesMarkdownParaDoc = {}): DocRico {
+  opcoesAtuais = opts;
   try {
     // `breaks: true` (GFM "hard breaks", como em comentários do GitHub): um \n
     // simples dentro do parágrafo vira token `br` → nó `hardBreak` → `<br>`.
@@ -237,5 +262,7 @@ export function markdownParaDoc(markdown: string): DocRico {
     return { type: 'doc', content };
   } catch {
     return textoParaDoc(markdown);
+  } finally {
+    opcoesAtuais = {};
   }
 }

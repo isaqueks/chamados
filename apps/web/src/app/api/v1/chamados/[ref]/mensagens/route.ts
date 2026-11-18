@@ -3,18 +3,22 @@ import {
   resolverIdChamado,
   criarMensagem,
   markdownParaDoc,
+  listarAnexosVisiveis,
+  type EntradaMensagem,
 } from '@chamados/db';
 import { VisibilidadeMensagem } from '@chamados/shared';
 import {
   atorDe,
   exigirContexto,
+  type ContextoApi,
   jsonErro,
   jsonOk,
   lerJson,
   respostaDeMotivo,
   textoDe,
 } from '@/lib/api-v1';
-import { valorEnum } from '@/lib/api-chamados';
+import { projetarAnexo, valorEnum } from '@/lib/api-chamados';
+import { ehMultipart, lerFormularioMultipart, parsearMensagemMultipart } from '@/lib/api-upload';
 import { comDespacho } from '@/lib/despacho';
 
 export const runtime = 'nodejs';
@@ -35,10 +39,35 @@ export const dynamic = 'force-dynamic';
  *    triagem (specs/05 §2). Uma mensagem publicada pela API não é de segunda classe.
  *    Inclui a auto-atribuição (D-039): resposta `publica` de operador/admin torna
  *    o usuário do token o responsável — regra de `criarMensagem`, não desta rota.
+ *
+ * Duas formas de corpo (D-046):
+ *  - **JSON** `{visibilidade, corpo}` — só texto, como sempre;
+ *  - **`multipart/form-data`** `visibilidade`, `corpo`, `arquivos` (0..N) —
+ *    imagens aparecem NA conversa (marcador `![x](anexo:nome.png)` ou ao fim do
+ *    corpo), os demais tipos viram anexos. Validação, limites, `anexo · enviar` e
+ *    storage são os da UI (`criarMensagem` → `gravarAnexo`/`materializarDoc`);
+ *    qualquer arquivo inválido recusa TUDO antes de um INSERT ou upload.
+ *
+ * Resposta `201 { id, anexos: [...] }` (`anexos` na projeção do detalhe).
  */
 export async function POST(req: Request, ctxRota: { params: Promise<{ ref: string }> }) {
   const ctx = await exigirContexto(req);
   if (ctx instanceof Response) return ctx;
+
+  const { ref } = await ctxRota.params;
+  if (ehMultipart(req.headers.get('content-type'))) {
+    const lido = await lerFormularioMultipart(req);
+    if (!lido.ok) return jsonErro(lido.status, lido.codigo, lido.erro);
+    const parse = await parsearMensagemMultipart(lido.form);
+    if (!parse.ok) return jsonErro(parse.status, parse.codigo, parse.erro);
+    const { visibilidade, corpo } = parse.mensagem;
+    return publicar(ctx, ref, {
+      visibilidade,
+      corpo: corpo.doc,
+      anexos: corpo.anexos.length > 0 ? corpo.anexos : undefined,
+      imagens_inline: corpo.imagens.length > 0 ? corpo.imagens : undefined,
+    });
+  }
 
   const corpoReq = await lerJson(req);
   if (!corpoReq) {
@@ -57,20 +86,30 @@ export async function POST(req: Request, ctxRota: { params: Promise<{ ref: strin
   const corpo = textoDe(corpoReq.corpo);
   if (!corpo) return jsonErro(400, 'corpo_invalido', 'O campo "corpo" não pode ser vazio.');
 
-  const { ref } = await ctxRota.params;
-  const ds = await obterAppDataSource();
+  return publicar(ctx, ref, { visibilidade, corpo: markdownParaDoc(corpo) });
+}
 
+/**
+ * Publica pelo domínio (as duas formas de corpo convergem aqui) e devolve os
+ * anexos criados, lidos na MESMA transação (RLS do tenant).
+ */
+async function publicar(
+  ctx: ContextoApi,
+  ref: string,
+  entrada: Omit<EntradaMensagem, 'chamado_id'>,
+): Promise<Response> {
+  const ds = await obterAppDataSource();
   const r = await comDespacho(ds, ctx.tenant.id, async (em, hooks) => {
     const id = await resolverIdChamado(em, decodeURIComponent(ref));
     if (!id) return { ok: false as const, motivo: 'chamado_inexistente' };
-    return criarMensagem(
-      em,
-      atorDe(ctx),
-      { chamado_id: id, visibilidade, corpo: markdownParaDoc(corpo) },
-      hooks,
+    const criada = await criarMensagem(em, atorDe(ctx), { ...entrada, chamado_id: id }, hooks);
+    if (!criada.ok) return criada;
+    const anexos = (await listarAnexosVisiveis(em, id, [criada.id])).filter(
+      (a) => a.mensagem_id === criada.id,
     );
+    return { ok: true as const, id: criada.id, anexos };
   });
 
   if (!r.ok) return respostaDeMotivo(r.motivo);
-  return jsonOk({ id: r.id }, 201);
+  return jsonOk({ id: r.id, anexos: r.anexos.map(projetarAnexo) }, 201);
 }

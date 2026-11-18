@@ -1,4 +1,5 @@
 import { validarBaseUrl, ErroUrlBase, type ConfigCliente } from '@chamados/cliente-api';
+import { parsearDirsAnexos } from './arquivos-locais';
 
 /**
  * Configuração do servidor MCP (specs/11 §7.1). Tudo por variável de ambiente —
@@ -29,6 +30,11 @@ export interface ConfigMcp {
   tenantSlug: string | null;
   /** Registra apenas as ferramentas de leitura. */
   somenteLeitura: boolean;
+  /**
+   * D-046: diretórios de onde as ferramentas de escrita podem ENVIAR arquivos
+   * (`CHAMADOS_MCP_DIR_ANEXOS`); `null` = qualquer caminho não sensível.
+   */
+  dirsAnexos: string[] | null;
   /** Avisos não bloqueantes da URL (ex.: `127.0.0.1`) — o `index.ts` os loga no stderr. */
   avisos: string[];
 }
@@ -76,6 +82,8 @@ export function carregarConfig(env: NodeJS.ProcessEnv = process.env): ConfigMcp 
       'Defina CHAMADOS_SENHA ou CHAMADOS_TOKEN (um dos dois é obrigatório) no servidor MCP (ver specs/11 §7.1).',
     );
   }
+  const dirs = parsearDirsAnexos(env.CHAMADOS_MCP_DIR_ANEXOS);
+  if (!dirs.ok) throw new ErroConfig(`CHAMADOS_MCP_DIR_ANEXOS: ${dirs.erro}`);
   return {
     baseUrl: origem,
     email,
@@ -83,6 +91,7 @@ export function carregarConfig(env: NodeJS.ProcessEnv = process.env): ConfigMcp 
     token,
     tenantSlug: env.CHAMADOS_TENANT?.trim() || null,
     somenteLeitura: booleana(env.CHAMADOS_MCP_SOMENTE_LEITURA),
+    dirsAnexos: dirs.dirs,
     avisos,
   };
 }

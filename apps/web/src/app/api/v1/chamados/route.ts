@@ -5,6 +5,9 @@ import {
   criarChamado,
   markdownParaDoc,
   buscarUsuarioAtivoPorEmail,
+  listarAnexosVisiveis,
+  type ArquivoUpload,
+  type DocRico,
 } from '@chamados/db';
 import { Papel } from '@chamados/shared';
 import {
@@ -21,8 +24,11 @@ import {
   idsDeChamados,
   parsearEntradaCriar,
   parsearFiltros,
+  projetarAnexo,
   projetarItemLista,
+  type EntradaCriarApi,
 } from '@/lib/api-chamados';
+import { ehMultipart, lerFormularioMultipart, parsearCriarMultipart } from '@/lib/api-upload';
 import { comDespacho } from '@/lib/despacho';
 
 export const runtime = 'nodejs';
@@ -93,18 +99,36 @@ export async function GET(req: Request): Promise<Response> {
  * O solicitante da equipe pode vir por `solicitante_email` (o que um assistente
  * conhece) ou `solicitante_id`; a resolução por e-mail é escopada ao tenant pela
  * RLS e exige conta ATIVA com papel `cliente` — a mesma regra do serviço.
+ *
+ * `multipart/form-data` (D-046): os mesmos campos como partes de texto +
+ * `arquivos` só de IMAGEM, que entram na descrição (marcador
+ * `![x](anexo:nome.png)` ou ao fim) pelo mesmo pipeline das imagens coladas no
+ * portal. Resposta `201 { id, numero, anexos }`.
  */
 export async function POST(req: Request): Promise<Response> {
   const ctx = await exigirContexto(req);
   if (ctx instanceof Response) return ctx;
 
-  const corpoReq = await lerJson(req);
-  if (!corpoReq) {
-    return jsonErro(400, 'corpo_invalido', 'Envie um JSON com "titulo" e "descricao".');
+  let entrada: EntradaCriarApi;
+  let descricao: DocRico;
+  let imagens: ArquivoUpload[] = [];
+  if (ehMultipart(req.headers.get('content-type'))) {
+    const lido = await lerFormularioMultipart(req);
+    if (!lido.ok) return jsonErro(lido.status, lido.codigo, lido.erro);
+    const parse = await parsearCriarMultipart(lido.form);
+    if (!parse.ok) return jsonErro(parse.status, parse.codigo, parse.erro);
+    ({ entrada, imagens } = parse);
+    descricao = parse.doc;
+  } else {
+    const corpoReq = await lerJson(req);
+    if (!corpoReq) {
+      return jsonErro(400, 'corpo_invalido', 'Envie um JSON com "titulo" e "descricao".');
+    }
+    const parse = parsearEntradaCriar(corpoReq);
+    if (!parse.ok) return jsonErro(400, parse.codigo, parse.erro);
+    entrada = parse.entrada;
+    descricao = markdownParaDoc(entrada.descricao);
   }
-  const parse = parsearEntradaCriar(corpoReq);
-  if (!parse.ok) return jsonErro(400, parse.codigo, parse.erro);
-  const { entrada } = parse;
 
   // Cliente abre SÓ para si (specs/04 §2): um "solicitante" vindo dele seria
   // ignorado em silêncio pelo serviço — melhor recusar do que fingir que valeu.
@@ -129,12 +153,13 @@ export async function POST(req: Request): Promise<Response> {
       }
       cliente_id = solicitante.id;
     }
-    return criarChamado(
+    const criado = await criarChamado(
       em,
       atorDe(ctx),
       {
         titulo: entrada.titulo,
-        descricao: markdownParaDoc(entrada.descricao),
+        descricao,
+        imagens_inline: imagens.length > 0 ? imagens : undefined,
         natureza: entrada.natureza,
         prioridade: entrada.prioridade,
         sistema_alvo_id: entrada.sistema_alvo_id,
@@ -144,8 +169,12 @@ export async function POST(req: Request): Promise<Response> {
       },
       hooks,
     );
+    if (!criado.ok) return criado;
+    // Anexos da descrição (as imagens enviadas), na MESMA transação.
+    const anexos = await listarAnexosVisiveis(em, criado.id, []);
+    return { ...criado, anexos };
   });
 
   if (!r.ok) return respostaDeMotivo(r.motivo);
-  return jsonOk({ id: r.id, numero: Number(r.numero) }, 201);
+  return jsonOk({ id: r.id, numero: Number(r.numero), anexos: r.anexos.map(projetarAnexo) }, 201);
 }

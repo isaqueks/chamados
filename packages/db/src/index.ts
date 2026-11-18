@@ -137,6 +137,9 @@ export {
   htmlParaTexto,
   escaparHtml,
   PREFIXO_REF_ANEXO,
+  PREFIXO_IMAGEM_ENVIADA,
+  type ImagemEnviada,
+  type OpcoesValidacaoRich,
   type DocRico,
   type NoRichText,
   type MarcaRichText,
@@ -144,7 +147,7 @@ export {
   type ImagemColada,
   type MotivoRichText,
 } from './chamados/rich-text';
-export { markdownParaDoc } from './chamados/markdown';
+export { markdownParaDoc, type OpcoesMarkdownParaDoc } from './chamados/markdown';
 export { docParaMarkdown, type OpcoesMarkdown } from './chamados/markdown-saida';
 export {
   detectarTipo,

@@ -44,6 +44,7 @@ import {
   type MotivoRichText,
 } from './rich-text';
 import { auditorDe, type HooksChamado } from './auditoria';
+import type { ArquivoUpload } from './anexo-service';
 import { interpretarBusca, exprMatchFts } from './busca';
 
 /**
@@ -155,6 +156,13 @@ export interface EntradaCriarChamado {
    * `chamado_criado` (o webhook `criado` já carrega o campo no objeto `chamado`).
    */
   estimativa_custo?: EstimativaCusto | null;
+  /**
+   * Imagens enviadas como ARQUIVO para a descrição (API multipart — D-046),
+   * referenciadas no doc por `src = "anexo-enviado:<índice>"`. Mesmo pipeline das
+   * imagens coladas no portal (anexos `inline`); a abertura não tem anexos à
+   * parte — como no portal.
+   */
+  imagens_inline?: ArquivoUpload[];
 }
 
 export type MotivoCriar =
@@ -270,7 +278,9 @@ export async function criarChamado(
 
   // Pipeline de rich text — fase 1 (validação estrutural + extração de imagens),
   // sem efeitos colaterais: falha fecha antes de qualquer INSERT (specs/04 §5).
-  const val = validarDocRico(normalizarEntradaRich(entrada.descricao));
+  const val = validarDocRico(normalizarEntradaRich(entrada.descricao), {
+    imagensEnviadas: entrada.imagens_inline,
+  });
   if (!val.ok) return { ok: false, motivo: motivoRichParaCriar(val.motivo) };
 
   if (!ehValorEnum(Natureza, entrada.natureza)) return { ok: false, motivo: 'natureza_invalida' };

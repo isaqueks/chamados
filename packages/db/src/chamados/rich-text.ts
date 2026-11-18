@@ -53,6 +53,34 @@ export const LIMITE_CORPO_MAX = 50_000;
 /** Prefixo da referência interna de um anexo servido pela aplicação. */
 export const PREFIXO_REF_ANEXO = '/api/anexos/';
 
+/**
+ * Prefixo da `src` de uma imagem ENVIADA COMO ARQUIVO (API multipart, D-046):
+ * `anexo-enviado:<índice>` aponta para `OpcoesValidacaoRich.imagensEnviadas`. É
+ * uma referência só deste pipeline — quem a escreve é a camada que montou o doc
+ * a partir dos arquivos (nunca o texto do usuário, que passa por um callback
+ * que só devolve índices de arquivos realmente enviados). Sem a lista de
+ * imagens enviadas, uma `src` assim cai na regra geral e é DESCARTADA.
+ */
+export const PREFIXO_IMAGEM_ENVIADA = 'anexo-enviado:';
+
+/** Arquivo de imagem recebido à parte e referenciado no doc (D-046). */
+export interface ImagemEnviada {
+  nome_arquivo: string;
+  buffer: Buffer;
+}
+
+/** Opções da fase 1 do pipeline. */
+export interface OpcoesValidacaoRich {
+  /**
+   * Imagens recebidas como ARQUIVO (API multipart — D-046), referenciadas no doc
+   * por `src = "anexo-enviado:<índice>"`. Seguem as MESMAS regras das imagens
+   * coladas: magic bytes (`detectarImagemInline`), teto `MAX_IMAGENS_INLINE`
+   * (somado às coladas) e materialização como `Anexo` inline na fase 2 — só
+   * conservam o nome do arquivo. Cada índice pode aparecer uma vez.
+   */
+  imagensEnviadas?: readonly ImagemEnviada[];
+}
+
 export type MotivoRichText =
   'doc_invalido' | 'corpo_vazio' | 'corpo_muito_longo' | 'imagem_invalida' | 'imagens_demais';
 
@@ -90,6 +118,8 @@ const MARCAS_PERMITIDAS = new Set(['bold', 'italic', 'underline', 'strike', 'cod
 export interface ImagemColada {
   /** Referência ao nó (no doc filtrado) cujo `src` será reescrito na fase 2. */
   no: NoRichText;
+  /** Nome do arquivo (imagem ENVIADA — D-046); colada fica `imagem-colada.<ext>`. */
+  nome_arquivo?: string;
   buffer: Buffer;
   contentType: string;
   ext: string;
@@ -106,6 +136,9 @@ export interface DocValidado {
 interface CtxValidacao {
   imagens: ImagemColada[];
   erro: MotivoRichText | null;
+  enviadas: readonly ImagemEnviada[] | null;
+  /** Índices de `enviadas` já usados (cada imagem enviada entra uma vez). */
+  usadas: Set<number>;
 }
 
 function ehObjeto(v: unknown): v is Record<string, unknown> {
@@ -239,6 +272,12 @@ function tratarImagem(
     return no;
   }
 
+  // Imagem enviada como arquivo (D-046): só existe quando a camada que montou o
+  // doc entregou os arquivos; passa pela MESMA validação das coladas.
+  if (src.startsWith(PREFIXO_IMAGEM_ENVIADA) && ctx.enviadas) {
+    return tratarImagemEnviada(no, attrs, src.slice(PREFIXO_IMAGEM_ENVIADA.length), ctx);
+  }
+
   // Referência interna já materializada (reedição): mantém.
   if (src.startsWith(PREFIXO_REF_ANEXO)) {
     no.attrs = { ...(no.attrs ?? {}), src };
@@ -247,6 +286,43 @@ function tratarImagem(
 
   // Qualquer outra origem (http externo, javascript:, etc.) é descartada.
   return null;
+}
+
+/** Imagem enviada como arquivo (D-046): resolve o índice e valida como a colada. */
+function tratarImagemEnviada(
+  no: NoRichText,
+  attrs: Record<string, unknown>,
+  indiceBruto: string,
+  ctx: CtxValidacao,
+): NoRichText | null {
+  const indice = /^\d{1,4}$/.test(indiceBruto) ? Number(indiceBruto) : -1;
+  const arquivo = indice >= 0 ? ctx.enviadas?.[indice] : undefined;
+  if (!arquivo || ctx.usadas.has(indice)) {
+    ctx.erro = 'imagem_invalida';
+    return null;
+  }
+  if (ctx.imagens.length >= MAX_IMAGENS_INLINE) {
+    ctx.erro = 'imagens_demais';
+    return null;
+  }
+  const det = detectarImagemInline(arquivo.buffer);
+  if (!det.ok) {
+    ctx.erro = 'imagem_invalida';
+    return null;
+  }
+  ctx.usadas.add(indice);
+  no.attrs = { ...(no.attrs ?? {}), src: '' };
+  if (typeof attrs.alt === 'string') no.attrs.alt = attrs.alt;
+  ctx.imagens.push({
+    no,
+    nome_arquivo: arquivo.nome_arquivo,
+    buffer: arquivo.buffer,
+    contentType: det.tipo.contentType,
+    ext: det.tipo.ext,
+    checksum: createHash('sha256').update(arquivo.buffer).digest('hex'),
+    tamanho: arquivo.buffer.length,
+  });
+  return no;
 }
 
 /** Extrai o texto renderizado (para validar o limite de corpo — specs/04 §5). */
@@ -266,14 +342,25 @@ function extrairTexto(no: NoRichText): string {
  */
 export function validarDocRico(
   bruto: unknown,
+  opts: OpcoesValidacaoRich = {},
 ): { ok: true; validado: DocValidado } | { ok: false; motivo: MotivoRichText } {
   if (!ehObjeto(bruto) || bruto.type !== 'doc') return { ok: false, motivo: 'doc_invalido' };
 
-  const ctx: CtxValidacao = { imagens: [], erro: null };
+  const ctx: CtxValidacao = {
+    imagens: [],
+    erro: null,
+    enviadas: opts.imagensEnviadas ?? null,
+    usadas: new Set(),
+  };
   const conteudo = Array.isArray(bruto.content)
     ? bruto.content.map((n) => filtrarNo(n, ctx)).filter((n): n is NoRichText => n !== null)
     : [];
   if (ctx.erro) return { ok: false, motivo: ctx.erro };
+  // Toda imagem enviada precisa ter entrado no doc (D-046): uma que sumisse
+  // (nó descartado pela allowlist) viraria arquivo "enviado" que ninguém vê.
+  if (ctx.enviadas && ctx.usadas.size !== ctx.enviadas.length) {
+    return { ok: false, motivo: 'imagem_invalida' };
+  }
 
   const doc: DocRico = { type: 'doc', content: conteudo };
   const texto = conteudo.map(extrairTexto).join('').trim();
@@ -323,7 +410,7 @@ export async function materializarDoc(alvo: AlvoMaterializacao): Promise<Resulta
       tenant_id: tenantId,
       chamado_id: mensagemId ? null : chamadoId,
       mensagem_id: mensagemId ?? null,
-      nome_arquivo: `imagem-colada.${img.ext}`,
+      nome_arquivo: (img.nome_arquivo ?? `imagem-colada.${img.ext}`).slice(0, 255),
       content_type: img.contentType,
       tamanho_bytes: String(img.tamanho),
       storage_key: storageKey,

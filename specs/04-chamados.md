@@ -202,6 +202,7 @@ Formato e sanitização (detalhes de storage em `02-modelo-de-dados.md`; seguran
 - Recursos suportados: parágrafos, títulos, negrito/itálico/sublinhado/tachado, listas ordenadas/não ordenadas, citações, blocos de código com destaque, links, tabelas simples e **imagens inline**.
 - Imagens inline são anexos: fazem upload para o storage S3-compatível e o corpo referencia a URL/asset resultante (não base64 embutido no HTML).
 - **Pré-processamento de imagens coladas (obrigatório, ANTES da sanitização).** Ao colar uma imagem, o TipTap emite `<img src="data:...">` (base64 embutido). No servidor, antes de aplicar a allowlist: (1) extrair cada imagem `data:` do documento; (2) fazer upload como `Anexo` (`inline=true`, vinculado ao `tenant_id` e ao chamado/mensagem); (3) reescrever o `src` para a referência do `Anexo` (URL assinada); (4) só então aplicar a allowlist de sanitização, que remove `data:`. Sem esse passo, a sanitização descartaria o `data:` e a imagem colada sumiria silenciosamente. Ver `09-seguranca-lgpd.md` §6.
+- **Imagens enviadas como arquivo pela API (D-046).** Em `multipart/form-data` (specs/11 §4.3.1), PNG/JPEG/WEBP/GIF entram no corpo pelo MESMO pipeline das coladas: viram nós `image` com uma referência interna ao arquivo enviado (no lugar do marcador `![legenda](anexo:<nome>)` do markdown, ou ao fim do corpo), são validadas por magic bytes, contam no limite de 20 imagens e são materializadas como `Anexo` `inline=true` — guardando o nome do arquivo em vez de `imagem-colada.<ext>`. O corpo pode ficar sem texto quando há imagem (como uma imagem colada sozinha no editor).
 - Sanitização server-side obrigatória na escrita (remoção de scripts, handlers `on*`, `javascript:` URIs, iframes). Ver `09-seguranca-lgpd.md`.
 
 Limites:
@@ -231,6 +232,7 @@ Limites:
 - Executáveis e tipos ativos são bloqueados por allowlist. Ver `09-seguranca-lgpd.md`.
 - Upload direto para storage S3-compatível (MinIO em dev; S3/R2 em prod) via URL pré-assinada; o banco guarda metadados e chave do objeto.
 - Acesso a anexos respeita a visibilidade da mensagem: anexo de nota `interna` nunca é servido ao cliente. Downloads passam por URL pré-assinada de curta duração emitida após checagem de permissão.
+- **Pela API/MCP (D-046):** `POST /api/v1/chamados/{ref}/mensagens` aceita `multipart/form-data` com até 20 arquivos (requisição até 32 MB) e as mesmas regras desta seção (specs/11 §4.3.1); imagens aparecem na conversa (§5), os demais tipos ficam como anexos à parte. Na abertura pela API só imagens, na descrição — como no portal. Anexar exige `anexo · enviar`: o cliente anexa só nos chamados que solicitou.
 
 > DECISÃO PENDENTE: lista definitiva de tipos permitidos, tamanho máximo por arquivo e política de quota (por chamado, por tenant, por período). Números acima são propostas iniciais.
 

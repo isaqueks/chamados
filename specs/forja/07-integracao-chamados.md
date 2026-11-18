@@ -316,7 +316,7 @@ Regras:
   - com o selo `altera_ui` (FJ-026): `Prints antes/depois em <n> telas disponíveis na Forja (execução <id>)` com a lista das telas e o `o_que_mudou_para_quem_usa` de cada uma; sem prints, a linha diz `Alteração de interface sem prints: <motivo>` e, se houve, "aprovado sem prints";
   - rodapé `[forja:<execucao_id>:conclusao]`.
 
-  Limite de **50.000 caracteres de texto** [V: 02 §1.5]: acima disso, o relatório é truncado com "relatório completo na Forja, execução <id>". Imagens em markdown viram texto alternativo [V], então os prints **ficam na Forja** (`retencao.evidencias_dias` = 90 dias após `concluido`, `02-modelo-de-dados.md` §9; não seguem `entrada/`) e publicá-los no chamado depende da L7 (§11.5).
+  Limite de **50.000 caracteres de texto** [V: 02 §1.5]: acima disso, o relatório é truncado com "relatório completo na Forja, execução <id>". Imagens em markdown viram texto alternativo [V], então os prints **ficam na Forja** (`retencao.evidencias_dias` = 90 dias após `concluido`, `02-modelo-de-dados.md` §9; não seguem `entrada/`) e publicá-los no chamado depende de a Forja adotar a L7 (§11.5 — já entregue no Chamados pela D-046).
 
 - **Normalização do corpo** (passos 1 e 2): o corpo volta do servidor convertido markdown → rich text → markdown. Antes de comparar, a Forja normaliza:
   - forma NFC;
@@ -418,9 +418,11 @@ O MCP do Chamados **não** ganha ferramentas de escrita para L1/L4: os agentes n
 | Spec 11        | §4 (tabela), nova §4.9, §5 (linha "Atribuir"), §8 (sai "atribuição" do fora de escopo)                                                                                                                                                                                                                                                                                                  |
 | Smoke          | `operador_id` de um usuário do tenant B, com token de A → `400` (a busca do usuário roda sob RLS e não o encontra); `{ref}` de B → `404`; `cliente` → `403`; `null` desatribui; `agente_ia` não tem token (não se aplica)                                                                                                                                                               |
 
-### 11.5 L7 — anexos por multipart (pendente)
+### 11.5 L7 — anexos por multipart (entregue no Chamados — D-046)
 
-> DECISÃO PENDENTE: aceitar `multipart/form-data` em `POST …/mensagens` (`visibilidade`, `corpo`, `arquivos[]` → `criarMensagem({anexos})`, que já valida magic bytes, a quantidade máxima e 25 MB [V: 02 §6 L7]) para anexar o PDF do relatório e prints do e2e. Isso reverte o "sem upload" de D-035/spec 11 §8 e exige **ADR próprio**, fora do D-036. Até lá, o relatório entra como markdown na nota interna (≤ 50.000 caracteres, sem imagens).
+> DECIDIDO (D-046, 2026-11-18): `POST …/mensagens` aceita `multipart/form-data` com `visibilidade`, `corpo` e `arquivos` (0..20; também `arquivos[]`) → `criarMensagem`, com a mesma validação da UI (magic bytes, allowlist, 25 MB por arquivo, 32 MB por requisição). Contrato em `specs/11-api-mcp.md` §4.3.1. Diferenças em relação ao desenho original: **imagens aparecem na conversa** (anexos `inline`) no lugar de um marcador `![legenda](anexo:<nome do arquivo>)` do corpo, ou ao fim dele — o par antes/depois por tela fica intercalado com o texto da nota; PDF e demais tipos viram anexos comuns. Resposta `201 { id, anexos }`. Erros: `415 tipo_arquivo_nao_permitido`, `413 arquivo_muito_grande`/`requisicao_muito_grande`, `400 arquivos_demais` — nada é publicado. No `@chamados/cliente-api`: `publicarMensagemComArquivos(ref, { visibilidade, corpo, arquivos: [{ nome, conteudo }] })` (prazo de anexo, relogin único).
+>
+> **Trabalho futuro da Forja** (FORA-16): passar a anexar os prints antes/depois e o PDF do relatório à nota **interna** de conclusão com esse método. Até a Forja adotá-lo, o relatório segue como markdown na nota interna (≤ 50.000 caracteres, sem imagens). Servidor anterior à D-046 responde `400 corpo_invalido` ao multipart — a Forja deve cair no markdown puro nesse caso.
 
 **Prioridade: logo após o MVP** (FJ-026, 2026-10-02). Deixou de ser "só se houver demanda": os prints antes/depois de alteração de interface já existem na Forja desde o M4, e a L7 é o que permite anexá-los à nota interna de conclusão (o par de PNGs por tela, como anexos de nota `interna`, nunca na pública). O conteúdo do contrato acima não muda; muda a ordem em `08-roadmap.md`.
 

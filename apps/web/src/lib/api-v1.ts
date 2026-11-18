@@ -51,7 +51,16 @@ export type CodigoErro =
   /** D-043: custo final só com o chamado em `resolvido` (ou no ato de resolver). */
   | 'custo_fora_da_resolucao'
   | 'conflito'
-  | 'muitas_tentativas';
+  | 'muitas_tentativas'
+  // --- Upload por multipart (D-046, specs/11 §4.3/§6) ---------------------
+  /** 415: arquivo fora da allowlist (validado por magic bytes — specs/09 §5). */
+  | 'tipo_arquivo_nao_permitido'
+  /** 413: um arquivo acima de 25 MB. */
+  | 'arquivo_muito_grande'
+  /** 400: mais arquivos (ou imagens) do que o limite por mensagem. */
+  | 'arquivos_demais'
+  /** 413: a requisição inteira acima do teto (32 MB). */
+  | 'requisicao_muito_grande';
 
 const SEM_CACHE = { 'cache-control': 'no-store' } as const;
 
@@ -288,8 +297,18 @@ export function respostaDeMotivo(motivo: MotivoDominio): Response {
       return jsonErro(
         400,
         'corpo_invalido',
-        'Imagens embutidas na descrição são inválidas ou excedem o limite.',
+        'Imagens embutidas no texto são inválidas ou excedem o limite (máximo 20).',
       );
+    // --- Anexos de mensagem (D-046) — a rota pré-valida com o MESMO
+    // `detectarTipo` e devolve o erro preciso; estes são a rede de segurança.
+    case 'anexo_invalido':
+      return jsonErro(
+        415,
+        'tipo_arquivo_nao_permitido',
+        'Um dos arquivos tem tipo não permitido ou conteúdo inválido.',
+      );
+    case 'muitos_anexos':
+      return jsonErro(400, 'arquivos_demais', 'Arquivos demais para uma mensagem (máximo 20).');
     case 'natureza_invalida':
       return jsonErro(
         400,

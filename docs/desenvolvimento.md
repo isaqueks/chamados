@@ -355,17 +355,17 @@ opaco de sessão do cookie (server-side, revogável). Todas as demais rotas exig
 `Authorization: Bearer <token>`; o **cookie do navegador não autentica a API**
 (Bearer-only, anti-CSRF — specs/11 §1.4).
 
-| Método   | Rota                               | O que faz                                                     |
-| -------- | ---------------------------------- | ------------------------------------------------------------- |
-| `POST`   | `/api/v1/sessao`                   | login → token (rate-limited como a tela)                      |
-| `DELETE` | `/api/v1/sessao`                   | revoga a sessão                                               |
-| `GET`    | `/api/v1/chamados`                 | lista/filtra (status, natureza, prioridade…)                  |
-| `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline + anexos; `?formato=texto\|markdown\|html` |
-| `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`                       |
-| `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                                          |
-| `POST`   | `/api/v1/chamados`                 | abre um chamado (D-032; markdown, sem anexos)                 |
-| `GET`    | `/api/v1/sistemas-alvo`            | sistemas-alvo ativos (p/ escolher o alvo)                     |
-| `GET`    | `/api/v1/anexos/{id}`              | bytes de um anexo (imagem/arquivo) — D-035                    |
+| Método   | Rota                               | O que faz                                                                       |
+| -------- | ---------------------------------- | ------------------------------------------------------------------------------- |
+| `POST`   | `/api/v1/sessao`                   | login → token (rate-limited como a tela)                                        |
+| `DELETE` | `/api/v1/sessao`                   | revoga a sessão                                                                 |
+| `GET`    | `/api/v1/chamados`                 | lista/filtra (status, natureza, prioridade…)                                    |
+| `GET`    | `/api/v1/chamados/{ref}`           | chamado + timeline + anexos; `?formato=texto\|markdown\|html`                   |
+| `POST`   | `/api/v1/chamados/{ref}/mensagens` | publica mensagem `publica` ou `interna`; JSON ou multipart com arquivos (D-046) |
+| `POST`   | `/api/v1/chamados/{ref}/status`    | transiciona o status                                                            |
+| `POST`   | `/api/v1/chamados`                 | abre um chamado (D-032; markdown; imagens por multipart — D-046)                |
+| `GET`    | `/api/v1/sistemas-alvo`            | sistemas-alvo ativos (p/ escolher o alvo)                                       |
+| `GET`    | `/api/v1/anexos/{id}`              | bytes de um anexo (imagem/arquivo) — D-035                                      |
 
 O escopo é sempre o do **papel do usuário autenticado**: operador/admin leem
 notas internas e complexidade; cliente vê só os próprios chamados e só mensagens
@@ -399,6 +399,7 @@ mesma RLS.
 | `CHAMADOS_TOKEN`               | uma das duas | Token de sessão já aberta — usado sem login; sem senha, não reloga        |
 | `CHAMADOS_TENANT`              | não          | Slug do tenant — só quando o host não o resolve (dev em `localhost:3000`) |
 | `CHAMADOS_MCP_SOMENTE_LEITURA` | não          | `true` registra apenas as ferramentas de leitura                          |
+| `CHAMADOS_MCP_DIR_ANEXOS`      | não          | Diretório(s) de onde o MCP pode **enviar** arquivos (`:`; `;` no Windows) |
 
 `CHAMADOS_TOKEN` é como a Forja (§3.12) entrega este MCP, em modo somente leitura,
 aos agentes que planejam e implementam: repassa o token da própria conexão em vez
@@ -417,8 +418,49 @@ preguiçoso (só na primeira ferramenta usada) e a sessão se renova sozinha ao
 expirar. Erros da API voltam ao modelo com o código estável do contrato (ex.:
 `transicao_invalida`), que ele pode corrigir sozinho.
 
+**Enviando arquivos (D-046, MCP 0.4.0).** `chamado_publicar_mensagem` aceita
+`arquivos`: caminhos **locais da máquina onde o MCP roda** (absolutos ou `~/…`),
+cada um como string ou `{caminho, nome}`. O MCP lê os arquivos e os envia em
+multipart (`POST …/mensagens`, specs/11 §4.3.1). **Imagens** (PNG/JPEG/WEBP/GIF)
+aparecem **na conversa** — no lugar de um marcador `![legenda](anexo:<nome do
+arquivo>)` escrito no corpo, ou ao fim dele; PDF, DOCX, XLSX, ZIP, TXT, LOG, CSV
+e MD viram anexos comuns. Até 25 MB por arquivo, 20 por mensagem, ~32 MB no
+total; SVG e executáveis são recusados pelo servidor (validação pelo conteúdo).
+`chamado_criar` aceita o mesmo parâmetro, só com imagens (entram na descrição).
+Exemplo do que o assistente envia:
+
+```json
+{
+  "ref": "42",
+  "visibilidade": "interna",
+  "corpo": "Antes:\n\n![antes](anexo:antes.png)\n\nDepois:\n\n![depois](anexo:depois.png)",
+  "arquivos": ["~/prints/antes.png", "~/prints/depois.png", "/tmp/relatorio.pdf"]
+}
+```
+
+**Segurança do envio (specs/11 §7.3).** Como o modelo lê o texto dos chamados
+(dado não confiável), um chamado pode tentar induzi-lo a "anexar" um arquivo
+sensível. O MCP **sempre recusa** chaves e credenciais óbvias (`~/.ssh`,
+`~/.aws`, `~/.gnupg`, keyrings, `~/.claude`, `.claude.json`, `.mcp.json`,
+`.env*`, `id_*`, `*.pem`, `*.key`…), também quando o caminho é um symlink para
+elas, e não deixa o `nome` de exibição trocar a extensão. Para restringir o envio
+a uma pasta (recomendado quando o MCP roda com acesso amplo ao disco), defina
+`CHAMADOS_MCP_DIR_ANEXOS` — ex.: `"CHAMADOS_MCP_DIR_ANEXOS": "/home/ana/prints:/tmp/forja"`;
+fora dali, nada sai. Lembre que o que vai numa mensagem `publica` chega ao
+cliente final.
+
+Pela API direto (sem MCP):
+
+```bash
+curl -X POST https://suporte.suaempresa.com/api/v1/chamados/42/mensagens \
+  -H "Authorization: Bearer $TOKEN" \
+  -F visibilidade=publica --form-string 'corpo=Segue o print da correção.' \
+  -F arquivos=@tela.png -F arquivos=@relatorio.pdf
+```
+
 Para validar a API + o cliente MCP de ponta a ponta (login, Bearer-only,
-filtros, fronteira cliente × nota interna, publicação, transição, criação e anexos):
+filtros, fronteira cliente × nota interna, publicação, transição, criação, anexos
+e envio de arquivos por multipart):
 
 ```bash
 npm run dev:web        # em outro terminal (a aplicação precisa estar no ar)

@@ -99,6 +99,16 @@ describe('config do MCP', () => {
     );
   });
 
+  it('D-046: CHAMADOS_MCP_DIR_ANEXOS é opcional; caminho relativo vira ErroConfig', () => {
+    expect(carregarConfig(base).dirsAnexos).toBeNull();
+    expect(carregarConfig({ ...base, CHAMADOS_MCP_DIR_ANEXOS: '/tmp/prints' }).dirsAnexos).toEqual([
+      '/tmp/prints',
+    ]);
+    expect(() => carregarConfig({ ...base, CHAMADOS_MCP_DIR_ANEXOS: 'prints' })).toThrow(
+      /CHAMADOS_MCP_DIR_ANEXOS/,
+    );
+  });
+
   it('configCliente entrega a senha só pela função (nunca como campo)', async () => {
     const cc = configCliente(carregarConfig({ ...base, CHAMADOS_TENANT: 'acme' }));
     expect(cc).toMatchObject({

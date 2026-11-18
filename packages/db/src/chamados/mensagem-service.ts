@@ -47,6 +47,13 @@ export interface EntradaMensagem {
   /** Arquivos anexados à parte (não-inline). */
   anexos?: ArquivoUpload[];
   /**
+   * Imagens enviadas como ARQUIVO para aparecer NA conversa (API multipart —
+   * D-046), referenciadas no `corpo` (doc) por `src = "anexo-enviado:<índice>"`.
+   * Viram anexos `inline` pelo MESMO pipeline das imagens coladas no editor
+   * (`validarDocRico` → `materializarDoc`), conservando o nome do arquivo.
+   */
+  imagens_inline?: ArquivoUpload[];
+  /**
    * Referência à `ExecucaoIA` que originou a mensagem (M7 — mensagens/notas do
    * `agente_ia`). Campo INTERNO/CONFIÁVEL: só o worker o define; NUNCA vem de
    * entrada do cliente (a camada web constrói a `EntradaMensagem` sem ele).
@@ -148,8 +155,25 @@ export async function criarMensagem(
   if (ehTerminal(chamado.status)) return { ok: false, motivo: 'estado_terminal' };
 
   // Pipeline de rich text — fase 1 (validação/extração, sem efeitos colaterais).
-  const val = validarDocRico(normalizarEntradaRich(entrada.corpo));
+  const val = validarDocRico(normalizarEntradaRich(entrada.corpo), {
+    imagensEnviadas: entrada.imagens_inline,
+  });
   if (!val.ok) return { ok: false, motivo: motivoRich(val.motivo) };
+
+  // Anexar (arquivo à parte ou imagem no corpo) é `anexo · enviar` — hoje com a
+  // mesma regra de `mensagem_publica · escrever` (cliente só nos PRÓPRIOS
+  // chamados, D-037), mas checado explicitamente: a matriz é a fonte da verdade
+  // e uma divergência futura não pode abrir upload por tabela (D-046).
+  const temAnexo = (entrada.anexos?.length ?? 0) > 0 || val.validado.imagens.length > 0;
+  if (
+    temAnexo &&
+    !autorizar(ator, 'anexo', 'enviar', {
+      cliente_id: chamado.cliente_id,
+      tenant_id: chamado.tenant_id,
+    })
+  ) {
+    return { ok: false, motivo: 'sem_permissao' };
+  }
 
   // Pré-valida anexos (magic bytes) ANTES de qualquer INSERT (falha fecha limpo).
   const anexosValidados: Array<{ nome_arquivo: string; buffer: Buffer; tipo: TipoDetectado }> = [];

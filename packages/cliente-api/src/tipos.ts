@@ -210,11 +210,37 @@ export interface EntradaCriarChamado {
 export interface RespostaCriarChamado {
   id: string;
   numero: number;
+  /** D-046: anexos da descrição (as imagens enviadas). Ausente em servidor anterior. */
+  anexos?: AnexoApi[];
 }
 
 /** `POST …/mensagens` → 201. */
 export interface RespostaMensagem {
   id: string;
+  /** D-046: anexos criados (imagens `inline: true` + arquivos). Ausente em servidor anterior. */
+  anexos?: AnexoApi[];
+}
+
+/**
+ * Arquivo a enviar por multipart (D-046). `nome` é o nome de exibição (o
+ * servidor fica só com o basename); o TIPO é decidido pelo servidor pelo
+ * conteúdo (magic bytes) — `contentType` é só informativo.
+ */
+export interface ArquivoParaEnvio {
+  nome: string;
+  conteudo: Uint8Array;
+  contentType?: string;
+}
+
+/**
+ * `POST …/mensagens` em multipart (D-046). Imagens aparecem NA conversa — no
+ * marcador `![legenda](anexo:<nome>)` do `corpo` ou ao fim dele; os demais
+ * tipos viram anexos. `corpo` pode ser vazio só se houver ao menos uma imagem.
+ */
+export interface EntradaMensagemComArquivos {
+  visibilidade: VisibilidadeMensagem;
+  corpo?: string;
+  arquivos: ArquivoParaEnvio[];
 }
 
 /** `POST …/status` → 200. */

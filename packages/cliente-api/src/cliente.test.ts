@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ClienteChamados,
+  montarFormulario,
   nomeDoContentDisposition,
   queryDeFiltros,
   type ConfigCliente,
@@ -659,5 +660,155 @@ describe('anexos — baixarAnexo / requisitarBytes / nomeDoContentDisposition', 
   it('nomeDoContentDisposition cai no filename ASCII e tolera ausência', () => {
     expect(nomeDoContentDisposition('attachment; filename="a.pdf"')).toBe('a.pdf');
     expect(nomeDoContentDisposition(null)).toBeNull();
+  });
+});
+
+describe('upload multipart (D-046) — publicarMensagemComArquivos / criarChamadoComImagens', () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
+  const PDF = Buffer.from('%PDF-1.4 relatório');
+
+  const ehUpload = (c: Chamada): boolean => c.init?.body instanceof FormData;
+  const form = (c: Chamada): FormData => c.init?.body as FormData;
+
+  it('montarFormulario: campos vazios/undefined não viajam; arquivos como `arquivos`', async () => {
+    const fd = montarFormulario({ visibilidade: 'interna', corpo: '', x: undefined, n: 2 }, [
+      { nome: 'tela.png', conteudo: PNG, contentType: 'image/png' },
+      { nome: 'r.pdf', conteudo: PDF },
+    ]);
+    expect([...fd.keys()]).toEqual(['visibilidade', 'n', 'arquivos', 'arquivos']);
+    const [a, b] = fd.getAll('arquivos') as File[];
+    expect(a!.name).toBe('tela.png');
+    expect(a!.type).toBe('image/png');
+    expect(new Uint8Array(await a!.arrayBuffer())).toEqual(PNG);
+    expect(b!.name).toBe('r.pdf');
+    expect(Buffer.from(await b!.arrayBuffer()).toString()).toBe('%PDF-1.4 relatório');
+  });
+
+  it('envia multipart (sem content-type manual — o fetch põe o boundary) com Bearer', async () => {
+    const anexos = [
+      {
+        id: 'a1',
+        nome_arquivo: 'tela.png',
+        content_type: 'image/png',
+        tamanho_bytes: 10,
+        inline: true,
+        url: '/api/v1/anexos/a1',
+      },
+    ];
+    const { impl, chamadas } = fakeFetch(() => json({ id: 'm1', anexos }, 201));
+    const cliente = new ClienteChamados(CFG, {
+      fetch: impl,
+      armazenamento: new ArmazenamentoEspiao('tok'),
+    });
+
+    const r = await cliente.publicarMensagemComArquivos('#12', {
+      visibilidade: 'publica',
+      corpo: 'Veja ![antes](anexo:tela.png)',
+      arquivos: [{ nome: 'tela.png', conteudo: PNG }],
+    });
+
+    expect(r).toEqual({ id: 'm1', anexos });
+    const c = chamadas[0]!;
+    expect(c.init?.method).toBe('POST');
+    expect(new URL(c.url).pathname).toBe('/api/v1/chamados/%2312/mensagens');
+    const headers = c.init?.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer tok');
+    expect(headers['content-type']).toBeUndefined();
+    expect(ehUpload(c)).toBe(true);
+    expect(form(c).get('visibilidade')).toBe('publica');
+    expect(form(c).get('corpo')).toBe('Veja ![antes](anexo:tela.png)');
+    expect((form(c).get('arquivos') as File).name).toBe('tela.png');
+  });
+
+  it('401 → reloga UMA vez e reenvia o MESMO formulário com os arquivos', async () => {
+    const arm = new ArmazenamentoEspiao('velho');
+    const { impl, chamadas } = fakeFetch((c) => {
+      if (ehLogin(c)) return json(SESSAO_OK);
+      return auth(c) === 'Bearer velho'
+        ? json({ erro: 'expirou', codigo: 'nao_autenticado' }, 401)
+        : json({ id: 'm2', anexos: [] }, 201);
+    });
+    const cliente = new ClienteChamados(CFG, { fetch: impl, armazenamento: arm });
+
+    const r = await cliente.publicarMensagemComArquivos('u1', {
+      visibilidade: 'interna',
+      arquivos: [{ nome: 'r.pdf', conteudo: PDF }],
+      corpo: 'Relatório',
+    });
+    expect(r.id).toBe('m2');
+    expect(logins(chamadas)).toHaveLength(1);
+    const uploads = chamadas.filter(ehUpload);
+    expect(uploads).toHaveLength(2);
+    expect(auth(uploads[1]!)).toBe('Bearer tok-1');
+    expect((form(uploads[1]!).get('arquivos') as File).size).toBe(PDF.length);
+  });
+
+  it('usa o prazo de ANEXO (não o de JSON) no upload', async () => {
+    const lento: FetchImpl = (_url, init) =>
+      new Promise((res, rej) => {
+        const t = setTimeout(() => res(json({ id: 'm3', anexos: [] }, 201)), 60);
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      });
+    const cliente = new ClienteChamados(
+      { ...CFG, timeoutMs: 10, timeoutAnexoMs: 2_000 },
+      { fetch: lento, armazenamento: new ArmazenamentoEspiao('tok') },
+    );
+    await expect(
+      cliente.publicarMensagemComArquivos('u1', {
+        visibilidade: 'interna',
+        corpo: 'x',
+        arquivos: [{ nome: 'r.pdf', conteudo: PDF }],
+      }),
+    ).resolves.toMatchObject({ id: 'm3' });
+    // O mesmo servidor lento estoura o prazo JSON numa escrita comum.
+    await expect(
+      cliente.publicarMensagem('u1', { visibilidade: 'interna', corpo: 'x' }),
+    ).rejects.toMatchObject({ codigo: 'timeout' });
+  });
+
+  it('recusa do servidor vira ErroApi com o código estável (nada a repetir)', async () => {
+    const { impl, chamadas } = fakeFetch(() =>
+      json({ erro: 'tipo', codigo: 'tipo_arquivo_nao_permitido' }, 415),
+    );
+    const cliente = new ClienteChamados(CFG, {
+      fetch: impl,
+      armazenamento: new ArmazenamentoEspiao('tok'),
+    });
+    const erro = (await cliente
+      .publicarMensagemComArquivos('u1', {
+        visibilidade: 'publica',
+        corpo: 'x',
+        arquivos: [{ nome: 'a.svg', conteudo: Buffer.from('<svg/>') }],
+      })
+      .catch((e: unknown) => e)) as ErroApi;
+    expect(erro).toBeInstanceOf(ErroApi);
+    expect([erro.status, erro.codigo]).toEqual([415, 'tipo_arquivo_nao_permitido']);
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it('criarChamadoComImagens: campos do JSON como partes de texto + imagens', async () => {
+    const { impl, chamadas } = fakeFetch(() => json({ id: 'c1', numero: 7, anexos: [] }, 201));
+    const cliente = new ClienteChamados(CFG, {
+      fetch: impl,
+      armazenamento: new ArmazenamentoEspiao('tok'),
+    });
+    const r = await cliente.criarChamadoComImagens(
+      { titulo: 'Tela', descricao: 'Veja', solicitante_email: 'ana@x.com' },
+      [{ nome: 'p.png', conteudo: PNG }],
+    );
+    expect(r.numero).toBe(7);
+    const c = chamadas[0]!;
+    expect(new URL(c.url).pathname).toBe('/api/v1/chamados');
+    expect(
+      Object.fromEntries([...form(c).entries()].filter(([, v]) => typeof v === 'string')),
+    ).toEqual({
+      titulo: 'Tela',
+      descricao: 'Veja',
+      solicitante_email: 'ana@x.com',
+    });
+    expect(form(c).getAll('arquivos')).toHaveLength(1);
   });
 });
