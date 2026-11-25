@@ -178,15 +178,23 @@ Leitura: **Meta Cloud API** como implementação de referência do `WhatsAppAdap
 
 ---
 
-## 5. Templates e branding por tenant
+## 5. Templates e identidade visual
 
-Cada evento notificável tem um **template por canal**, renderizado com o branding do tenant.
+Cada evento notificável tem um **template por canal**.
 
-- **Estrutura**: `template = f(eventoTipo, canal, locale)`. Corpo em sintaxe de templating (ex.: Handlebars/MJML para e-mail HTML responsivo).
-- **Variáveis de branding** injetadas em runtime a partir do tenant (assets e config definidos em `07-multitenancy-whitelabel.md`): `logoUrl`, `corPrimaria`, `nomeExibicao`, `enderecoRodape`, `urlPortal`.
+- **Estrutura**: `template = f(eventoTipo, canal, locale)`. Implementado em TypeScript puro (`apps/worker/src/notificacoes/templates.ts` + `email-layout.ts`), HTML de e-mail com tabelas e estilos inline (sem Handlebars/MJML).
+- **Layout único do e-mail (D-047)** — o visual da "Cobrança de Serviços" da consultoria, **igual para todos os tenants**:
+  - **Logo** "Isaque Kanitz Schluter — Consultoria em Tecnologia da Informação" no topo, embutido como **imagem inline por Content-ID** (`cid:logo@chamados`, `apps/worker/assets/email/logo.png`, 600 px exibidos a 300 px) — não por URL (clientes escondem imagens remotas por padrão) nem `data:` URI (o Gmail bloqueia). O `NotificationPayload` carrega `imagensInline`; o adapter SMTP as envia como anexos `inline` (multipart/related).
+  - **Cabeçalho:** título do documento por evento (ex.: "Chamado recebido", "Nova mensagem", "Chamado resolvido", "Convite de acesso") à esquerda; metadados à direita (**Chamado** `#número` e **Data** de emissão em dd/mm/aaaa, horário de Brasília); régua azul-marinho de 2 px.
+  - **Corpo em seções** separadas por linhas cinza finas: a frase do evento; a mensagem pública ou o motivo da contestação (citação com barra marinho); o título do chamado com tópicos (status, prioridade, estimativa e custo final quando houver).
+  - **Linha de destaque** (o "Total" do PDF: rótulo à esquerda, valor grande marinho à direita) por evento: custo final + prazo para aprovar (`resolvido`), faixa da estimativa (`estimativa_custo`), custo final (`custo_final`), novo status/prioridade (mudanças), status atual (demais); ausente em `mensagem_publica`/`contestado`.
+  - **Botão** marinho: "Aprovar ou contestar" (`resolvido`, cliente), "Responder no portal" (`mensagem_publica`, cliente), "Ver chamado" (demais); transacionais imprimem também a URL para copiar.
+  - **Rodapé do emitente:** "Isaque Schluter Consultoria em TI · CNPJ 51.943.042/0001-05" à esquerda; "Isaque Schluter · e-mail · telefone" à direita (também no texto/plain). Nota fora da folha: "Você recebeu este e-mail porque acompanha chamados em {nome do tenant}…".
+  - Paleta: marinho `#0b4189`, títulos `#18212b`, texto `#3a4550`, divisórias `#d7dce2`, fundo `#eef0f3`; fonte Arial/Helvetica. No celular (≤ 600 px) as colunas do cabeçalho e do rodapé empilham.
+- **Branding do tenant no e-mail:** só o remetente (`email_remetente_*`, `07` §3.1) e o nome na nota de rodapé. `cor_primaria` e os logos do tenant **não** entram (D-047) — mesma linha dos PDFs da IA (D-027).
 - **Variáveis de contexto** por evento: `chamado.numero`, `chamado.titulo`, `chamado.status`, `chamado.prioridade`, `mensagem.autor`, `mensagem.trecho`, `linkChamado` (deep link para o portal do cliente ou painel do operador).
 - **Localização**: default `pt_BR`; estrutura preparada para outros locales (chave por `locale`).
-- **Camadas de override**: template base da plataforma → override por tenant (opcional). Tenant sem override herda o base com seu branding aplicado.
+- **Camadas de override**: não há override por tenant (D-047); o template base é único.
 - **Sanitização**: qualquer conteúdo vindo de mensagem de usuário (rich text) é **escapado/limpo** antes de entrar no HTML do e-mail (anti-XSS; ver `09-seguranca-lgpd.md`). Notas com `visibilidade=interna` **nunca** entram em notificação destinada a `cliente`.
 - **Notas internas em notificações**: para destinatários `operador`/`admin`/`agente_ia`, mensagens `interna` podem ser resumidas; para `cliente`, apenas conteúdo `publica`.
 

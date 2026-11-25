@@ -81,7 +81,7 @@ Todo tenant novo recebe: usuario `agente_ia`, Categoria geral, branding default,
 
 ## 3. Branding (whitelabel)
 
-Cada tenant customiza a aparência e a identidade das comunicações. O branding é aplicado no **portal do cliente**, no **painel operador/admin** e nos **templates de notificação**.
+Cada tenant customiza a aparência e a identidade das comunicações. O branding é aplicado no **portal do cliente** e no **painel operador/admin**. Nos **e-mails**, o tenant controla só o remetente (`email_remetente_nome`/`email_remetente_endereco`) e o nome que aparece na nota de rodapé: o layout, o logo, as cores e o rodapé são a identidade **fixa** da plataforma (D-047, `06-notificacoes.md` §5) — `cor_primaria` e os logos do tenant não entram no e-mail.
 
 ### 3.1. Elementos de branding
 
@@ -92,7 +92,7 @@ Cada tenant customiza a aparência e a identidade das comunicações. O branding
 | Favicon           | `favicon_url`              | Aba do navegador.                                                 | Placeholder.               |
 | Cor primária      | `cor_primaria`             | Botões, links, destaques (hex).                                   | Neutra da plataforma.      |
 | Cor de destaque   | `cor_secundaria`           | Acentos secundários (hex).                                        | Neutra.                    |
-| Nome de exibição  | `nome_exibicao`            | Título, e-mails, rodapés.                                         | —                          |
+| Nome de exibição  | `nome_exibicao`            | Título, rodapés; nos e-mails, só na nota de rodapé (D-047).       | —                          |
 | Nome do remetente | `email_remetente_nome`     | Campo _From_ dos e-mails.                                         | Nome de exibição.          |
 | E-mail remetente  | `email_remetente_endereco` | Endereço _From_.                                                  | `no-reply@chamados.app`.   |
 | Domínio próprio   | `dominio_proprio`          | Ver seções 3.3 e 3.4. Coluna canônica em `02-modelo-de-dados.md`. | `slug.chamados.app`.       |

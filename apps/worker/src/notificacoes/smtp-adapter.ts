@@ -54,6 +54,13 @@ export class SmtpAdapter implements NotificationGateway {
         subject: payload.assunto ?? '(sem assunto)',
         text: payload.corpoTexto,
         html: payload.corpoHtml,
+        attachments: payload.imagensInline?.map((img) => ({
+          cid: img.cid,
+          filename: img.nomeArquivo,
+          contentType: img.contentType,
+          content: img.conteudo,
+          contentDisposition: 'inline' as const,
+        })),
       })) as { messageId?: string };
       return { status: 'entregue', idExterno: info?.messageId };
     } catch (err) {
