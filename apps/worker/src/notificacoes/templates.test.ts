@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   montarEmailChamado,
+  montarEmailAlertaWebhook,
+  montarEmailTransacional,
   montarPayloadWebhook,
   estimativaParaPayload,
   type DadosEmailChamado,
@@ -12,7 +14,7 @@ import {
  */
 const base: Omit<DadosEmailChamado, 'evento'> = {
   tenantNome: 'Acme',
-  corPrimaria: '#2563eb',
+  emitidoEm: new Date('2026-11-25T12:00:00Z'),
   numero: '42',
   titulo: 'Erro ao emitir nota',
   status: 'resolvido',
@@ -213,7 +215,10 @@ describe('custo no e-mail (D-043)', () => {
       custoFinal: 1234.5,
     });
     expect(e.texto).toContain('Custo final: R$ 1.234,50');
-    expect(e.html).toContain('Custo final: R$ 1.234,50');
+    // HTML: o custo final vira a linha de destaque (estilo "Total" — D-047).
+    expect(e.html).toContain('Custo final');
+    expect(e.html).toContain('R$ 1.234,50');
+    expect(e.html).toContain('Prazo para aprovar');
     expect(e.texto).toContain('aprovar ou contestar');
   });
 
@@ -302,5 +307,89 @@ describe('custo no payload do webhook (D-043)', () => {
     });
     expect(p.chamado.custo_final).toBe(99.9);
     expect(p.mudanca).toBeNull();
+  });
+});
+
+/** Layout único dos e-mails (D-047): logo inline, cabeçalho, rodapé do emitente. */
+describe('layout dos e-mails (D-047)', () => {
+  it('chamado: logo por cid anexado inline, título, metadados e rodapé', () => {
+    const e = montarEmailChamado({ ...base, evento: 'chamado_criado', status: 'novo' });
+    expect(e.html).toContain('src="cid:logo@chamados"');
+    expect(e.imagensInline).toHaveLength(1);
+    expect(e.imagensInline[0]).toMatchObject({ cid: 'logo@chamados', contentType: 'image/png' });
+    expect(e.imagensInline[0]!.conteudo.subarray(1, 4).toString()).toBe('PNG');
+    expect(e.html).toContain('Chamado recebido');
+    expect(e.html).toContain('#42');
+    expect(e.html).toContain('25/11/2026');
+    expect(e.html).toContain('CNPJ 51.943.042/0001-05');
+    expect(e.html).toContain('acompanha chamados em Acme');
+    expect(e.texto).toContain('CNPJ 51.943.042/0001-05');
+    // Sem cor do tenant: a régua e o botão usam o marinho fixo.
+    expect(e.html).toContain('#0b4189');
+    expect(e.html).not.toContain('#2563eb');
+  });
+
+  it('escapa título, nome do tenant e trecho no HTML', () => {
+    const e = montarEmailChamado({
+      ...base,
+      tenantNome: 'A<b>',
+      titulo: '<script>x</script>',
+      evento: 'mensagem_publica',
+      autorNome: 'Eve <img>',
+      trechoPublico: '<a href="javascript:1">oi</a>',
+    });
+    expect(e.html).not.toContain('<script>');
+    expect(e.html).not.toContain('<img>');
+    expect(e.html).not.toContain('href="javascript');
+    expect(e.html).toContain('&lt;script&gt;');
+    expect(e.html).toContain('A&lt;b&gt;');
+  });
+
+  it('mensagem pública para o cliente: seção da mensagem e botão de responder', () => {
+    const e = montarEmailChamado({
+      ...base,
+      evento: 'mensagem_publica',
+      paraCliente: true,
+      trechoPublico: 'Pode testar?',
+    });
+    expect(e.html).toContain('Mensagem');
+    expect(e.html).toContain('Pode testar?');
+    expect(e.html).toContain('Responder no portal');
+  });
+
+  it('estimativa: destaque com a faixa; isento sem código', () => {
+    const b = montarEmailChamado({
+      ...base,
+      evento: 'estimativa_custo',
+      para: 'B',
+      estimativaCusto: 'B',
+    });
+    expect(b.html).toContain('R$ 100 a R$ 200');
+    const i = montarEmailChamado({
+      ...base,
+      evento: 'estimativa_custo',
+      para: 'I',
+      estimativaCusto: 'I',
+    });
+    expect(i.html).toContain('Isento (R$ 0)');
+  });
+
+  it('transacional e alerta usam o mesmo layout, com logo inline', () => {
+    const c = montarEmailTransacional({
+      tenantNome: 'Acme',
+      tipo: 'convite',
+      url: 'https://x/c?t=1&a=2',
+    });
+    expect(c.html).toContain('Convite de acesso');
+    expect(c.html).toContain('https://x/c?t=1&amp;a=2');
+    expect(c.imagensInline).toHaveLength(1);
+    const a = montarEmailAlertaWebhook({
+      tenantNome: 'Acme',
+      motivo: 'HTTP <503>',
+      linkConfig: 'https://x',
+    });
+    expect(a.html).toContain('Webhook desativado');
+    expect(a.html).toContain('HTTP &lt;503&gt;');
+    expect(a.imagensInline).toHaveLength(1);
   });
 });

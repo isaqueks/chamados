@@ -36,6 +36,7 @@ import {
   montarEmailTransacional,
   montarPayloadWebhook,
   estimativaParaPayload,
+  type EmailRenderizado,
 } from './templates';
 
 export interface DepsProcessador {
@@ -103,10 +104,6 @@ async function atualizarLog(
 // Helpers de branding / links / texto
 // ---------------------------------------------------------------------------
 
-function corDe(tenant: Tenant): string {
-  return tenant.config_branding?.cor_primaria ?? '#2563eb';
-}
-
 function remetenteDe(tenant: Tenant, config: NotificacoesConfig): string {
   const nome =
     tenant.config_branding?.email_remetente_nome || tenant.nome_exibicao || config.remetente.nome;
@@ -161,7 +158,7 @@ async function enviarEmail(
   deps: DepsProcessador,
   tenantId: string,
   logDados: DadosLog,
-  render: (tenant: Tenant) => { assunto: string; texto: string; html: string },
+  render: (tenant: Tenant) => EmailRenderizado,
   destinoEmail: (em: EntityManager) => Promise<{ destino: string; tenant: Tenant } | null>,
 ): Promise<ResultadoProcessamento> {
   const preparo = await runInTenantContext(deps.ds, tenantId, async (em) => {
@@ -169,7 +166,7 @@ async function enviarEmail(
     if (!alvo) return null;
     const log = await reivindicarLog(em, { ...logDados, destino: alvo.destino });
     if (statusEhSucesso(log.status)) return { skip: true as const };
-    const { assunto, texto, html } = render(alvo.tenant);
+    const { assunto, texto, html, imagensInline } = render(alvo.tenant);
     return {
       skip: false as const,
       destino: alvo.destino,
@@ -180,6 +177,7 @@ async function enviarEmail(
         assunto,
         corpoTexto: texto,
         corpoHtml: html,
+        imagensInline,
       },
     };
   });
@@ -359,7 +357,6 @@ async function processarChamado(
   if (job.canal === 'email') {
     const email = montarEmailChamado({
       tenantNome: fase.tenant.nome_exibicao,
-      corPrimaria: corDe(fase.tenant),
       evento: job.evento,
       numero: fase.chamado.numero,
       titulo: fase.chamado.titulo,
@@ -383,6 +380,7 @@ async function processarChamado(
       assunto: email.assunto,
       corpoTexto: email.texto,
       corpoHtml: email.html,
+      imagensInline: email.imagensInline,
     };
   } else {
     const corpo: PayloadWebhook = montarPayloadWebhook({
@@ -511,7 +509,6 @@ async function processarTransacional(
     (tenant) =>
       montarEmailTransacional({
         tenantNome: tenant.nome_exibicao,
-        corPrimaria: corDe(tenant),
         tipo: job.tipo,
         url: job.url,
       }),
@@ -541,7 +538,6 @@ async function processarAlertaWebhook(
     (tenant) =>
       montarEmailAlertaWebhook({
         tenantNome: tenant.nome_exibicao,
-        corPrimaria: corDe(tenant),
         motivo: job.motivo,
         linkConfig: linkConfig(tenant, deps.config.hostPlataforma),
       }),

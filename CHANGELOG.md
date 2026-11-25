@@ -2,6 +2,16 @@
 
 > Registro de todas as alterações do projeto (política D-008 em `specs/decisoes.md`): toda mudança de comportamento, spec ou decisão entra aqui, da mais recente para a mais antiga.
 
+## 2026-11-25 — D-047: e-mails no layout da "Cobrança de Serviços" (logo e identidade da consultoria)
+
+- **Pedido do usuário:** que os e-mails enviados se parecessem com o PDF "Cobrança - Migração de Sistemas" (layout, design e logo). Prévias HTML de 9 e-mails (desktop e celular) foram aprovadas antes da implementação.
+- **Layout novo, único para todos os e-mails** (eventos de chamado, convite, redefinição de senha, alerta de webhook): logo "Isaque Kanitz Schluter — Consultoria em TI" no topo; título grande por evento ("Chamado recebido", "Nova mensagem", "Chamado resolvido"…) com **Chamado** e **Data** à direita; régua azul-marinho; seções separadas por linhas finas (frase do evento, mensagem/motivo em citação, título do chamado com tópicos de status/prioridade/estimativa/custo); **linha de destaque** no estilo "Total" (custo final + prazo para aprovar, faixa da estimativa, novo status…); botão marinho; rodapé com empresa/CNPJ e nome/e-mail/telefone. Empilha no celular.
+- **Identidade fixa:** o e-mail não usa mais `cor_primaria` nem logo do tenant; o tenant segue definindo o remetente e aparece na nota de rodapé. O texto/plain ganha o rodapé do emitente.
+- **Logo embutido por Content-ID** (`cid:logo@chamados`, multipart/related) a partir de `apps/worker/assets/email/logo.png` (600 px, ~36 KB): `NotificationPayload.imagensInline` + anexo `inline` no `SmtpAdapter`.
+- **Código:** `apps/worker/src/notificacoes/email-layout.ts` (novo), `templates.ts`, `tipos.ts`, `smtp-adapter.ts`, `processador.ts`.
+- **Specs:** ADR **D-047**; 06 (§5 reescrita), 07 (§3, §3.1).
+- **Testes:** `templates.test.ts` (+5: logo inline/cid, cabeçalho e rodapé, sem cor do tenant, escape de título/tenant/trecho, destaque da estimativa, transacional e alerta no mesmo layout; asserção de custo do `resolvido` ajustada ao destaque). Conferido também o MIME gerado pelo Nodemailer (`multipart/related` com `Content-ID: <logo@chamados>`, `Content-Disposition: inline`) e screenshots do HTML real em 760 px e 390 px.
+
 ## 2026-11-18 — Produção: Agent SDK 0.3.327 (modelos novos) e diagnóstico da lentidão da VPS
 
 - **Triagem falhava com `400 Claude Code 2.1.210 does not support this model; version 2.1.280 or newer is required`.** Com a D-044 o admin escolheu `claude-opus-5-5` no card "Assistente IA", mas o worker usava `@anthropic-ai/claude-agent-sdk` 0.3.210, que embute o Claude Code 2.1.210 — antigo demais para esse modelo. Toda triagem do tenant caía em "encaminhado para atendimento humano". **Correção:** SDK atualizado para `^0.3.327` (Claude Code 2.1.327) em `apps/worker`. Sem mudança de código: typecheck e os testes do worker passam. **Lição para a D-044:** a lista de modelos sugeridos (`packages/shared/src/ia-config.ts`) só vale se o SDK instalado no worker suportar o modelo — ao acrescentar um modelo novo, conferir a versão do SDK.

@@ -16,6 +16,13 @@ export interface NotificationPayload {
   assunto?: string;
   corpoTexto?: string;
   corpoHtml?: string;
+  /** Imagens embutidas por Content-ID (o logo do layout — D-047). */
+  imagensInline?: Array<{
+    cid: string;
+    nomeArquivo: string;
+    contentType: string;
+    conteudo: Buffer;
+  }>;
   // --- webhook ---
   corpoJson?: unknown;
   /** Header `X-Chamados-Event` (categoria do webhook). */
